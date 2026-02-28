@@ -420,13 +420,13 @@ async def run_daily_briefing(
                     embedding_engine=embedding_engine,
                     truth_layer=truth_layer,
                 )
-                briefing = asyncio.run(strategist.generate_briefing(
+                briefing = await strategist.generate_briefing(
                     health_scores=health_scores,
                     alerts=alerts,
                     bridges=bridges,
                     commitments=commitments,
                     review_items=review_items,
-                ))
+                )
                 summary = briefing.summary or "Daily briefing generated."
                 if briefing.sections:
                     section_summaries = [

@@ -397,6 +397,13 @@ class GraphRepository:
         )
         return edge.id
 
+    def update_edge_weight(self, edge_id: str, weight: float) -> None:
+        """Update the weight of an edge."""
+        self._conn.execute(
+            "UPDATE edges SET weight = ?, updated_at = ? WHERE id = ?",
+            [weight, datetime.utcnow().isoformat(), edge_id],
+        )
+
     def get_edges(self, node_id: UUID, direction: str = "both") -> list[Edge]:
         """Get edges connected to a node.
 

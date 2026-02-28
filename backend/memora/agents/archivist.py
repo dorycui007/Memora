@@ -27,7 +27,8 @@ DEFAULT_MODEL = "gpt-5-nano"
 
 
 def _build_graph_proposal_schema() -> dict[str, Any]:
-    """Generate a JSON Schema from GraphProposal, stripping schema-level `title` annotations."""
+    """Generate a JSON Schema from GraphProposal, stripping schema-level `title` annotations
+    and adding `additionalProperties: false` for Responses API compatibility."""
     schema = GraphProposal.model_json_schema()
 
     def _strip_titles(obj: Any, inside_properties: bool = False) -> Any:
@@ -38,6 +39,9 @@ def _build_graph_proposal_schema() -> dict[str, Any]:
                 if k == "title" and not inside_properties:
                     continue
                 result[k] = _strip_titles(v, inside_properties=(k == "properties"))
+            # Add additionalProperties: false to all object types for strict mode
+            if result.get("type") == "object" and "properties" in result:
+                result.setdefault("additionalProperties", False)
             return result
         if isinstance(obj, list):
             return [_strip_titles(item, inside_properties=False) for item in obj]
@@ -180,7 +184,7 @@ class ArchivistAgent:
                     f"Text:\n{text}"
                 ),
                 text=_RESPONSE_FORMAT,
-                max_output_tokens=4096,
+                max_output_tokens=16384,
             )
         except openai.APIError as e:
             logger.error("OpenAI API error: %s", e)
@@ -189,6 +193,11 @@ class ArchivistAgent:
                 clarification_needed=False,
             )
 
+        logger.debug(
+            "Archivist response — status=%s, output_items=%d",
+            getattr(response, "status", "?"),
+            len(getattr(response, "output", [])),
+        )
         raw_text = response.output_text
         token_usage = {
             "input_tokens": response.usage.input_tokens,
@@ -197,11 +206,35 @@ class ArchivistAgent:
 
         # 5. Parse JSON — json_schema mode guarantees valid JSON
         if not raw_text or not raw_text.strip():
-            logger.error("Empty response from archivist LLM")
-            return ArchivistResult(
-                raw_response=raw_text or "",
-                token_usage=token_usage,
+            # Inspect the full response for diagnostics
+            status = getattr(response, "status", "unknown")
+            output_items = getattr(response, "output", [])
+            logger.error(
+                "Empty output_text from archivist LLM — status=%s, "
+                "output_items=%d, model=%s",
+                status, len(output_items), self._model,
             )
+            for i, item in enumerate(output_items):
+                item_type = getattr(item, "type", "unknown")
+                logger.error("  output[%d] type=%s content=%s", i, item_type, str(item)[:300])
+
+            # Try to extract text from output items directly
+            for item in output_items:
+                if getattr(item, "type", None) == "message":
+                    for content_part in getattr(item, "content", []):
+                        text_val = getattr(content_part, "text", None)
+                        if text_val and text_val.strip():
+                            raw_text = text_val
+                            logger.info("Recovered text from output message item")
+                            break
+                    if raw_text:
+                        break
+
+            if not raw_text or not raw_text.strip():
+                return ArchivistResult(
+                    raw_response=raw_text or "",
+                    token_usage=token_usage,
+                )
 
         try:
             raw_json = json.loads(raw_text)
@@ -283,7 +316,7 @@ class ArchivistAgent:
                     f"Text:\n{text}"
                 ),
                 text=_RESPONSE_FORMAT,
-                max_output_tokens=4096,
+                max_output_tokens=16384,
             )
         except Exception:
             logger.error("Retry API call failed", exc_info=True)

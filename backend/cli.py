@@ -30,6 +30,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from memora.config import load_settings, Settings
 from memora.graph.repository import GraphRepository
 from memora.graph.models import NodeType, NetworkType, ProposalRoute, ProposalStatus
+from memora.core.pipeline import PipelineStage, STAGE_NAMES
 
 # ══════════════════════════════════════════════════════════════════════
 # ANSI Colors & Styles
@@ -211,6 +212,83 @@ def prompt(msg: str = "> ") -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Live Pipeline Tracker
+# ══════════════════════════════════════════════════════════════════════
+
+# All stages in order for display
+_PIPELINE_STAGES = [
+    PipelineStage.PREPROCESSING,
+    PipelineStage.EXTRACTION,
+    PipelineStage.ENTITY_RESOLUTION,
+    PipelineStage.PROPOSAL_ASSEMBLY,
+    PipelineStage.VALIDATION_GATE,
+    PipelineStage.REVIEW,
+    PipelineStage.GRAPH_COMMIT,
+    PipelineStage.POST_COMMIT,
+]
+
+_STAGE_ICONS = {
+    "pending":  f"{C.DIM}   {C.RESET}",
+    "running":  f"{C.YELLOW} > {C.RESET}",
+    "done":     f"{C.GREEN} + {C.RESET}",
+    "failed":   f"{C.RED} x {C.RESET}",
+    "skipped":  f"{C.DIM} - {C.RESET}",
+}
+
+
+class PipelineTracker:
+    """Renders a live ASCII pipeline progress display in the terminal."""
+
+    def __init__(self) -> None:
+        self._stage_status: dict[PipelineStage, str] = {
+            s: "pending" for s in _PIPELINE_STAGES
+        }
+        self._printed = False
+
+    def _render(self) -> str:
+        """Build the full ASCII tracker string."""
+        w = min(term_width() - 4, 72)
+        lines = []
+        lines.append(f"  {C.CYAN}{'─' * w}{C.RESET}")
+        lines.append(f"  {C.BOLD}{C.CYAN} PIPELINE{C.RESET}")
+        lines.append(f"  {C.CYAN}{'─' * w}{C.RESET}")
+
+        for stage in _PIPELINE_STAGES:
+            status = self._stage_status[stage]
+            icon = _STAGE_ICONS.get(status, "   ")
+            name = STAGE_NAMES.get(stage, stage.name)
+            if status == "running":
+                label = f"{C.YELLOW}{C.BOLD}{name}{C.RESET}"
+            elif status == "done":
+                label = f"{C.GREEN}{name}{C.RESET}"
+            elif status == "failed":
+                label = f"{C.RED}{name}{C.RESET}"
+            else:
+                label = f"{C.DIM}{name}{C.RESET}"
+            lines.append(f"  {icon} {label}")
+
+        lines.append(f"  {C.CYAN}{'─' * w}{C.RESET}")
+        return "\n".join(lines)
+
+    def _line_count(self) -> int:
+        """How many terminal lines the tracker occupies."""
+        return len(_PIPELINE_STAGES) + 3  # stages + 3 border/header lines
+
+    def on_stage(self, stage: PipelineStage, status: str) -> None:
+        """Callback for pipeline stage transitions. Redraws the tracker."""
+        self._stage_status[stage] = status
+
+        if self._printed:
+            # Move cursor up to overwrite the previous render
+            n = self._line_count()
+            sys.stdout.write(f"\033[{n}A")
+
+        sys.stdout.write(self._render() + "\n")
+        sys.stdout.flush()
+        self._printed = True
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Application State
 # ══════════════════════════════════════════════════════════════════════
 
@@ -346,9 +424,9 @@ class MemoraApp:
             return
         try:
             stats = self.repo.get_graph_stats()
-            nodes = stats.get("total_nodes", 0)
-            edges = stats.get("total_edges", 0)
-            nets = len(stats.get("nodes_by_network", {}))
+            nodes = stats.get("node_count", 0)
+            edges = stats.get("edge_count", 0)
+            nets = len(stats.get("network_breakdown", {}))
 
             api_status = f"{C.GREEN}connected{C.RESET}" if self._has_api_key else f"{C.RED}no key{C.RESET}"
             status = (f"  {C.BOLD}{nodes}{C.RESET} nodes  {C.DIM}|{C.RESET}  "
@@ -425,10 +503,11 @@ class MemoraApp:
         )
         cid = self.repo.create_capture(capture)
 
-        self._render_capture_animation()
+        tracker = PipelineTracker()
+        print()  # blank line before tracker
 
         try:
-            state = asyncio.run(pipeline.run(str(cid), text))
+            state = asyncio.run(pipeline.run(str(cid), text, on_stage=tracker.on_stage))
             self._render_pipeline_result(state, text)
 
             # If proposal awaiting review, prompt to approve immediately
@@ -442,8 +521,9 @@ class MemoraApp:
                 clarify = prompt(f"\n  {C.YELLOW}Provide clarification{C.RESET} (or 'skip'): ")
                 if clarify and clarify.lower() != "skip":
                     enriched = f"{text}\n\n[Clarification]: {clarify}"
-                    spinner("Re-running extraction with clarification...", 0.6)
-                    state2 = asyncio.run(pipeline.run(str(cid), enriched))
+                    tracker2 = PipelineTracker()
+                    print()
+                    state2 = asyncio.run(pipeline.run(str(cid), enriched, on_stage=tracker2.on_stage))
                     self._render_pipeline_result(state2, enriched)
                     if state2.proposal_id and state2.status == "awaiting_review":
                         action = prompt(f"\n  Approve this proposal? [{C.GREEN}Y{C.RESET}/n/skip] ")
@@ -454,16 +534,8 @@ class MemoraApp:
             self._render_capture_stored(str(cid), text, ai=False)
 
     def _render_capture_animation(self):
-        stages = [
-            "Preprocessing text...",
-            "Running archivist extraction...",
-            "Resolving entities...",
-            "Assembling proposal...",
-            "Validating...",
-        ]
-        print()
-        for stage in stages:
-            spinner(stage, 0.6)
+        """Legacy static animation — replaced by live pipeline tracker."""
+        pass
 
     def _render_capture_stored(self, cid: str, text: str, ai: bool = True):
         preview = text[:80] + ("..." if len(text) > 80 else "")
@@ -593,6 +665,18 @@ class MemoraApp:
 
                 content_text = out.get("content", "")
                 if content_text:
+                    # Detect raw JSON and format it as a summary instead
+                    stripped = content_text.strip()
+                    if stripped.startswith("{") or stripped.startswith("["):
+                        try:
+                            parsed = json.loads(stripped)
+                            # Extract human_summary if present in JSON
+                            if isinstance(parsed, dict) and parsed.get("human_summary"):
+                                content_text = parsed["human_summary"]
+                            else:
+                                content_text = f"{C.DIM}(structured data returned){C.RESET}"
+                        except json.JSONDecodeError:
+                            pass  # Not valid JSON, display as-is
                     for line in textwrap.wrap(content_text, min(term_width() - 6, 72)):
                         print(f"    {line}")
 
@@ -603,8 +687,14 @@ class MemoraApp:
         # Synthesis
         print(f"\n{divider()}")
         print(f"  {C.BOLD}{C.GREEN}SYNTHESIS{C.RESET}\n")
-        for line in textwrap.wrap(result.synthesis, min(term_width() - 6, 72)):
-            print(f"    {line}")
+        # Preserve paragraph breaks in synthesis
+        for paragraph in result.synthesis.split("\n\n"):
+            paragraph = paragraph.strip()
+            if not paragraph:
+                continue
+            for line in textwrap.wrap(paragraph, min(term_width() - 6, 72)):
+                print(f"    {line}")
+            print()  # blank line between paragraphs
 
         if result.citations:
             print(f"\n  {C.DIM}Sources: {', '.join(result.citations[:5])}{C.RESET}")
@@ -868,14 +958,16 @@ class MemoraApp:
         self._render_ascii_graph(subgraph, center_id=None)
 
     def _render_ascii_graph(self, subgraph, center_id: UUID | None = None):
-        """Render a subgraph as an ASCII radial/tree relationship map.
+        """Render a subgraph as an indented BFS tree with cross-edge appendix.
 
         Layout strategy:
-        - Center node in the middle
-        - Neighbors arranged around it in concentric rings
-        - Edges drawn with ASCII connectors
+        - Find connected components
+        - BFS tree per component (rooted at center_id or most-connected node)
+        - DFS render with tree-command-style prefixes
+        - Cross-edges (not in BFS tree) listed in aligned appendix
+        - Isolated singletons grouped at bottom
         """
-        from memora.graph.models import Subgraph
+        from collections import defaultdict, deque
 
         nodes = subgraph.nodes
         edges = subgraph.edges
@@ -884,217 +976,256 @@ class MemoraApp:
             print(f"  {C.DIM}Empty graph.{C.RESET}")
             return
 
-        # Build adjacency
+        w = term_width()
+
+        # ── 1. Build data structures ──────────────────────────────
         node_map = {str(n.id): n for n in nodes}
-        adj: dict[str, list[tuple[str, str]]] = {str(n.id): [] for n in nodes}
+        adj: dict[str, list[tuple[str, str, bool]]] = defaultdict(list)
+        edge_index: dict[frozenset, tuple] = {}
+
         for e in edges:
             src, tgt = str(e.source_id), str(e.target_id)
             label = e.edge_type.value if hasattr(e.edge_type, 'value') else str(e.edge_type)
-            if src in adj:
-                adj[src].append((tgt, label))
-            if tgt in adj:
-                adj[tgt].append((src, label))
+            bidi = getattr(e, 'bidirectional', False)
+            if src in node_map and tgt in node_map:
+                adj[src].append((tgt, label, bidi))
+                adj[tgt].append((src, label, bidi))
+                edge_index[frozenset({src, tgt})] = (label, src, tgt, bidi)
 
-        # Determine center
-        if center_id and str(center_id) in node_map:
-            center_str = str(center_id)
-        else:
-            # Pick the most connected node
-            center_str = max(adj, key=lambda k: len(adj[k])) if adj else str(nodes[0].id)
+        center_str = str(center_id) if center_id and str(center_id) in node_map else None
 
-        center_node = node_map[center_str]
+        # ── 2. Find connected components ──────────────────────────
+        unvisited = set(node_map.keys())
+        components: list[list[str]] = []
+        while unvisited:
+            seed = next(iter(unvisited))
+            component: list[str] = []
+            queue = deque([seed])
+            while queue:
+                nid = queue.popleft()
+                if nid not in unvisited:
+                    continue
+                unvisited.discard(nid)
+                component.append(nid)
+                for neighbor, _, _ in adj.get(nid, []):
+                    if neighbor in unvisited:
+                        queue.append(neighbor)
+            components.append(component)
+        components.sort(key=len, reverse=True)
 
-        # BFS to assign layers
-        layers: list[list[str]] = []
-        visited = {center_str}
-        current_layer = [center_str]
-        layers.append(current_layer)
+        multi_components = [c for c in components if len(c) > 1]
+        isolated_nodes = [c[0] for c in components if len(c) == 1]
 
-        while current_layer:
-            next_layer = []
-            for nid in current_layer:
-                for neighbor_id, _ in adj.get(nid, []):
-                    if neighbor_id not in visited and neighbor_id in node_map:
-                        visited.add(neighbor_id)
-                        next_layer.append(neighbor_id)
-            if next_layer:
-                layers.append(next_layer)
-            current_layer = next_layer
+        # Move component containing center_id to the front
+        if center_str:
+            for i, comp in enumerate(multi_components):
+                if center_str in comp:
+                    multi_components.insert(0, multi_components.pop(i))
+                    break
 
-        # Add isolated nodes
-        isolated = [str(n.id) for n in nodes if str(n.id) not in visited]
-        if isolated:
-            layers.append(isolated)
+        n_display_components = len(multi_components) + (1 if isolated_nodes else 0)
 
-        # Header
-        total_e = len(edges)
-        total_n = len(nodes)
-        print(f"\n{divider('═', C.CYAN)}")
-        print(f"  {C.BOLD}{C.CYAN}RELATIONSHIP GRAPH{C.RESET}"
-              f"  {C.DIM}({total_n} nodes, {total_e} edges, {len(layers)} layer(s)){C.RESET}")
+        # ── 3. Header ────────────────────────────────────────────
+        print(f"\n{divider('\u2550', C.CYAN)}")
+        mode = "neighborhood" if center_id else "full graph"
+        print(f"  {C.BOLD}{C.CYAN}RELATIONSHIP GRAPH{C.RESET}  "
+              f"{C.DIM}({len(nodes)} nodes, {len(edges)} edges, "
+              f"{n_display_components} component"
+              f"{'s' if n_display_components != 1 else ''}, {mode}){C.RESET}")
         print(divider())
 
-        # ── Render the radial ASCII map ──
-
-        w = min(term_width() - 2, 78)
-
-        # Helper: format a node label
-        def node_label(nid: str, highlight: bool = False) -> str:
+        # ── 4. Node label helper ─────────────────────────────────
+        def node_label(nid, depth=0, highlight=False):
             n = node_map.get(nid)
             if not n:
                 return f"{C.DIM}[?]{C.RESET}"
             icon = NODE_ICONS.get(n.node_type.value, " ")
-            title = n.title[:18] + (".." if len(n.title) > 18 else "")
+            available = w - 4 - depth * 4 - 14 - len(n.networks) * 4
+            max_t = max(10, min(36, available))
+            title = n.title[:max_t] + (".." if len(n.title) > max_t else "")
+            nets = "".join(NETWORK_ICONS.get(nt.value, "") for nt in n.networks[:3])
+            short_id = str(n.id)[:6]
             if highlight:
-                return f"{C.BG_CYAN}{C.BLACK} {icon} {title} {C.RESET}"
-            return f"[{icon} {C.BOLD}{title}{C.RESET}]"
+                return (f"{C.BG_CYAN}{C.BLACK} {icon} {title} {C.RESET}"
+                        f" {C.DIM}{short_id}{C.RESET} {nets}")
+            return f"{icon} {C.BOLD}{title}{C.RESET} {C.DIM}[{short_id}]{C.RESET} {nets}"
 
-        def edge_label_between(nid_a: str, nid_b: str) -> str:
-            for e in edges:
-                src, tgt = str(e.source_id), str(e.target_id)
-                if (src == nid_a and tgt == nid_b) or (src == nid_b and tgt == nid_a):
-                    label = e.edge_type.value if hasattr(e.edge_type, 'value') else str(e.edge_type)
-                    return label
-            return ""
+        # ── 5. BFS tree builder ──────────────────────────────────
+        def build_bfs_tree(root, comp_set):
+            parent = {root: None}
+            depth = {root: 0}
+            q = deque([root])
+            while q:
+                nid = q.popleft()
+                for neighbor, _, _ in adj.get(nid, []):
+                    if neighbor in comp_set and neighbor not in parent:
+                        parent[neighbor] = nid
+                        depth[neighbor] = depth[nid] + 1
+                        q.append(neighbor)
+            return parent, depth
 
-        # Layer 0: Center node
-        center_label = node_label(center_str, highlight=True)
-        center_nets = ""
-        for net in center_node.networks:
-            center_nets += f" {NETWORK_ICONS.get(net.value, '')}"
+        # ── 6. Tree renderer (iterative DFS) ─────────────────────
+        def render_tree(root, parent_map, depth_map, is_center_root):
+            children = defaultdict(list)
+            for nid, par in parent_map.items():
+                if par is not None:
+                    children[par].append(nid)
+            for par in children:
+                children[par].sort(
+                    key=lambda k: (node_map[k].node_type.value, node_map[k].title))
 
-        print(f"\n{'':>{w // 2 - 15}}{C.DIM}center{C.RESET}")
-        print(f"{'':>{w // 2 - 15}}{center_label}{center_nets}")
+            tree_edges_used = set()
+            for nid, par in parent_map.items():
+                if par is not None:
+                    tree_edges_used.add(frozenset({nid, par}))
 
-        # Draw connections from center to layer 1
-        if len(layers) > 1 and layers[1]:
-            layer1 = layers[1]
-            n_nodes = len(layer1)
+            # Stack: (node_id, prefix_for_children, is_last, is_root)
+            stack = [(root, "", True, True)]
+            while stack:
+                nid, prefix, is_last, is_root_node = stack.pop()
+                d = depth_map.get(nid, 0)
 
-            # Draw connector lines
-            if n_nodes == 1:
-                connectors = "       |       "
-            elif n_nodes == 2:
-                connectors = "      / \\      "
-            elif n_nodes == 3:
-                connectors = "     /  |  \\     "
-            elif n_nodes <= 5:
-                connectors = "   /" + "──" * (n_nodes - 2) + "┼" + "──" * (n_nodes - 2) + "\\   "
-            else:
-                connectors = "  /" + "─┬" * min(n_nodes - 2, 8) + "─\\  "
-
-            print(f"{'':>{w // 2 - len(connectors) // 2}}{C.DIM}{connectors}{C.RESET}")
-
-            # Edge labels row
-            edge_labels_row = ""
-            for nid in layer1:
-                elabel = edge_label_between(center_str, nid)
-                short = elabel[:12] if elabel else ""
-                edge_labels_row += f" {C.DIM}{short:<13}{C.RESET}"
-            # Center the row roughly
-            pad = max(0, (w // 2) - (_visible_len(edge_labels_row) // 2) - 4)
-            print(f"{'':>{pad}}{edge_labels_row}")
-
-            # Render layer 1 nodes
-            node_row = ""
-            for nid in layer1:
-                node_row += f" {node_label(nid)} "
-            pad = max(0, (w // 2) - (_visible_len(node_row) // 2) - 2)
-            print(f"{'':>{pad}}{node_row}")
-
-            # Networks for layer 1
-            net_row = ""
-            for nid in layer1:
-                n = node_map.get(nid)
-                if n:
-                    nets = "".join(NETWORK_ICONS.get(nt.value, "") for nt in n.networks)
-                    net_row += f" {nets:<22}"
+                if is_root_node:
+                    print(f"  {node_label(nid, d, highlight=is_center_root)}")
+                    child_prefix = "  "
                 else:
-                    net_row += " " * 22
-            pad = max(0, (w // 2) - (_visible_len(net_row) // 2) - 2)
-            print(f"{'':>{pad}}{net_row}")
+                    par = parent_map[nid]
+                    key = frozenset({nid, par})
+                    info = edge_index.get(key, ("", par, nid, False))
+                    elabel, esrc, _etgt, ebidi = info
+                    if ebidi:
+                        arrow = "\u2194"
+                    elif esrc == par:
+                        arrow = "\u2192"
+                    else:
+                        arrow = "\u2190"
+                    conn = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
+                    elabel_str = f"{C.DIM}[{elabel[:10]}{arrow}]{C.RESET} " if elabel else ""
+                    print(f"  {prefix}{conn}{elabel_str}{node_label(nid, d)}")
+                    child_prefix = prefix + ("    " if is_last else "\u2502   ")
 
-        # Deeper layers
-        for layer_idx in range(2, len(layers)):
-            layer = layers[layer_idx]
-            if not layer:
-                continue
+                kids = children.get(nid, [])
+                for i, kid in enumerate(reversed(kids)):
+                    stack.append((kid, child_prefix, i == 0, False))
 
-            # Connector
-            if layer_idx < len(layers) - 1 or str(layer[0]) not in [str(n.id) for n in nodes if str(n.id) not in visited]:
-                print(f"\n{'':>{w // 2 - 8}}{C.DIM}{'·' * 16}  (hop {layer_idx}){C.RESET}")
+            return tree_edges_used
+
+        # ── 7. Cross-edge renderer ───────────────────────────────
+        def render_cross_edges(cross_list):
+            if not cross_list:
+                return
+            rule_w = max(0, w - 28)
+            print(f"\n  {C.DIM}\u2500\u2500 cross-connections "
+                  + "\u2500" * rule_w + f"{C.RESET}")
+
+            src_parts = []
+            for e in cross_list:
+                sn = node_map.get(str(e.source_id))
+                s_title = sn.title[:18] if sn else str(e.source_id)[:8]
+                src_parts.append(f"{s_title} [{str(e.source_id)[:6]}]")
+            max_src_vis = max(len(s) for s in src_parts) if src_parts else 20
+
+            for idx, e in enumerate(cross_list[:20]):
+                src, tgt = str(e.source_id), str(e.target_id)
+                elabel = e.edge_type.value if hasattr(e.edge_type, 'value') else str(e.edge_type)
+                bidi = getattr(e, 'bidirectional', False)
+                sn = node_map.get(src)
+                tn = node_map.get(tgt)
+                s_icon = NODE_ICONS.get(sn.node_type.value, " ") if sn else " "
+                t_icon = NODE_ICONS.get(tn.node_type.value, " ") if tn else " "
+                s_title = sn.title[:18] if sn else src[:8]
+                t_title = tn.title[:18] if tn else tgt[:8]
+                src_text = f"{s_title} [{src[:6]}]"
+                pad = max_src_vis - len(src_text) + 1
+                arrow = "\u2194" if bidi else "\u2192"
+                print(f"  {s_icon} {src_text}{' ' * pad}"
+                      f" {C.DIM}\u2500\u2500[{elabel[:12]}{arrow}]\u2500\u2500{C.RESET} "
+                      f"{t_icon} {C.BOLD}{t_title}{C.RESET} "
+                      f"{C.DIM}[{tgt[:6]}]{C.RESET}")
+
+            if len(cross_list) > 20:
+                remaining = len(cross_list) - 20
+                print(f"  {C.DIM}  ... and {remaining} more cross-connections{C.RESET}")
+
+        # ── 8. Main render loop ──────────────────────────────────
+        all_tree_edges: set[frozenset] = set()
+
+        for comp_idx, component in enumerate(multi_components):
+            comp_set = set(component)
+
+            if len(multi_components) > 1:
+                print(f"\n  {C.BOLD}Component {comp_idx + 1} of "
+                      f"{len(multi_components)}{C.RESET}"
+                      f"  {C.DIM}({len(component)} nodes){C.RESET}")
+                print(f"  {C.DIM}" + "\u2500" * min(w - 4, 40) + f"{C.RESET}")
             else:
-                print(f"\n{'':>{w // 2 - 8}}{C.DIM}{'·' * 16}  (isolated){C.RESET}")
+                print()
 
-            # Render in rows of up to 4
-            for chunk_start in range(0, len(layer), 4):
-                chunk = layer[chunk_start:chunk_start + 4]
+            if center_str and center_str in comp_set:
+                root = center_str
+            else:
+                root = max(comp_set, key=lambda k: len(adj.get(k, [])))
 
-                # Edge labels
-                edge_row = ""
-                for nid in chunk:
-                    # Find which parent this connects to
-                    parent = None
-                    for prev_layer in layers[:layer_idx]:
-                        for prev_nid in prev_layer:
-                            for neighbor_id, _ in adj.get(prev_nid, []):
-                                if neighbor_id == nid:
-                                    parent = prev_nid
-                                    break
-                            if parent:
-                                break
-                        if parent:
-                            break
-                    elabel = edge_label_between(parent, nid) if parent else ""
-                    short = elabel[:12] if elabel else ""
-                    edge_row += f" {C.DIM}{short:<13}{C.RESET}"
+            parent_map, depth_map = build_bfs_tree(root, comp_set)
+            tree_edges = render_tree(root, parent_map, depth_map,
+                                     is_center_root=(root == center_str))
+            all_tree_edges |= tree_edges
 
-                pad = max(0, (w // 2) - (_visible_len(edge_row) // 2) - 4)
-                print(f"{'':>{pad}}{edge_row}")
+            comp_cross = [
+                e for e in edges
+                if frozenset({str(e.source_id), str(e.target_id)}) not in all_tree_edges
+                and str(e.source_id) in comp_set
+                and str(e.target_id) in comp_set
+            ]
+            render_cross_edges(comp_cross)
+            all_tree_edges |= {
+                frozenset({str(e.source_id), str(e.target_id)})
+                for e in comp_cross}
 
-                # Nodes
-                node_row = ""
-                for nid in chunk:
-                    node_row += f" {node_label(nid)} "
-                pad = max(0, (w // 2) - (_visible_len(node_row) // 2) - 2)
-                print(f"{'':>{pad}}{node_row}")
+        # ── 9. Isolated singletons ───────────────────────────────
+        if isolated_nodes:
+            rule_w = max(0, w - 25)
+            print(f"\n  {C.DIM}\u2500\u2500 unconnected nodes "
+                  f"({len(isolated_nodes)}) "
+                  + "\u2500" * rule_w + f"{C.RESET}")
+            for i in range(0, len(isolated_nodes), 3):
+                chunk = isolated_nodes[i:i + 3]
+                parts = [node_label(nid, depth=0) for nid in chunk]
+                print(f"  {'   '.join(parts)}")
 
-        # ── Legend ──
+        # ── 10. Legend ───────────────────────────────────────────
         print(f"\n{divider()}")
         print(f"  {C.BOLD}LEGEND{C.RESET}")
 
-        # Node types present
-        types_present = set()
-        for n in nodes:
-            types_present.add(n.node_type.value)
-        type_legend = "  Types:    "
-        for t in sorted(types_present):
+        types_present = sorted({n.node_type.value for n in nodes})
+        type_legend = "  Types:     "
+        for t in types_present:
             icon = NODE_ICONS.get(t, " ")
-            type_legend += f" {icon}={t} "
+            type_legend += f" {icon}={C.DIM}{t}{C.RESET} "
         print(type_legend)
 
-        # Networks present
-        nets_present = set()
-        for n in nodes:
-            for nt in n.networks:
-                nets_present.add(nt.value)
-        net_legend = "  Networks: "
-        for nt in sorted(nets_present):
-            icon = NETWORK_ICONS.get(nt, f"[{nt[0]}]")
-            net_legend += f" {icon}={nt} "
-        print(net_legend)
+        nets_present = sorted({nt.value for n in nodes for nt in n.networks})
+        if nets_present:
+            net_legend = "  Networks:  "
+            for nt in nets_present:
+                icon = NETWORK_ICONS.get(nt, f"[{nt[0]}]")
+                net_legend += f" {icon}={C.DIM}{nt}{C.RESET} "
+            print(net_legend)
 
-        # Edge types present
-        edge_types_present = set()
-        for e in edges:
-            label = e.edge_type.value if hasattr(e.edge_type, 'value') else str(e.edge_type)
-            edge_types_present.add(label)
+        edge_types_present = sorted({
+            e.edge_type.value if hasattr(e.edge_type, 'value') else str(e.edge_type)
+            for e in edges})
         if edge_types_present:
-            print(f"  {C.DIM}Edges:   {', '.join(sorted(edge_types_present))}{C.RESET}")
+            print(f"  {C.DIM}Edges:      {', '.join(edge_types_present)}{C.RESET}")
 
-        # Summary
-        print(f"\n  {C.DIM}Highlighted node = center   [ ] = graph node{C.RESET}")
-        print(f"{divider('═', C.CYAN)}")
+        print(f"\n  {C.DIM}Tree: \u251c\u2500\u2500 child  "
+              f"\u2514\u2500\u2500 last child  \u2502   continuation{C.RESET}")
+        print(f"  {C.DIM}Arrows: \u2192 directed  "
+              f"\u2190 inbound  \u2194 bidirectional{C.RESET}")
+        if center_id:
+            print(f"  {C.BG_CYAN}{C.BLACK} highlighted {C.RESET}"
+                  f" {C.DIM}= center node{C.RESET}")
+        print(divider('\u2550', C.CYAN))
 
     # ── Existing node detail edge view: add graph hint ──
 
@@ -1222,9 +1353,9 @@ class MemoraApp:
 
     def cmd_networks(self):
         stats = self.repo.get_graph_stats()
-        nodes_by_net = stats.get("nodes_by_network", {})
+        nodes_by_net = stats.get("network_breakdown", {})
 
-        total_nodes = stats.get("total_nodes", 0) or 1
+        total_nodes = stats.get("node_count", 0) or 1
 
         header = f"""
 {C.MAGENTA}{C.BOLD}  THE 7 NETWORKS{C.RESET}
@@ -1299,10 +1430,10 @@ class MemoraApp:
     def cmd_stats(self):
         stats = self.repo.get_graph_stats()
 
-        total_nodes = stats.get("total_nodes", 0)
-        total_edges = stats.get("total_edges", 0)
-        nodes_by_type = stats.get("nodes_by_type", {})
-        nodes_by_net = stats.get("nodes_by_network", {})
+        total_nodes = stats.get("node_count", 0)
+        total_edges = stats.get("edge_count", 0)
+        nodes_by_type = stats.get("type_breakdown", {})
+        nodes_by_net = stats.get("network_breakdown", {})
 
         graph_visual = f"""
 {C.CYAN}{C.BOLD}
@@ -1398,13 +1529,25 @@ class MemoraApp:
         spinner("Strategist composing briefing", 1.5)
 
         try:
-            briefing = asyncio.run(strat.generate_briefing(
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            coro = strat.generate_briefing(
                 health_scores=health,
                 alerts=alerts,
                 bridges=bridges,
                 commitments=commitments,
                 review_items=review_items,
-            ))
+            )
+
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    briefing = pool.submit(asyncio.run, coro).result()
+            else:
+                briefing = asyncio.run(coro)
         except Exception as e:
             print(f"\n  {C.RED}Briefing failed: {e}{C.RESET}")
             return

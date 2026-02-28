@@ -348,9 +348,14 @@ class StrategistAgent:
             data = self._extract_json(raw_text)
             sections = []
             for s in data.get("sections", []):
+                raw_items = s.get("items", [])
+                items = [
+                    str(item) if not isinstance(item, str) else item
+                    for item in raw_items
+                ]
                 sections.append(BriefingSection(
                     title=s.get("title", ""),
-                    items=s.get("items", []),
+                    items=items,
                     priority=s.get("priority", "medium"),
                 ))
             return DailyBriefing(
@@ -358,7 +363,9 @@ class StrategistAgent:
                 summary=data.get("summary", ""),
             )
         except ValueError:
-            return DailyBriefing(summary=raw_text)
+            logger.warning("Failed to parse briefing JSON, using truncated raw text")
+            truncated = raw_text[:500] + ("..." if len(raw_text) > 500 else "")
+            return DailyBriefing(summary=truncated)
 
     def _extract_json(self, text: str) -> dict[str, Any]:
         """Extract JSON object from LLM response."""

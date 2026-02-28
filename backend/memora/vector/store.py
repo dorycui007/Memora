@@ -120,6 +120,16 @@ class VectorStore:
         except Exception:
             pass  # May not exist
 
+    def get_embedding(self, node_id: str) -> list[float] | None:
+        """Retrieve the dense vector for a node. Returns None if not found."""
+        try:
+            df = self._table.search().where(f"node_id = '{node_id}'").limit(1).to_pandas()
+            if df.empty:
+                return None
+            return df.iloc[0]["dense"].tolist()
+        except Exception:
+            return None
+
     def dense_search(
         self,
         query_vector: list[float],

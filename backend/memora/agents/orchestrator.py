@@ -280,9 +280,16 @@ class Orchestrator:
             result = _run_async(self._archivist.extract(
                 state["query"], state["query_id"]
             ))
+            # Use human_summary for readable output; fall back to raw JSON only if missing
+            if result.proposal and result.proposal.human_summary:
+                content = result.proposal.human_summary
+            elif result.clarification_needed and result.clarification_message:
+                content = result.clarification_message
+            else:
+                content = result.raw_response
             state["archivist_output"] = {
                 "agent": "archivist",
-                "content": result.raw_response,
+                "content": content,
                 "confidence": result.proposal.confidence if result.proposal else 0.0,
                 "clarification_needed": result.clarification_needed,
                 "clarification_message": result.clarification_message,
@@ -494,7 +501,7 @@ class Orchestrator:
             spread = max(confidences) - min(confidences)
             state["high_disagreement"] = spread > 0.3 + 1e-9
 
-        # Build synthesis from agent outputs — weight by confidence
+        # Build synthesis from agent outputs using LLM
         synthesis_parts = []
         for output in sorted(outputs, key=lambda o: o.get("confidence", 0), reverse=True):
             agent = output.get("agent", "unknown")
@@ -503,15 +510,22 @@ class Orchestrator:
             if content:
                 synthesis_parts.append(f"[{agent} (confidence: {conf:.2f})] {content}")
 
+        raw_synthesis = "\n\n".join(synthesis_parts)
+
         # Apply truth layer fact-check if available
         if self._truth_layer and state.get("query_type") != QueryType.CAPTURE.value:
-            fact_check = self._fact_check_synthesis(
-                "\n\n".join(synthesis_parts)
-            )
+            fact_check = self._fact_check_synthesis(raw_synthesis)
             if fact_check:
-                synthesis_parts.append(f"\n[fact_check] {fact_check}")
+                raw_synthesis += f"\n\n[fact_check] {fact_check}"
 
-        state["synthesis"] = "\n\n".join(synthesis_parts)
+        # Use LLM to produce a coherent synthesis when multiple agents contributed
+        if len(outputs) > 1 and self._api_key:
+            state["synthesis"] = self._llm_synthesize(
+                state["query"], raw_synthesis, outputs,
+            )
+        else:
+            # Single agent — just use its content directly
+            state["synthesis"] = outputs[0].get("content", raw_synthesis) if outputs else raw_synthesis
         state["confidence"] = avg_confidence
         state["citations"] = list(set(all_citations))
         state["deliberation_round"] = state.get("deliberation_round", 0) + 1
@@ -680,6 +694,47 @@ class Orchestrator:
             context["retrieval_quality"] = "poor"
 
         return context
+
+    def _llm_synthesize(
+        self, query: str, raw_synthesis: str, outputs: list[dict[str, Any]],
+    ) -> str:
+        """Use the LLM to produce a coherent, readable synthesis from agent outputs."""
+        import openai as _openai
+
+        agent_sections = []
+        for out in outputs:
+            agent = out.get("agent", "unknown")
+            content = out.get("content", "")
+            conf = out.get("confidence", 0.5)
+            if content:
+                agent_sections.append(
+                    f"## {agent.title()} (confidence: {conf:.0%})\n{content}"
+                )
+
+        prompt = (
+            "You are synthesizing outputs from multiple AI agents into a single, "
+            "clear response for the user. Write in a natural, readable style — "
+            "no JSON, no agent labels, no technical metadata. "
+            "Organize the information logically with clear paragraphs. "
+            "If agents disagree, note the tension. "
+            "Be concise and actionable.\n\n"
+            f"User's question: {query}\n\n"
+            f"Agent outputs:\n{''.join(agent_sections)}"
+        )
+
+        try:
+            client = _openai.OpenAI(api_key=self._api_key)
+            response = client.responses.create(
+                model="gpt-5-nano",
+                input=prompt,
+                max_output_tokens=2048,
+            )
+            return response.output_text.strip()
+        except Exception as e:
+            logger.warning("LLM synthesis failed, using fallback: %s", e)
+            # Fallback: return the highest-confidence agent's content
+            best = max(outputs, key=lambda o: o.get("confidence", 0))
+            return best.get("content", raw_synthesis)
 
     def _fact_check_synthesis(self, synthesis_text: str) -> str | None:
         """Check synthesis against Truth Layer verified facts."""

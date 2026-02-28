@@ -78,19 +78,20 @@ class ResearcherAgent:
 
     def _init_default_tools(self) -> None:
         """Lazily initialize default MCP tools from environment variables."""
-        if "google_search" not in self._mcp_tools:
-            try:
-                from memora.mcp.google_search import GoogleSearchMCP
-                self._mcp_tools["google_search"] = GoogleSearchMCP()
-            except Exception:
-                logger.debug("Google Search MCP not available")
+        # Google and Brave search disabled for now
+        # if "google_search" not in self._mcp_tools:
+        #     try:
+        #         from memora.mcp.google_search import GoogleSearchMCP
+        #         self._mcp_tools["google_search"] = GoogleSearchMCP()
+        #     except Exception:
+        #         logger.debug("Google Search MCP not available")
 
-        if "brave_search" not in self._mcp_tools:
-            try:
-                from memora.mcp.brave_search import BraveSearchMCP
-                self._mcp_tools["brave_search"] = BraveSearchMCP()
-            except Exception:
-                logger.debug("Brave Search MCP not available")
+        # if "brave_search" not in self._mcp_tools:
+        #     try:
+        #         from memora.mcp.brave_search import BraveSearchMCP
+        #         self._mcp_tools["brave_search"] = BraveSearchMCP()
+        #     except Exception:
+        #         logger.debug("Brave Search MCP not available")
 
         if "semantic_scholar" not in self._mcp_tools:
             try:

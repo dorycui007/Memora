@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -29,6 +29,7 @@ router = APIRouter(prefix="/api/v1/council", tags=["council"])
 
 # Cache for daily briefing
 _briefing_cache: dict[str, Any] = {"date": None, "briefing": None}
+_briefing_lock = asyncio.Lock()
 
 
 def _get_orchestrator(request: Request):
@@ -121,7 +122,7 @@ async def get_daily_briefing(request: Request):
     Cached per day — regenerated once daily or on first request.
     """
     global _briefing_cache
-    today = datetime.utcnow().date().isoformat()
+    today = datetime.now(timezone.utc).date().isoformat()
 
     # Return cached if available for today
     if _briefing_cache["date"] == today and _briefing_cache["briefing"]:
@@ -129,54 +130,64 @@ async def get_daily_briefing(request: Request):
         return DailyBriefingResponse(
             sections=cached.get("sections", []),
             summary=cached.get("summary", ""),
-            generated_at=cached.get("generated_at", datetime.utcnow()),
+            generated_at=cached.get("generated_at", datetime.now(timezone.utc)),
             cached=True,
         )
 
-    strategist = _get_strategist(request)
-    repo = request.app.state.repo
+    async with _briefing_lock:
+        # Double-check after acquiring lock (another request may have populated cache)
+        if _briefing_cache["date"] == today and _briefing_cache["briefing"]:
+            cached = _briefing_cache["briefing"]
+            return DailyBriefingResponse(
+                sections=cached.get("sections", []),
+                summary=cached.get("summary", ""),
+                generated_at=cached.get("generated_at", datetime.now(timezone.utc)),
+                cached=True,
+            )
 
-    # Gather data from background jobs
-    health_scores = _get_health_scores(repo)
-    alerts = _get_alerts(repo)
-    bridges = _get_recent_bridges(repo)
-    commitments = _get_commitment_data(repo)
-    review_items = _get_review_items(repo)
+        strategist = _get_strategist(request)
+        repo = request.app.state.repo
 
-    briefing = await asyncio.to_thread(
-        strategist.generate_briefing,
-        health_scores=health_scores,
-        alerts=alerts,
-        bridges=bridges,
-        commitments=commitments,
-        review_items=review_items,
-    )
+        # Gather data from background jobs
+        health_scores = _get_health_scores(repo)
+        alerts = _get_alerts(repo)
+        bridges = _get_recent_bridges(repo)
+        commitments = _get_commitment_data(repo)
+        review_items = _get_review_items(repo)
 
-    sections = [
-        BriefingSectionResponse(
-            title=s.title,
-            items=s.items,
-            priority=s.priority,
+        briefing = await strategist.generate_briefing(
+            health_scores=health_scores,
+            alerts=alerts,
+            bridges=bridges,
+            commitments=commitments,
+            review_items=review_items,
         )
-        for s in briefing.sections
-    ]
 
-    # Cache the result
-    _briefing_cache = {
-        "date": today,
-        "briefing": {
-            "sections": [s.model_dump() for s in sections],
-            "summary": briefing.summary,
-            "generated_at": briefing.generated_at,
-        },
-    }
+        sections = [
+            BriefingSectionResponse(
+                title=s.title,
+                items=s.items,
+                priority=s.priority,
+            )
+            for s in briefing.sections
+        ]
 
-    return DailyBriefingResponse(
-        sections=sections,
-        summary=briefing.summary,
-        generated_at=briefing.generated_at,
-        cached=False,
-    )
+        # Cache the result
+        _briefing_cache = {
+            "date": today,
+            "briefing": {
+                "sections": [s.model_dump() for s in sections],
+                "summary": briefing.summary,
+                "generated_at": briefing.generated_at,
+            },
+        }
+
+        return DailyBriefingResponse(
+            sections=sections,
+            summary=briefing.summary,
+            generated_at=briefing.generated_at,
+            cached=False,
+        )
 
 
 @router.post("/critique", response_model=CritiqueResponse)

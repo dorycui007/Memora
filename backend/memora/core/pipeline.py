@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import IntEnum
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 from memora.agents.archivist import ArchivistAgent
@@ -124,10 +124,30 @@ class ExtractionPipeline:
                 llm_client=openai_client,
             )
 
-    async def run(self, capture_id: str, raw_content: str) -> PipelineState:
-        """Execute the full pipeline. Returns final state."""
+    async def run(
+        self,
+        capture_id: str,
+        raw_content: str,
+        on_stage: Callable[[PipelineStage, str], None] | None = None,
+    ) -> PipelineState:
+        """Execute the full pipeline. Returns final state.
+
+        Args:
+            capture_id: UUID string of the capture.
+            raw_content: The raw text to process.
+            on_stage: Optional callback invoked at each stage transition.
+                      Receives (stage_enum, status) where status is
+                      "running", "done", "failed", or "skipped".
+        """
         state = PipelineState(capture_id=capture_id, raw_content=raw_content)
         logger.info("Pipeline started for capture %s", capture_id)
+
+        def _notify(stage: PipelineStage, status: str) -> None:
+            if on_stage:
+                try:
+                    on_stage(stage, status)
+                except Exception:
+                    pass  # never let callback errors break the pipeline
 
         stages = [
             (PipelineStage.PREPROCESSING, self._preprocess),
@@ -142,21 +162,26 @@ class ExtractionPipeline:
 
         for stage_enum, handler in stages:
             state.stage = stage_enum
+            _notify(stage_enum, "running")
             logger.debug("Pipeline stage %s for capture %s", stage_enum.name, capture_id)
             try:
                 state = await handler(state)
                 if state.error:
                     state.status = "failed"
+                    _notify(stage_enum, "failed")
                     logger.error(
                         "Pipeline failed at %s: %s", stage_enum.name, state.error
                     )
                     break
                 if state.clarification_needed:
                     state.status = "awaiting_review"
+                    _notify(stage_enum, "done")
                     break
+                _notify(stage_enum, "done")
             except Exception as e:
                 state.error = f"Stage {stage_enum.name} failed: {str(e)}"
                 state.status = "failed"
+                _notify(stage_enum, "failed")
                 logger.exception("Pipeline error at stage %s", stage_enum.name)
                 break
 
@@ -299,6 +324,9 @@ class ExtractionPipeline:
         # Generate embeddings for new/updated nodes
         await self._generate_embeddings(state)
 
+        # Compute edge weights from node embedding similarity
+        await self._compute_edge_weights(state)
+
         # Bridge detection (cross-network)
         await self._detect_bridges(state)
 
@@ -346,6 +374,45 @@ class ExtractionPipeline:
             logger.info("Generated embeddings for %d nodes", len(rows))
         except Exception:
             logger.warning("Embedding generation failed", exc_info=True)
+
+    async def _compute_edge_weights(self, state: PipelineState) -> None:
+        """Compute edge weights from cosine similarity of source/target embeddings."""
+        if not self._vector_store:
+            return
+
+        try:
+            from memora.vector.embeddings import cosine_similarity
+
+            # Get all node IDs for this capture
+            node_rows = self._repo._conn.execute(
+                "SELECT id FROM nodes WHERE source_capture_id = ? AND deleted = FALSE",
+                [state.capture_id],
+            ).fetchall()
+            node_ids = {row[0] for row in node_rows}
+            if not node_ids:
+                return
+
+            # Get all edges touching these nodes
+            placeholders = ", ".join(["?"] * len(node_ids))
+            edge_rows = self._repo._conn.execute(
+                f"SELECT id, source_id, target_id FROM edges "
+                f"WHERE source_id IN ({placeholders}) OR target_id IN ({placeholders})",
+                list(node_ids) + list(node_ids),
+            ).fetchall()
+
+            updated = 0
+            for edge_id, source_id, target_id in edge_rows:
+                src_vec = self._vector_store.get_embedding(source_id)
+                tgt_vec = self._vector_store.get_embedding(target_id)
+                if src_vec is None or tgt_vec is None:
+                    continue
+                weight = max(0.0, cosine_similarity(src_vec, tgt_vec))
+                self._repo.update_edge_weight(edge_id, weight)
+                updated += 1
+
+            logger.info("Updated weights for %d edges", updated)
+        except Exception:
+            logger.warning("Edge weight computation failed", exc_info=True)
 
     async def _detect_bridges(self, state: PipelineState) -> None:
         """Detect cross-network bridges for newly committed nodes."""
