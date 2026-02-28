@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import openai
+from pydantic import ValidationError
 
 from memora.core.retry import async_call_with_retry
 from memora.graph.models import GraphProposal
@@ -24,6 +24,38 @@ from memora.vector.store import VectorStore
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-5-nano"
+
+
+def _build_graph_proposal_schema() -> dict[str, Any]:
+    """Generate a JSON Schema from GraphProposal, stripping schema-level `title` annotations."""
+    schema = GraphProposal.model_json_schema()
+
+    def _strip_titles(obj: Any, inside_properties: bool = False) -> Any:
+        if isinstance(obj, dict):
+            result = {}
+            for k, v in obj.items():
+                # Only strip "title" when it's a schema annotation (not inside "properties")
+                if k == "title" and not inside_properties:
+                    continue
+                result[k] = _strip_titles(v, inside_properties=(k == "properties"))
+            return result
+        if isinstance(obj, list):
+            return [_strip_titles(item, inside_properties=False) for item in obj]
+        return obj
+
+    return _strip_titles(schema)
+
+
+GRAPH_PROPOSAL_SCHEMA = _build_graph_proposal_schema()
+
+_RESPONSE_FORMAT = {
+    "format": {
+        "type": "json_schema",
+        "name": "graph_proposal",
+        "schema": GRAPH_PROPOSAL_SCHEMA,
+        "strict": False,
+    }
+}
 
 
 @dataclass
@@ -135,7 +167,7 @@ class ArchivistAgent:
         # 3. Prepare system prompt with dynamic context injected
         system_prompt = self._inject_placeholders(self._system_prompt, context)
 
-        # 4. Call OpenAI Responses API
+        # 4. Call OpenAI Responses API with json_schema format
         try:
             response = await async_call_with_retry(
                 self._client.responses.create,
@@ -147,7 +179,7 @@ class ArchivistAgent:
                     f"Use capture ID: {capture_id}\n\n"
                     f"Text:\n{text}"
                 ),
-                text={"format": {"type": "json_object"}},
+                text=_RESPONSE_FORMAT,
                 max_output_tokens=4096,
             )
         except openai.APIError as e:
@@ -163,15 +195,18 @@ class ArchivistAgent:
             "output_tokens": response.usage.output_tokens,
         }
 
-        # 5. Parse JSON from response
+        # 5. Parse JSON — json_schema mode guarantees valid JSON
+        if not raw_text or not raw_text.strip():
+            logger.error("Empty response from archivist LLM")
+            return ArchivistResult(
+                raw_response=raw_text or "",
+                token_usage=token_usage,
+            )
+
         try:
-            raw_json = self._extract_json(raw_text)
-        except ValueError as e:
-            logger.error("Failed to parse JSON from archivist response: %s", e)
-            # Retry once with feedback
-            retry_result = await self._retry_extraction(text, capture_id, raw_text, str(e))
-            if retry_result:
-                return retry_result
+            raw_json = json.loads(raw_text)
+        except json.JSONDecodeError as e:
+            logger.error("JSON decode error (truncated response?): %s", e)
             return ArchivistResult(
                 raw_response=raw_text,
                 token_usage=token_usage,
@@ -182,12 +217,32 @@ class ArchivistAgent:
 
         try:
             proposal = GraphProposal(**raw_json)
-        except Exception as e:
-            logger.error("GraphProposal validation failed: %s", e)
-            return ArchivistResult(
-                raw_response=raw_text,
-                token_usage=token_usage,
-            )
+        except ValidationError as e:
+            logger.warning("GraphProposal validation failed, retrying API call: %s", e)
+            retry_response = await self._retry_api_call(system_prompt, text, capture_id)
+            if retry_response is None:
+                return ArchivistResult(
+                    raw_response=raw_text,
+                    token_usage=token_usage,
+                )
+            # Parse the retry response
+            retry_text = retry_response.output_text
+            retry_usage = {
+                "input_tokens": retry_response.usage.input_tokens,
+                "output_tokens": retry_response.usage.output_tokens,
+            }
+            try:
+                retry_json = json.loads(retry_text)
+                retry_json["source_capture_id"] = capture_id
+                proposal = GraphProposal(**retry_json)
+            except (json.JSONDecodeError, ValidationError) as retry_err:
+                logger.error("Retry also failed: %s", retry_err)
+                return ArchivistResult(
+                    raw_response=retry_text,
+                    token_usage=retry_usage,
+                )
+            raw_text = retry_text
+            token_usage = retry_usage
 
         # 7. Check for clarification protocol
         if proposal.confidence == 0.0 and not proposal.nodes_to_create:
@@ -206,108 +261,30 @@ class ArchivistAgent:
             token_usage=token_usage,
         )
 
-    def _extract_json(self, text: str) -> dict[str, Any]:
-        """Extract JSON object from LLM response.
-
-        Handles both raw JSON and markdown code blocks.
-        """
-        text = text.strip()
-
-        # Try direct JSON parse
-        if text.startswith("{"):
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                pass
-
-        # Try to find ```json ... ``` blocks
-        pattern = r"```(?:json)?\s*\n?(.*?)\n?\s*```"
-        matches = re.findall(pattern, text, re.DOTALL)
-        for match in matches:
-            try:
-                return json.loads(match.strip())
-            except json.JSONDecodeError:
-                continue
-
-        # Try to find any JSON object in the text
-        brace_start = text.find("{")
-        if brace_start >= 0:
-            # Find matching closing brace
-            depth = 0
-            for i in range(brace_start, len(text)):
-                if text[i] == "{":
-                    depth += 1
-                elif text[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        try:
-                            return json.loads(text[brace_start:i + 1])
-                        except json.JSONDecodeError:
-                            break
-
-        raise ValueError(f"No valid JSON found in response: {text[:200]}...")
-
-    async def _retry_extraction(
+    async def _retry_api_call(
         self,
+        system_prompt: str,
         text: str,
         capture_id: str,
-        previous_response: str,
-        error: str,
-    ) -> ArchivistResult | None:
-        """Retry extraction with feedback about the parsing error."""
+    ) -> Any | None:
+        """Re-issue the same API call once on validation failure.
+
+        Returns the raw response object or None on failure.
+        """
         try:
-            response = await async_call_with_retry(
+            return await async_call_with_retry(
                 self._client.responses.create,
                 model=self._model,
-                instructions=self._system_prompt,
-                input=[
-                    {
-                        "role": "user",
-                        "content": f"Extract knowledge graph data from this text as JSON. Use capture ID: {capture_id}\n\nText:\n{text}",
-                    },
-                    {
-                        "role": "assistant",
-                        "content": previous_response,
-                    },
-                    {
-                        "role": "user",
-                        "content": (
-                            f"Your previous response could not be parsed as valid JSON. "
-                            f"Error: {error}\n\n"
-                            f"Please respond with ONLY a valid JSON object matching the GraphProposal schema. "
-                            f"No markdown, no explanation — just the JSON."
-                        ),
-                    },
-                ],
-                text={"format": {"type": "json_object"}},
+                instructions=system_prompt,
+                input=(
+                    f"Extract knowledge graph data from this text. "
+                    f"Respond with a single JSON object matching the GraphProposal schema. "
+                    f"Use capture ID: {capture_id}\n\n"
+                    f"Text:\n{text}"
+                ),
+                text=_RESPONSE_FORMAT,
                 max_output_tokens=4096,
             )
-
-            raw_text = response.output_text
-            raw_json = self._extract_json(raw_text)
-            raw_json["source_capture_id"] = capture_id
-            proposal = GraphProposal(**raw_json)
-
-            token_usage = {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            }
-
-            if proposal.confidence == 0.0 and not proposal.nodes_to_create:
-                return ArchivistResult(
-                    proposal=None,
-                    clarification_needed=True,
-                    clarification_message=proposal.human_summary,
-                    raw_response=raw_text,
-                    token_usage=token_usage,
-                )
-
-            return ArchivistResult(
-                proposal=proposal,
-                raw_response=raw_text,
-                token_usage=token_usage,
-            )
-
         except Exception:
-            logger.error("Retry extraction also failed", exc_info=True)
+            logger.error("Retry API call failed", exc_info=True)
             return None

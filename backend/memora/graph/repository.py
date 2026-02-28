@@ -204,6 +204,14 @@ class GraphRepository:
             return None
         return self._row_to_capture(row)
 
+    def list_captures(self, limit: int = 20, offset: int = 0) -> list[Capture]:
+        """List captures ordered by most recent first."""
+        rows = self._conn.execute(
+            "SELECT * FROM captures ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            [limit, offset],
+        ).fetchall()
+        return [self._row_to_capture(row) for row in rows]
+
     def check_capture_exists(self, content_hash: str) -> bool:
         """Check if a capture with the given hash already has a successful proposal.
 

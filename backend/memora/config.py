@@ -46,7 +46,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "sm2_default_easiness": 2.5,
     "bridge_similarity_threshold": 0.75,
-    "embedding_model": "BAAI/bge-m3",
+    "embedding_model": "all-mpnet-base-v2",
     "data_dir": "~/.memora",
     "log_level": "INFO",
 }
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default=DEFAULT_DATA_DIR)
 
     # Embedding
-    embedding_model: str = "BAAI/bge-m3"
+    embedding_model: str = "all-mpnet-base-v2"
 
     # Confidence & governance
     auto_approve_threshold: float = Field(default=0.85, ge=0.0, le=1.0)

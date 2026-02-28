@@ -55,6 +55,14 @@ def _get_pipeline(request: Request):
     return pipeline
 
 
+@router.get("")
+async def list_captures(request: Request, limit: int = 20, offset: int = 0):
+    """List captures, most recent first."""
+    repo = request.app.state.repo
+    captures = repo.list_captures(limit=limit, offset=offset)
+    return [c.model_dump(mode="json") for c in captures]
+
+
 @router.post("", response_model=CaptureResponse)
 async def create_capture(body: CaptureCreate, request: Request) -> CaptureResponse:
     """Accept a text capture, compute hash, check dedup, store, and trigger pipeline."""

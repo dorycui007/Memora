@@ -15,7 +15,7 @@ import pyarrow as pa
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_DIM = 1024
+EMBEDDING_DIM = 768
 
 # PyArrow schema for the embeddings table
 EMBEDDINGS_SCHEMA = pa.schema([

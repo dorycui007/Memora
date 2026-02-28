@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -80,8 +80,8 @@ def archivist(mock_openai_response):
     """Create an ArchivistAgent with mocked OpenAI client."""
     with patch("memora.agents.archivist.openai") as mock_module:
         mock_client = MagicMock()
-        mock_client.responses.create.return_value = mock_openai_response
-        mock_module.OpenAI.return_value = mock_client
+        mock_client.responses.create = AsyncMock(return_value=mock_openai_response)
+        mock_module.AsyncOpenAI.return_value = mock_client
 
         agent = ArchivistAgent(api_key="test-key-xxx")
         agent._client = mock_client
@@ -89,9 +89,10 @@ def archivist(mock_openai_response):
 
 
 class TestArchivistExtraction:
-    def test_successful_extraction(self, archivist, mock_openai_response):
+    @pytest.mark.asyncio
+    async def test_successful_extraction(self, archivist, mock_openai_response):
         capture_id = str(uuid4())
-        result = archivist.extract(
+        result = await archivist.extract(
             "Had coffee with Sam Chen today at Blue Bottle. He wants to see our pitch deck.",
             capture_id,
         )
@@ -104,60 +105,143 @@ class TestArchivistExtraction:
         assert len(result.proposal.edges_to_create) == 1
         assert result.proposal.source_capture_id == capture_id
 
-    def test_token_usage_tracked(self, archivist):
-        result = archivist.extract("test text", str(uuid4()))
+    @pytest.mark.asyncio
+    async def test_token_usage_tracked(self, archivist):
+        result = await archivist.extract("test text", str(uuid4()))
         assert "input_tokens" in result.token_usage
         assert "output_tokens" in result.token_usage
         assert result.token_usage["input_tokens"] == 500
         assert result.token_usage["output_tokens"] == 200
 
-    def test_node_types_correct(self, archivist):
-        result = archivist.extract("test text", str(uuid4()))
+    @pytest.mark.asyncio
+    async def test_node_types_correct(self, archivist):
+        result = await archivist.extract("test text", str(uuid4()))
         node_types = [n.node_type.value for n in result.proposal.nodes_to_create]
         assert "PERSON" in node_types
         assert "EVENT" in node_types
 
-    def test_networks_assigned(self, archivist):
-        result = archivist.extract("test text", str(uuid4()))
+    @pytest.mark.asyncio
+    async def test_networks_assigned(self, archivist):
+        result = await archivist.extract("test text", str(uuid4()))
         for node in result.proposal.nodes_to_create:
             assert len(node.networks) > 0
 
 
 class TestArchivistClarification:
-    def test_clarification_response(self, mock_clarification_response):
+    @pytest.mark.asyncio
+    async def test_clarification_response(self, mock_clarification_response):
         with patch("memora.agents.archivist.openai") as mock_module:
             mock_client = MagicMock()
-            mock_client.responses.create.return_value = mock_clarification_response
-            mock_module.OpenAI.return_value = mock_client
+            mock_client.responses.create = AsyncMock(return_value=mock_clarification_response)
+            mock_module.AsyncOpenAI.return_value = mock_client
 
             agent = ArchivistAgent(api_key="test-key")
             agent._client = mock_client
 
-            result = agent.extract("Update the project status", str(uuid4()))
+            result = await agent.extract("Update the project status", str(uuid4()))
             assert result.clarification_needed is True
             assert result.proposal is None
             assert "project" in result.clarification_message.lower()
 
 
-class TestArchivistJSONParsing:
-    def test_parse_raw_json(self, archivist):
-        raw = '{"confidence": 0.5, "nodes_to_create": [], "edges_to_create": [], "nodes_to_update": [], "human_summary": "test"}'
-        parsed = archivist._extract_json(raw)
-        assert parsed["confidence"] == 0.5
+class TestArchivistValidationRetry:
+    @pytest.mark.asyncio
+    async def test_retry_on_validation_error(self):
+        """First response has an invalid enum value; retry returns valid JSON."""
+        invalid_json = {
+            "confidence": 0.8,
+            "nodes_to_create": [
+                {
+                    "temp_id": "n1",
+                    "node_type": "INVALID_TYPE",
+                    "title": "Test",
+                    "content": "test content",
+                }
+            ],
+            "edges_to_create": [],
+            "nodes_to_update": [],
+            "human_summary": "test",
+        }
+        valid_json = {
+            "confidence": 0.8,
+            "nodes_to_create": [
+                {
+                    "temp_id": "n1",
+                    "node_type": "NOTE",
+                    "title": "Test",
+                    "content": "test content",
+                    "networks": ["PERSONAL_GROWTH"],
+                }
+            ],
+            "edges_to_create": [],
+            "nodes_to_update": [],
+            "human_summary": "test",
+        }
 
-    def test_parse_markdown_block(self, archivist):
-        raw = '```json\n{"confidence": 0.5, "nodes_to_create": [], "edges_to_create": [], "nodes_to_update": [], "human_summary": "test"}\n```'
-        parsed = archivist._extract_json(raw)
-        assert parsed["confidence"] == 0.5
+        first_response = MagicMock()
+        first_response.output_text = json.dumps(invalid_json)
+        first_response.usage = MagicMock(input_tokens=100, output_tokens=50)
 
-    def test_parse_embedded_json(self, archivist):
-        raw = 'Here is the result:\n{"confidence": 0.5, "nodes_to_create": [], "edges_to_create": [], "nodes_to_update": [], "human_summary": "test"}\nDone!'
-        parsed = archivist._extract_json(raw)
-        assert parsed["confidence"] == 0.5
+        second_response = MagicMock()
+        second_response.output_text = json.dumps(valid_json)
+        second_response.usage = MagicMock(input_tokens=100, output_tokens=50)
 
-    def test_invalid_json_raises(self, archivist):
-        with pytest.raises(ValueError, match="No valid JSON"):
-            archivist._extract_json("This is not JSON at all")
+        with patch("memora.agents.archivist.openai") as mock_module:
+            mock_client = MagicMock()
+            mock_client.responses.create = AsyncMock(
+                side_effect=[first_response, second_response]
+            )
+            mock_module.AsyncOpenAI.return_value = mock_client
+
+            agent = ArchivistAgent(api_key="test-key")
+            agent._client = mock_client
+
+            capture_id = str(uuid4())
+            result = await agent.extract("Some text", capture_id)
+
+            assert result.proposal is not None
+            assert result.proposal.nodes_to_create[0].node_type.value == "NOTE"
+            assert result.proposal.source_capture_id == capture_id
+
+
+class TestArchivistEmptyResponse:
+    @pytest.mark.asyncio
+    async def test_empty_output_text(self):
+        """Empty output_text returns a failed ArchivistResult without crashing."""
+        response = MagicMock()
+        response.output_text = ""
+        response.usage = MagicMock(input_tokens=100, output_tokens=0)
+
+        with patch("memora.agents.archivist.openai") as mock_module:
+            mock_client = MagicMock()
+            mock_client.responses.create = AsyncMock(return_value=response)
+            mock_module.AsyncOpenAI.return_value = mock_client
+
+            agent = ArchivistAgent(api_key="test-key")
+            agent._client = mock_client
+
+            result = await agent.extract("test text", str(uuid4()))
+            assert result.proposal is None
+            assert result.clarification_needed is False
+
+    @pytest.mark.asyncio
+    async def test_none_output_text(self):
+        """None output_text returns a failed ArchivistResult without crashing."""
+        response = MagicMock()
+        response.output_text = None
+        response.usage = MagicMock(input_tokens=100, output_tokens=0)
+
+        with patch("memora.agents.archivist.openai") as mock_module:
+            mock_client = MagicMock()
+            mock_client.responses.create = AsyncMock(return_value=response)
+            mock_module.AsyncOpenAI.return_value = mock_client
+
+            agent = ArchivistAgent(api_key="test-key")
+            agent._client = mock_client
+
+            result = await agent.extract("test text", str(uuid4()))
+            assert result.proposal is None
+            assert result.clarification_needed is False
 
 
 class TestArchivistRAGContext:
@@ -179,23 +263,26 @@ class TestArchivistRAGContext:
 
 
 class TestArchivistAPIError:
-    def test_api_error_returns_empty_result(self):
+    @pytest.mark.asyncio
+    async def test_api_error_returns_empty_result(self):
         import openai as openai_module
 
         with patch("memora.agents.archivist.openai") as mock_module:
             mock_client = MagicMock()
-            mock_module.OpenAI.return_value = mock_client
+            mock_module.AsyncOpenAI.return_value = mock_client
             mock_module.APIError = openai_module.APIError
 
-            mock_client.responses.create.side_effect = openai_module.APIError(
-                message="Rate limited",
-                request=MagicMock(),
-                body=None,
+            mock_client.responses.create = AsyncMock(
+                side_effect=openai_module.APIError(
+                    message="Rate limited",
+                    request=MagicMock(),
+                    body=None,
+                )
             )
 
             agent = ArchivistAgent(api_key="test-key")
             agent._client = mock_client
 
-            result = agent.extract("test text", str(uuid4()))
+            result = await agent.extract("test text", str(uuid4()))
             assert result.proposal is None
             assert result.clarification_needed is False

@@ -430,6 +430,25 @@ class MemoraApp:
         try:
             state = asyncio.run(pipeline.run(str(cid), text))
             self._render_pipeline_result(state, text)
+
+            # If proposal awaiting review, prompt to approve immediately
+            if state.proposal_id and state.status == "awaiting_review" and not state.clarification_needed:
+                action = prompt(f"\n  Approve this proposal? [{C.GREEN}Y{C.RESET}/n/skip] ")
+                if action.lower() not in ("n", "no", "skip"):
+                    self._approve_proposal(state.proposal_id[:8])
+
+            # If clarification needed, let user provide more context and re-run
+            if state.clarification_needed:
+                clarify = prompt(f"\n  {C.YELLOW}Provide clarification{C.RESET} (or 'skip'): ")
+                if clarify and clarify.lower() != "skip":
+                    enriched = f"{text}\n\n[Clarification]: {clarify}"
+                    spinner("Re-running extraction with clarification...", 0.6)
+                    state2 = asyncio.run(pipeline.run(str(cid), enriched))
+                    self._render_pipeline_result(state2, enriched)
+                    if state2.proposal_id and state2.status == "awaiting_review":
+                        action = prompt(f"\n  Approve this proposal? [{C.GREEN}Y{C.RESET}/n/skip] ")
+                        if action.lower() not in ("n", "no", "skip"):
+                            self._approve_proposal(state2.proposal_id[:8])
         except Exception as e:
             print(f"\n  {C.RED}Pipeline error:{C.RESET} {e}")
             self._render_capture_stored(str(cid), text, ai=False)
