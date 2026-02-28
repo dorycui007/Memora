@@ -958,14 +958,15 @@ class MemoraApp:
         self._render_ascii_graph(subgraph, center_id=None)
 
     def _render_ascii_graph(self, subgraph, center_id: UUID | None = None):
-        """Render a subgraph as an indented BFS tree with cross-edge appendix.
+        """Render a subgraph as a 2D mind-map / flowchart with boxed nodes
+        and routed connectors.
 
         Layout strategy:
         - Find connected components
-        - BFS tree per component (rooted at center_id or most-connected node)
-        - DFS render with tree-command-style prefixes
-        - Cross-edges (not in BFS tree) listed in aligned appendix
-        - Isolated singletons grouped at bottom
+        - BFS tree per component, slot-based vertical positioning
+        - Render on a character grid: boxed nodes in columns, connectors
+          with junction routing and edge labels between them
+        - Cross-edges listed below the diagram
         """
         from collections import defaultdict, deque
 
@@ -985,245 +986,484 @@ class MemoraApp:
 
         for e in edges:
             src, tgt = str(e.source_id), str(e.target_id)
-            label = e.edge_type.value if hasattr(e.edge_type, 'value') else str(e.edge_type)
+            label = (e.edge_type.value if hasattr(e.edge_type, 'value')
+                     else str(e.edge_type))
             bidi = getattr(e, 'bidirectional', False)
             if src in node_map and tgt in node_map:
                 adj[src].append((tgt, label, bidi))
                 adj[tgt].append((src, label, bidi))
                 edge_index[frozenset({src, tgt})] = (label, src, tgt, bidi)
 
-        center_str = str(center_id) if center_id and str(center_id) in node_map else None
+        center_str = (str(center_id)
+                      if center_id and str(center_id) in node_map else None)
 
         # ── 2. Find connected components ──────────────────────────
         unvisited = set(node_map.keys())
         components: list[list[str]] = []
         while unvisited:
             seed = next(iter(unvisited))
-            component: list[str] = []
-            queue = deque([seed])
-            while queue:
-                nid = queue.popleft()
+            comp: list[str] = []
+            q = deque([seed])
+            while q:
+                nid = q.popleft()
                 if nid not in unvisited:
                     continue
                 unvisited.discard(nid)
-                component.append(nid)
-                for neighbor, _, _ in adj.get(nid, []):
-                    if neighbor in unvisited:
-                        queue.append(neighbor)
-            components.append(component)
+                comp.append(nid)
+                for nb, _, _ in adj.get(nid, []):
+                    if nb in unvisited:
+                        q.append(nb)
+            components.append(comp)
         components.sort(key=len, reverse=True)
 
-        multi_components = [c for c in components if len(c) > 1]
-        isolated_nodes = [c[0] for c in components if len(c) == 1]
+        multi = [c for c in components if len(c) > 1]
+        isolated = [c[0] for c in components if len(c) == 1]
 
-        # Move component containing center_id to the front
         if center_str:
-            for i, comp in enumerate(multi_components):
-                if center_str in comp:
-                    multi_components.insert(0, multi_components.pop(i))
+            for i, c in enumerate(multi):
+                if center_str in c:
+                    multi.insert(0, multi.pop(i))
                     break
 
-        n_display_components = len(multi_components) + (1 if isolated_nodes else 0)
+        n_comps = len(multi) + (1 if isolated else 0)
 
         # ── 3. Header ────────────────────────────────────────────
         print(f"\n{divider('\u2550', C.CYAN)}")
         mode = "neighborhood" if center_id else "full graph"
         print(f"  {C.BOLD}{C.CYAN}RELATIONSHIP GRAPH{C.RESET}  "
               f"{C.DIM}({len(nodes)} nodes, {len(edges)} edges, "
-              f"{n_display_components} component"
-              f"{'s' if n_display_components != 1 else ''}, {mode}){C.RESET}")
+              f"{n_comps} component"
+              f"{'s' if n_comps != 1 else ''}, {mode}){C.RESET}")
         print(divider())
 
-        # ── 4. Node label helper ─────────────────────────────────
-        def node_label(nid, depth=0, highlight=False):
-            n = node_map.get(nid)
-            if not n:
-                return f"{C.DIM}[?]{C.RESET}"
-            icon = NODE_ICONS.get(n.node_type.value, " ")
-            available = w - 4 - depth * 4 - 14 - len(n.networks) * 4
-            max_t = max(10, min(36, available))
-            title = n.title[:max_t] + (".." if len(n.title) > max_t else "")
-            nets = "".join(NETWORK_ICONS.get(nt.value, "") for nt in n.networks[:3])
-            short_id = str(n.id)[:6]
-            if highlight:
-                return (f"{C.BG_CYAN}{C.BLACK} {icon} {title} {C.RESET}"
-                        f" {C.DIM}{short_id}{C.RESET} {nets}")
-            return f"{icon} {C.BOLD}{title}{C.RESET} {C.DIM}[{short_id}]{C.RESET} {nets}"
+        # ── 4. Character grid ─────────────────────────────────────
+        class Grid:
+            """2D character buffer with per-cell foreground color + bold."""
+            def __init__(self, gw, gh):
+                self.gw, self.gh = gw, gh
+                self.ch = [[' '] * gw for _ in range(gh)]
+                self.fg = [[None] * gw for _ in range(gh)]
+                self.bd = [[False] * gw for _ in range(gh)]
 
-        # ── 5. BFS tree builder ──────────────────────────────────
-        def build_bfs_tree(root, comp_set):
-            parent = {root: None}
-            depth = {root: 0}
-            q = deque([root])
-            while q:
-                nid = q.popleft()
-                for neighbor, _, _ in adj.get(nid, []):
-                    if neighbor in comp_set and neighbor not in parent:
-                        parent[neighbor] = nid
-                        depth[neighbor] = depth[nid] + 1
-                        q.append(neighbor)
-            return parent, depth
+            def put(self, x, y, c, fg=None, bold=False):
+                if 0 <= x < self.gw and 0 <= y < self.gh:
+                    self.ch[y][x] = c
+                    self.fg[y][x] = fg
+                    self.bd[y][x] = bold
 
-        # ── 6. Tree renderer (iterative DFS) ─────────────────────
-        def render_tree(root, parent_map, depth_map, is_center_root):
-            children = defaultdict(list)
-            for nid, par in parent_map.items():
-                if par is not None:
-                    children[par].append(nid)
-            for par in children:
-                children[par].sort(
-                    key=lambda k: (node_map[k].node_type.value, node_map[k].title))
+            def puts(self, x, y, text, fg=None, bold=False):
+                for i, c in enumerate(text):
+                    self.put(x + i, y, c, fg, bold)
 
-            tree_edges_used = set()
-            for nid, par in parent_map.items():
-                if par is not None:
-                    tree_edges_used.add(frozenset({nid, par}))
+            def render(self):
+                out: list[str] = []
+                for y in range(self.gh):
+                    last = -1
+                    for x in range(self.gw - 1, -1, -1):
+                        if self.ch[y][x] != ' ':
+                            last = x
+                            break
+                    if last < 0:
+                        out.append('')
+                        continue
+                    line = ''
+                    cf, cb = None, False
+                    for x in range(last + 1):
+                        c = self.ch[y][x]
+                        f, b = self.fg[y][x], self.bd[y][x]
+                        if f != cf or b != cb:
+                            if cf or cb:
+                                line += C.RESET
+                            if b:
+                                line += C.BOLD
+                            if f:
+                                line += f
+                            cf, cb = f, b
+                        line += c
+                    if cf or cb:
+                        line += C.RESET
+                    out.append(line)
+                while out and not out[-1]:
+                    out.pop()
+                return out
 
-            # Stack: (node_id, prefix_for_children, is_last, is_root)
-            stack = [(root, "", True, True)]
-            while stack:
-                nid, prefix, is_last, is_root_node = stack.pop()
-                d = depth_map.get(nid, 0)
+        # ── 5. Icon / color maps (plain chars, no ANSI) ───────────
+        ICHARS = {
+            "EVENT": "*", "PERSON": "@", "COMMITMENT": "!",
+            "DECISION": "?", "GOAL": ">", "FINANCIAL_ITEM": "$",
+            "NOTE": "#", "IDEA": "~", "PROJECT": "P",
+            "CONCEPT": "C", "REFERENCE": "R", "INSIGHT": "!",
+        }
+        ICOLORS = {
+            "EVENT": C.YELLOW, "PERSON": C.CYAN, "COMMITMENT": C.RED,
+            "DECISION": C.GREEN, "GOAL": C.MAGENTA,
+            "FINANCIAL_ITEM": C.GREEN, "NOTE": C.LGRAY, "IDEA": C.PINK,
+            "PROJECT": C.BLUE, "CONCEPT": C.TEAL, "REFERENCE": C.DIM,
+            "INSIGHT": C.ORANGE,
+        }
+        NCHARS = {
+            "ACADEMIC": "A", "PROFESSIONAL": "P", "FINANCIAL": "$",
+            "HEALTH": "H", "PERSONAL_GROWTH": "G", "SOCIAL": "S",
+            "VENTURES": "V",
+        }
+        NCOLORS = {
+            "ACADEMIC": C.BLUE, "PROFESSIONAL": C.CYAN,
+            "FINANCIAL": C.GREEN, "HEALTH": C.RED,
+            "PERSONAL_GROWTH": C.MAGENTA, "SOCIAL": C.YELLOW,
+            "VENTURES": C.ORANGE,
+        }
 
-                if is_root_node:
-                    print(f"  {node_label(nid, d, highlight=is_center_root)}")
-                    child_prefix = "  "
-                else:
-                    par = parent_map[nid]
-                    key = frozenset({nid, par})
-                    info = edge_index.get(key, ("", par, nid, False))
-                    elabel, esrc, _etgt, ebidi = info
-                    if ebidi:
-                        arrow = "\u2194"
-                    elif esrc == par:
-                        arrow = "\u2192"
-                    else:
-                        arrow = "\u2190"
-                    conn = "\u2514\u2500\u2500 " if is_last else "\u251c\u2500\u2500 "
-                    elabel_str = f"{C.DIM}[{elabel[:10]}{arrow}]{C.RESET} " if elabel else ""
-                    print(f"  {prefix}{conn}{elabel_str}{node_label(nid, d)}")
-                    child_prefix = prefix + ("    " if is_last else "\u2502   ")
+        # ── 6. Junction character lookup ──────────────────────────
+        _JUNC = {
+            0b0011: '\u250c', 0b0111: '\u251c', 0b0110: '\u2514',
+            0b1011: '\u252c', 0b1111: '\u253c', 0b1110: '\u2534',
+            0b1001: '\u2510', 0b1101: '\u2524', 0b1100: '\u2518',
+            0b1010: '\u2500', 0b0101: '\u2502',
+            0b1000: '\u2500', 0b0010: '\u2500',
+            0b0100: '\u2502', 0b0001: '\u2502',
+        }
 
-                kids = children.get(nid, [])
-                for i, kid in enumerate(reversed(kids)):
-                    stack.append((kid, child_prefix, i == 0, False))
+        def junc(left, up, right, down):
+            return _JUNC.get(
+                (left << 3) | (up << 2) | (right << 1) | down, ' ')
 
-            return tree_edges_used
+        # ── 7. Constants ─────────────────────────────────────────
+        BOX_H = 3       # top border, content, bottom border
+        GAP_Y = 1       # vertical gap between adjacent boxes
+        SLOT_H = BOX_H + GAP_Y   # = 4 rows per slot
+        CONN_W = 14     # horizontal gap between columns (connectors)
+        LABEL_MAX = 8   # max edge-label chars on a connector
 
-        # ── 7. Cross-edge renderer ───────────────────────────────
-        def render_cross_edges(cross_list):
-            if not cross_list:
+        # ── 8. Draw a node box on the grid ────────────────────────
+        def draw_box(g, x, y, bw, nid,
+                     highlight=False, right_conn=False, left_conn=False):
+            n = node_map[nid]
+            bc = C.CYAN if highlight else C.DIM
+
+            # -- borders --
+            g.put(x, y, '\u250c', bc)
+            for i in range(1, bw - 1):
+                g.put(x + i, y, '\u2500', bc)
+            g.put(x + bw - 1, y, '\u2510', bc)
+
+            lc = '\u2524' if left_conn else '\u2502'
+            rc = '\u251c' if right_conn else '\u2502'
+            g.put(x, y + 1, lc, bc)
+            g.put(x + bw - 1, y + 1, rc, bc)
+
+            g.put(x, y + 2, '\u2514', bc)
+            for i in range(1, bw - 1):
+                g.put(x + i, y + 2, '\u2500', bc)
+            g.put(x + bw - 1, y + 2, '\u2518', bc)
+
+            # -- content --
+            inner = bw - 2
+            ic = ICHARS.get(n.node_type.value, ' ')
+            icol = ICOLORS.get(n.node_type.value, None)
+            sid = str(n.id)[:6]
+
+            nets = n.networks[:1]
+            net_w = 4 if nets else 0       # " [X]"
+            overhead = 3 + 9 + net_w       # " i " + " [xxxxxx]" + net
+            title_max = max(3, inner - overhead)
+            title = n.title[:title_max]
+            if len(n.title) > title_max and title_max > 4:
+                title = title[:-2] + '..'
+
+            cx = x + 1
+            g.put(cx, y + 1, ' ')
+            g.put(cx + 1, y + 1, ic, icol, bold=highlight)
+            g.put(cx + 2, y + 1, ' ')
+            cx += 3
+
+            tc = C.CYAN if highlight else None
+            for ch in title:
+                g.put(cx, y + 1, ch, tc, bold=True)
+                cx += 1
+
+            # right-align [id] and optional [net]
+            right_start = x + bw - 1 - (9 + net_w)
+            if right_start > cx:
+                cx = right_start
+
+            g.put(cx, y + 1, ' ', C.DIM)
+            cx += 1
+            g.puts(cx, y + 1, '[' + sid + ']', C.DIM)
+            cx += 8
+
+            if nets and cx < x + bw - 4:
+                nt = nets[0].value
+                nc = NCOLORS.get(nt, C.DIM)
+                nch = NCHARS.get(nt, '?')
+                g.puts(cx, y + 1, '[' + nch + ']', nc)
+
+        # ── 9. Draw connectors from a parent to its children ─────
+        def draw_connectors(g, par_nid, kids, ngx, ngy, bw):
+            par_mid = ngy[par_nid] + 1          # connector row
+            gap_start = ngx[par_nid] + bw       # first col after parent box
+            jx = gap_start + 2                  # junction column
+
+            child_info = [(k, ngx[k], ngy[k] + 1)
+                          for k in kids if k in ngy]
+            if not child_info:
                 return
-            rule_w = max(0, w - 28)
-            print(f"\n  {C.DIM}\u2500\u2500 cross-connections "
-                  + "\u2500" * rule_w + f"{C.RESET}")
+            child_info.sort(key=lambda t: t[2])
 
-            src_parts = []
-            for e in cross_list:
-                sn = node_map.get(str(e.source_id))
-                s_title = sn.title[:18] if sn else str(e.source_id)[:8]
-                src_parts.append(f"{s_title} [{str(e.source_id)[:6]}]")
-            max_src_vis = max(len(s) for s in src_parts) if src_parts else 20
+            top_y = min(par_mid, child_info[0][2])
+            bot_y = max(par_mid, child_info[-1][2])
 
-            for idx, e in enumerate(cross_list[:20]):
-                src, tgt = str(e.source_id), str(e.target_id)
-                elabel = e.edge_type.value if hasattr(e.edge_type, 'value') else str(e.edge_type)
-                bidi = getattr(e, 'bidirectional', False)
-                sn = node_map.get(src)
-                tn = node_map.get(tgt)
-                s_icon = NODE_ICONS.get(sn.node_type.value, " ") if sn else " "
-                t_icon = NODE_ICONS.get(tn.node_type.value, " ") if tn else " "
-                s_title = sn.title[:18] if sn else src[:8]
-                t_title = tn.title[:18] if tn else tgt[:8]
-                src_text = f"{s_title} [{src[:6]}]"
-                pad = max_src_vis - len(src_text) + 1
-                arrow = "\u2194" if bidi else "\u2192"
-                print(f"  {s_icon} {src_text}{' ' * pad}"
-                      f" {C.DIM}\u2500\u2500[{elabel[:12]}{arrow}]\u2500\u2500{C.RESET} "
-                      f"{t_icon} {C.BOLD}{t_title}{C.RESET} "
-                      f"{C.DIM}[{tgt[:6]}]{C.RESET}")
+            # horizontal from parent right-edge to junction
+            for cx in range(gap_start, min(jx + 1, g.gw)):
+                g.put(cx, par_mid, '\u2500', C.DIM)
 
-            if len(cross_list) > 20:
-                remaining = len(cross_list) - 20
-                print(f"  {C.DIM}  ... and {remaining} more cross-connections{C.RESET}")
+            # vertical at junction column
+            for cy in range(top_y, bot_y + 1):
+                g.put(jx, cy, '\u2502', C.DIM)
 
-        # ── 8. Main render loop ──────────────────────────────────
-        all_tree_edges: set[frozenset] = set()
+            # junction characters (overwrite plain │ / ─)
+            child_mids = {ci[2] for ci in child_info}
+            for cy in range(top_y, bot_y + 1):
+                ch = junc(cy == par_mid, cy > top_y,
+                          cy in child_mids, cy < bot_y)
+                if ch != ' ':
+                    g.put(jx, cy, ch, C.DIM)
 
-        for comp_idx, component in enumerate(multi_components):
-            comp_set = set(component)
+            # horizontal branches + edge labels to each child
+            for kid, kid_x, kid_mid in child_info:
+                for cx in range(jx + 1, kid_x):
+                    g.put(cx, kid_mid, '\u2500', C.DIM)
 
-            if len(multi_components) > 1:
-                print(f"\n  {C.BOLD}Component {comp_idx + 1} of "
-                      f"{len(multi_components)}{C.RESET}"
-                      f"  {C.DIM}({len(component)} nodes){C.RESET}")
-                print(f"  {C.DIM}" + "\u2500" * min(w - 4, 40) + f"{C.RESET}")
-            else:
-                print()
+                einfo = edge_index.get(frozenset({par_nid, kid}),
+                                       ('', par_nid, kid, False))
+                elabel, esrc, _, ebidi = einfo
+                if ebidi:
+                    arrow = '\u2194'
+                elif esrc == par_nid:
+                    arrow = '\u2192'
+                else:
+                    arrow = '\u2190'
 
-            if center_str and center_str in comp_set:
-                root = center_str
+                ltxt = elabel[:LABEL_MAX] + arrow
+                avail = kid_x - jx - 2
+                if len(ltxt) > avail > 0:
+                    ltxt = ltxt[:avail]
+                g.puts(jx + 1, kid_mid, ltxt, C.DIM)
+
+        # ── 10. Render one connected component ────────────────────
+        def render_component(comp, center_nid):
+            comp_set = set(comp)
+
+            # pick root
+            if center_nid and center_nid in comp_set:
+                root = center_nid
             else:
                 root = max(comp_set, key=lambda k: len(adj.get(k, [])))
 
-            parent_map, depth_map = build_bfs_tree(root, comp_set)
-            tree_edges = render_tree(root, parent_map, depth_map,
-                                     is_center_root=(root == center_str))
+            # BFS tree
+            parent_map = {root: None}
+            depth_map = {root: 0}
+            children_map: dict[str, list[str]] = defaultdict(list)
+            q = deque([root])
+            while q:
+                nid = q.popleft()
+                for nb, _, _ in adj.get(nid, []):
+                    if nb in comp_set and nb not in parent_map:
+                        parent_map[nb] = nid
+                        depth_map[nb] = depth_map[nid] + 1
+                        children_map[nid].append(nb)
+                        q.append(nb)
+
+            for par in children_map:
+                children_map[par].sort(
+                    key=lambda k: (node_map[k].node_type.value,
+                                   node_map[k].title))
+
+            max_depth = max(depth_map.values()) if depth_map else 0
+
+            # determine how many layers fit in the terminal
+            vis = max_depth + 1
+            box_w = 24
+            while vis > 1:
+                needed = vis * box_w + (vis - 1) * CONN_W + 4
+                if needed <= w:
+                    break
+                vis -= 1
+            box_w = max(16, min(28,
+                        (w - 4 - max(0, vis - 1) * CONN_W) // max(1, vis)))
+            while vis > 1:
+                needed = vis * box_w + (vis - 1) * CONN_W + 4
+                if needed <= w:
+                    break
+                vis -= 1
+
+            # prune children beyond visible depth
+            if vis < max_depth + 1:
+                for nid in list(children_map.keys()):
+                    if depth_map.get(nid, 0) >= vis - 1:
+                        children_map[nid] = []
+
+            # slot-based layout (DFS assignment, parents centred)
+            positions: dict[str, tuple[int, int]] = {}
+            slot_ctr = [0]
+
+            def assign(nid):
+                kids = children_map.get(nid, [])
+                if not kids:
+                    positions[nid] = (depth_map[nid], slot_ctr[0])
+                    slot_ctr[0] += 1
+                    return slot_ctr[0] - 1, slot_ctr[0] - 1
+                first = slot_ctr[0]
+                for kid in kids:
+                    assign(kid)
+                last = slot_ctr[0] - 1
+                positions[nid] = (depth_map[nid], (first + last) // 2)
+                return first, last
+
+            assign(root)
+            total_slots = slot_ctr[0]
+
+            # grid coordinates
+            mx, my = 1, 0
+            ngx: dict[str, int] = {}
+            ngy: dict[str, int] = {}
+            for nid, (col, slot) in positions.items():
+                ngx[nid] = mx + col * (box_w + CONN_W)
+                ngy[nid] = my + slot * SLOT_H
+
+            grid_w = (mx + vis * box_w + max(0, vis - 1) * CONN_W
+                      + mx + 1)
+            grid_w = min(grid_w, w - 2)
+            grid_h = min(my + total_slots * SLOT_H + my, 200)
+
+            g = Grid(grid_w, grid_h)
+
+            # which nodes have outgoing / incoming connectors?
+            has_right = {nid for nid in children_map if children_map[nid]}
+            has_left = {nid for nid, par in parent_map.items()
+                        if par is not None}
+
+            # draw connectors first (behind boxes)
+            for par_nid in children_map:
+                if children_map[par_nid]:
+                    draw_connectors(g, par_nid, children_map[par_nid],
+                                    ngx, ngy, box_w)
+
+            # draw boxes on top
+            for nid in positions:
+                if nid in ngx and nid in ngy:
+                    draw_box(g, ngx[nid], ngy[nid], box_w, nid,
+                             highlight=(nid == center_nid),
+                             right_conn=(nid in has_right),
+                             left_conn=(nid in has_left))
+
+            for line in g.render():
+                print(f"  {line}")
+
+            if vis < max_depth + 1:
+                deeper = sum(1 for d in depth_map.values() if d >= vis)
+                print(f"\n  {C.DIM}(+{deeper} nodes beyond depth "
+                      f"{vis - 1} not shown){C.RESET}")
+
+            return {frozenset({nid, par})
+                    for nid, par in parent_map.items() if par is not None}
+
+        # ── 11. Main render loop ─────────────────────────────────
+        all_tree_edges: set[frozenset] = set()
+
+        for ci, comp in enumerate(multi):
+            if len(multi) > 1:
+                print(f"\n  {C.BOLD}Component {ci + 1} of "
+                      f"{len(multi)}{C.RESET}"
+                      f"  {C.DIM}({len(comp)} nodes){C.RESET}")
+
+            tree_edges = render_component(comp, center_str)
             all_tree_edges |= tree_edges
 
-            comp_cross = [
+            # cross-edges for this component
+            cs = set(comp)
+            cross = [
                 e for e in edges
-                if frozenset({str(e.source_id), str(e.target_id)}) not in all_tree_edges
-                and str(e.source_id) in comp_set
-                and str(e.target_id) in comp_set
+                if (frozenset({str(e.source_id), str(e.target_id)})
+                    not in all_tree_edges)
+                and str(e.source_id) in cs
+                and str(e.target_id) in cs
             ]
-            render_cross_edges(comp_cross)
-            all_tree_edges |= {
-                frozenset({str(e.source_id), str(e.target_id)})
-                for e in comp_cross}
+            if cross:
+                rule_w = max(0, w - 28)
+                print(f"\n  {C.DIM}\u2500\u2500 cross-connections "
+                      + "\u2500" * rule_w + f"{C.RESET}")
+                for e in cross[:15]:
+                    src, tgt = str(e.source_id), str(e.target_id)
+                    el = (e.edge_type.value
+                          if hasattr(e.edge_type, 'value')
+                          else str(e.edge_type))
+                    sn, tn = node_map.get(src), node_map.get(tgt)
+                    si = ICHARS.get(sn.node_type.value, ' ') if sn else ' '
+                    ti = ICHARS.get(tn.node_type.value, ' ') if tn else ' '
+                    st = sn.title[:16] if sn else src[:8]
+                    tt = tn.title[:16] if tn else tgt[:8]
+                    bd = getattr(e, 'bidirectional', False)
+                    arr = '\u2194' if bd else '\u2192'
+                    print(f"  {si} {st} [{src[:6]}] "
+                          f"\u2500\u2500[{el[:10]}{arr}]\u2500\u2500 "
+                          f"{ti} {tt} [{tgt[:6]}]")
+                if len(cross) > 15:
+                    print(f"  {C.DIM}  ... and "
+                          f"{len(cross) - 15} more{C.RESET}")
+                all_tree_edges |= {
+                    frozenset({str(e.source_id), str(e.target_id)})
+                    for e in cross}
 
-        # ── 9. Isolated singletons ───────────────────────────────
-        if isolated_nodes:
-            rule_w = max(0, w - 25)
+        # ── 12. Isolated singletons ──────────────────────────────
+        if isolated:
+            rule_w = max(0, w - 35)
             print(f"\n  {C.DIM}\u2500\u2500 unconnected nodes "
-                  f"({len(isolated_nodes)}) "
+                  f"({len(isolated)}) "
                   + "\u2500" * rule_w + f"{C.RESET}")
-            for i in range(0, len(isolated_nodes), 3):
-                chunk = isolated_nodes[i:i + 3]
-                parts = [node_label(nid, depth=0) for nid in chunk]
-                print(f"  {'   '.join(parts)}")
+            for nid in isolated:
+                n = node_map[nid]
+                ic = ICHARS.get(n.node_type.value, ' ')
+                icol = ICOLORS.get(n.node_type.value, '')
+                nets = ''.join(
+                    NETWORK_ICONS.get(nt.value, '') for nt in n.networks[:2])
+                print(f"  {icol}{ic}{C.RESET} {C.BOLD}"
+                      f"{n.title[:24]}{C.RESET} "
+                      f"{C.DIM}[{str(n.id)[:6]}]{C.RESET} {nets}")
 
-        # ── 10. Legend ───────────────────────────────────────────
+        # ── 13. Legend ───────────────────────────────────────────
         print(f"\n{divider()}")
         print(f"  {C.BOLD}LEGEND{C.RESET}")
 
         types_present = sorted({n.node_type.value for n in nodes})
-        type_legend = "  Types:     "
+        tl = "  Types:     "
         for t in types_present:
-            icon = NODE_ICONS.get(t, " ")
-            type_legend += f" {icon}={C.DIM}{t}{C.RESET} "
-        print(type_legend)
+            ic = ICHARS.get(t, ' ')
+            icol = ICOLORS.get(t, '')
+            tl += f" {icol}{ic}{C.RESET}={C.DIM}{t}{C.RESET}"
+        print(tl)
 
-        nets_present = sorted({nt.value for n in nodes for nt in n.networks})
+        nets_present = sorted(
+            {nt.value for n in nodes for nt in n.networks})
         if nets_present:
-            net_legend = "  Networks:  "
+            nl = "  Networks:  "
             for nt in nets_present:
                 icon = NETWORK_ICONS.get(nt, f"[{nt[0]}]")
-                net_legend += f" {icon}={C.DIM}{nt}{C.RESET} "
-            print(net_legend)
+                nl += f" {icon}={C.DIM}{nt}{C.RESET}"
+            print(nl)
 
-        edge_types_present = sorted({
-            e.edge_type.value if hasattr(e.edge_type, 'value') else str(e.edge_type)
-            for e in edges})
-        if edge_types_present:
-            print(f"  {C.DIM}Edges:      {', '.join(edge_types_present)}{C.RESET}")
+        edge_types = sorted({
+            e.edge_type.value if hasattr(e.edge_type, 'value')
+            else str(e.edge_type) for e in edges})
+        if edge_types:
+            print(f"  {C.DIM}Edges:      "
+                  f"{', '.join(edge_types)}{C.RESET}")
 
-        print(f"\n  {C.DIM}Tree: \u251c\u2500\u2500 child  "
-              f"\u2514\u2500\u2500 last child  \u2502   continuation{C.RESET}")
-        print(f"  {C.DIM}Arrows: \u2192 directed  "
+        print(f"\n  {C.DIM}Arrows: \u2192 directed  "
               f"\u2190 inbound  \u2194 bidirectional{C.RESET}")
+        print(f"  {C.DIM}\u251c\u2500\u2500 connector exit   "
+              f"\u2524\u2500\u2500 connector entry{C.RESET}")
         if center_id:
-            print(f"  {C.BG_CYAN}{C.BLACK} highlighted {C.RESET}"
+            print(f"  {C.CYAN}Colored box{C.RESET}"
                   f" {C.DIM}= center node{C.RESET}")
         print(divider('\u2550', C.CYAN))
 
