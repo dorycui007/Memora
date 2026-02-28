@@ -109,7 +109,7 @@ Memora is organized into five horizontal layers. Each layer has a specific respo
 
 **Why layers matter:**
 
-Imagine you want to swap the AI model from Claude to GPT-4. With layers, you only change the Intelligence layer. The Core Engine doesn't care — it runs deterministic algorithms that never touch the LLM. The database doesn't care — it just stores nodes and edges. The frontend doesn't care — it just displays whatever the API returns.
+Imagine you want to swap the AI model from GPT-5-nano to a different provider. With layers, you only change the Intelligence layer. The Core Engine doesn't care — it runs deterministic algorithms that never touch the LLM. The database doesn't care — it just stores nodes and edges. The frontend doesn't care — it just displays whatever the API returns.
 
 This is the **separation of concerns** principle you learned in CSC148, but applied to an entire system instead of a single class.
 
@@ -119,7 +119,7 @@ Memora runs entirely on your computer. There's no cloud server, no account to cr
 
 Why does this matter?
 
-1. **Privacy**: Your life data never leaves your machine. The only external call is to the Claude API when AI agents need to think, and even then, the Researcher agent anonymizes queries before searching the web.
+1. **Privacy**: Your life data never leaves your machine. The only external call is to the OpenAI API when AI agents need to think, and even then, the Researcher agent anonymizes queries before searching the web.
 
 2. **Cost**: Infrastructure cost is literally $0. The only cost is the LLM API usage ($10–15/month).
 
@@ -157,19 +157,17 @@ Here's every technology in the stack, and why it was chosen. Since you're in CSC
 
 | Technology | What It Is | Why It's Used |
 |---|---|---|
-| **Claude API** | Anthropic's large language model, accessed via API. You send text, it sends back text. | Powers the three AI agents (Archivist, Strategist, Researcher) |
-| **Claude Haiku** | A smaller, faster, cheaper Claude model. | Used for the Archivist (runs on every capture — needs to be fast and cheap) |
-| **Claude Sonnet** | A larger, smarter, more expensive Claude model. | Used for Strategist and Researcher (complex reasoning, less frequent) |
+| **OpenAI API** | OpenAI's large language model API, accessed via Responses API. You send text, it sends back text. | Powers the three AI agents (Archivist, Strategist, Researcher) |
+| **GPT-5-nano** | A fast, cheap OpenAI model with structured output (JSON schema mode). | Used for all three agents — constrained by Pydantic schemas for reliable extraction |
 | **MCP (Model Context Protocol)** | A standard protocol for connecting AI agents to external tools (like web search). | The Researcher uses 6 MCP servers to access the internet |
 
 **Data / Infrastructure:**
 
 | Technology | What It Is | Why It's Used |
 |---|---|---|
-| **RyuGraph** | An embedded graph database (fork of KuzuDB). Stores nodes and edges with properties. Supports Cypher queries (like SQL but for graphs). | Zero infrastructure cost, runs in-process |
-| **DuckDB** | An embedded SQL database (like SQLite but much faster for analytics). Fallback if RyuGraph isn't sufficient. | Proven technology, excellent performance |
+| **DuckDB** | An embedded analytical SQL database (like SQLite but much faster for analytics). Stores the knowledge graph as relational tables. | Zero infrastructure cost, runs in-process, proven technology |
 | **LanceDB** | An embedded vector database. Stores numerical vectors and enables similarity search. | Enables semantic search — "find nodes similar to this query" |
-| **BGE-M3** | A local embedding model that converts text into 1024-dimensional numerical vectors. | Runs locally (no API cost), supports 100+ languages |
+| **all-mpnet-base-v2** | A local embedding model (sentence-transformers) that converts text into 768-dimensional numerical vectors. | Runs locally (no API cost), high quality English embeddings |
 | **APScheduler** | A Python library for scheduling recurring jobs. Like cron, but in Python. | Runs background mechanics (decay, bridges, health) on schedule |
 
 ---
@@ -276,7 +274,7 @@ class BaseNode:
     content: str = ""
 
     # Embeddings (for semantic search — explained in Part 6)
-    embedding: list[float] = field(default_factory=list)  # 1024 dimensions
+    embedding: list[float] = field(default_factory=list)  # 768 dimensions
     # sparse_embedding stored separately
 
     # Confidence & Trust
@@ -380,7 +378,7 @@ class Edge:
     created_at: datetime = field(default_factory=datetime.now)
 ```
 
-There are **7 edge categories** with **30+ subtypes**. Here's what each category captures, with examples a student would relate to:
+There are **7 edge categories** with **28 subtypes**. Here's what each category captures, with examples a student would relate to:
 
 **1. STRUCTURAL** — hierarchy and composition
 ```
@@ -805,7 +803,7 @@ class EntityResolver:
         Cosine similarity between two vectors.
 
         CSC148 connection: This is just the dot product divided by
-        the product of magnitudes. O(d) where d is vector dimension (1024).
+        the product of magnitudes. O(d) where d is vector dimension (768).
 
         cos(θ) = (A · B) / (||A|| × ||B||)
         """
@@ -915,7 +913,7 @@ def commit_proposal(proposal: GraphProposal, graph_db: GraphDB) -> bool:
 
 **Stage 9** (Post-Commit Processing): After successful commit, several async processes fire:
 
-1. **Embedding generation**: BGE-M3 converts new node content into 1024-dimensional vectors, stored in LanceDB
+1. **Embedding generation**: all-mpnet-base-v2 converts new node content into 768-dimensional vectors, stored in LanceDB
 2. **Bridge discovery**: New node's embedding is compared against nodes in *other* networks via HNSW index
 3. **Network health recalculation**: If the new data affects commitment counts or alerts, health status is updated
 4. **Notification triggers**: Check if any notification rules fire (deadline approaching, relationship decay, etc.)
@@ -940,8 +938,9 @@ Memora has three specialized agents and one orchestrator:
               ┌───────────┼───────────┐
               ▼           ▼           ▼
         ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │ Archivist│ │Strategist│ │Researcher│
-        │ (Haiku)  │ │ (Sonnet) │ │ (Sonnet) │
+        │Archivist │ │Strategist│ │Researcher│
+        │(GPT-5-  │ │(GPT-5-  │ │(GPT-5-  │
+        │  nano)   │ │  nano)   │ │  nano)   │
         └──────────┘ └──────────┘ └──────────┘
         Writes to      Reads from    Bridges to
         the graph      the graph     the internet
@@ -961,17 +960,17 @@ So Memora uses exactly 3 agents, each with a clear, non-overlapping role:
 
 | Agent | Role | Model | Frequency | Analogy |
 |---|---|---|---|---|
-| **Archivist** | Writes to the graph | Claude Haiku | Every capture (10+/day) | A librarian who catalogs every new book |
-| **Strategist** | Reads and analyzes the graph | Claude Sonnet | Daily + on-demand | An intelligence analyst who spots patterns |
-| **Researcher** | Bridges graph to internet | Claude Sonnet | On-demand | A research assistant who checks external facts |
+| **Archivist** | Writes to the graph | GPT-5-nano | Every capture (10+/day) | A librarian who catalogs every new book |
+| **Strategist** | Reads and analyzes the graph | GPT-5-nano | Daily + on-demand | An intelligence analyst who spots patterns |
+| **Researcher** | Bridges graph to internet | GPT-5-nano | On-demand | A research assistant who checks external facts |
 
 ### 5.3 The Archivist — Deep Dive
 
 The Archivist is the workhorse. It runs on **every single capture** — the highest-frequency agent by far.
 
-**Why Haiku (the smaller model)?**
-- It runs 10+ times per day
-- Its output is **constrained** by Pydantic schemas — it can only produce valid graph operations
+**Why GPT-5-nano?**
+- It runs 10+ times per day — needs to be fast and cheap
+- Its output is **constrained** by Pydantic schemas via the Responses API's `json_schema` mode — it can only produce valid graph operations
 - Speed matters more than deep reasoning for extraction
 - With prompt caching (explained below), it's extremely cheap
 
@@ -993,7 +992,7 @@ Component 5 (DYNAMIC — changes every time):
   Total: ~1,000 tokens → Full cost
 ```
 
-Anthropic's API caches the static prefix of prompts. Since 70% of the Archivist's prompt is identical across calls, you pay 0.1x for that portion. **Net result: 60-70% cost reduction.**
+OpenAI's API automatically caches the static prefix of prompts. Since 70% of the Archivist's prompt is identical across calls, you pay a reduced rate for that portion. **Net result: 60-70% cost reduction.**
 
 **CSC148 connection:** This is conceptually like memoization. Instead of recomputing the same result every time, you cache it. The difference is that here we're caching at the API level (the LLM provider caches the static prefix of the prompt).
 
@@ -1086,7 +1085,7 @@ This is probably a new concept for CSC148 students, so let me explain from scrat
 An **embedding** is a way to convert text into a list of numbers (a vector) such that **semantically similar text produces similar vectors**.
 
 ```python
-# Conceptual example (real embeddings have 1024 dimensions)
+# Conceptual example (real embeddings have 768 dimensions)
 
 embed("I feel stressed about my midterm")     → [0.8, 0.2, -0.5, 0.9, ...]
 embed("I'm anxious about my exam")            → [0.79, 0.21, -0.48, 0.88, ...]
@@ -1109,24 +1108,23 @@ search("stressed") → finds documents about stress, anxiety, pressure,
 
 ### 6.2 How Embeddings Work in Memora
 
-Memora uses the **BGE-M3** model to generate embeddings. This model:
+Memora uses the **all-mpnet-base-v2** model (from the sentence-transformers library) to generate embeddings. This model:
 - Runs **locally** on your machine (no API cost)
-- Produces **1024-dimensional** dense vectors
-- Also produces **sparse vectors** (for keyword-style matching)
-- Supports **100+ languages**
+- Produces **768-dimensional** dense vectors
+- High quality English embeddings with strong semantic understanding
 
 Every node in the graph gets an embedding stored in LanceDB:
 
 ```python
 # When a new node is committed:
 node_content = "Sam Chen promised to introduce me to his investor"
-embedding = bge_m3_model.encode(node_content)  # → list of 1024 floats
+embedding = embedding_model.encode(node_content)  # → list of 768 floats
 
 # Store in LanceDB
 vector_store.add({
     "node_id": node.id,
     "content": node_content,
-    "dense": embedding,          # 1024-dim float vector
+    "dense": embedding,          # 768-dim float vector
     "node_type": "COMMITMENT",
     "networks": ["VENTURES"]
 })
@@ -1155,7 +1153,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
      -1.0  = opposite direction (very dissimilar)
 
     Time complexity: O(d) where d = len(a) = len(b)
-    For BGE-M3: d = 1024, so this is O(1024) ≈ O(1)
+    For all-mpnet-base-v2: d = 768, so this is O(768) ≈ O(1)
     """
     dot = sum(x * y for x, y in zip(a, b))
     mag_a = math.sqrt(sum(x ** 2 for x in a))
@@ -1174,7 +1172,7 @@ If you have 10,000 nodes and want to find the 10 most similar ones, the naive ap
 
 ```python
 # Naive: compute similarity against ALL nodes
-# Time: O(N × d) where N = 10,000 and d = 1024
+# Time: O(N × d) where N = 10,000 and d = 768
 similarities = [(cosine_similarity(query_vec, node.embedding), node)
                 for node in all_nodes]
 top_10 = sorted(similarities, reverse=True)[:10]
@@ -1204,11 +1202,11 @@ Layer 0:    [A][E][H][C][I][F][J][B][K][G][L][D]  ← all nodes
 
 Memora uses **hybrid search** — combining two types of retrieval:
 
-1. **Dense search** (semantic): Uses BGE-M3 embeddings + cosine similarity. Good at finding conceptually similar content even with different words.
+1. **Dense search** (semantic): Uses all-mpnet-base-v2 embeddings + cosine similarity. Good at finding conceptually similar content even with different words.
 
-2. **Sparse search** (keyword/BM25): Uses sparse vectors that represent term frequency. Good at finding exact term matches.
+2. **Full-text search** (keyword): LanceDB supports full-text search for keyword matching. Good at finding exact term matches.
 
-Results are combined using **Reciprocal Rank Fusion (RRF)**:
+Results can be combined using **Reciprocal Rank Fusion (RRF)**:
 
 ```python
 def reciprocal_rank_fusion(dense_results: list, sparse_results: list,
@@ -1382,7 +1380,7 @@ These algorithms are the "engine room" of Memora. They are:
 - **LLM-independent** — they work even if the AI layer is completely removed
 - **Scheduled** — they run automatically at defined intervals
 
-This is a critical architectural point: the Core Engine layer is what makes Memora NOT an LLM wrapper. If Anthropic shut off the Claude API tomorrow, the graph, the decay mechanics, the health scores, the bridge discovery, the spaced repetition — all of it would still work.
+This is a critical architectural point: the Core Engine layer is what makes Memora NOT an LLM wrapper. If OpenAI shut off the API tomorrow, the graph, the decay mechanics, the health scores, the bridge discovery, the spaced repetition — all of it would still work.
 
 ### 8.2 Decay Scoring — Knowledge Fading
 
@@ -1946,7 +1944,7 @@ APScheduler (cron: 7am daily)
   ├── get_sm2_due_items()           ← Core Engine (no LLM)
   │
   ▼
-  Strategist Agent (Claude Sonnet)
+  Strategist Agent (GPT-5-nano)
     Input: all computed metrics above
     Output: formatted daily briefing
   │
@@ -1974,7 +1972,7 @@ FastAPI Backend
   │
   ├── Stage 1: Store raw capture (O(1))
   ├── Stage 2: Preprocess — normalize dates, detect language (O(n), no LLM)
-  ├── Stage 3: Archivist (Claude Haiku) — extract entities & relationships
+  ├── Stage 3: Archivist (GPT-5-nano) — extract entities & relationships
   │             Input: processed text + RAG context of existing nodes + schema
   │             Output: GraphProposal (3 nodes, 5 edges, 4 network assignments)
   ├── Stage 4: Entity Resolution — "Sam Chen" matches existing node (O(log N))
@@ -1983,7 +1981,7 @@ FastAPI Backend
   ├── Stage 7: Auto-approved → logged for daily digest
   ├── Stage 8: Graph commit — atomic transaction
   └── Stage 9: Post-commit
-       ├── Generate embeddings (BGE-M3 local, O(1) per node)
+       ├── Generate embeddings (all-mpnet-base-v2, O(1) per node)
        ├── Bridge discovery (HNSW search, O(log N) per network)
        ├── Network health update (O(1))
        ├── Notification check (commitment due Friday → schedule alert for Thursday)
@@ -2100,7 +2098,7 @@ Where:
 - K = number of results or items
 - M = nodes modified in last 24 hours
 - C = commitments in a network
-- d = embedding dimension (1024)
+- d = embedding dimension (768)
 
 ---
 
@@ -2116,7 +2114,7 @@ Where:
 
 4. **Complexity analysis is practical.** The reason we use HNSW (O(log N)) instead of brute-force cosine similarity (O(N)) isn't theoretical — it's the difference between 1ms and 10 seconds at 10,000 nodes.
 
-5. **ADTs have real implementations.** The graph "abstract data type" has a concrete implementation: RyuGraph/DuckDB for the graph, LanceDB for vectors, Pydantic for schema validation.
+5. **ADTs have real implementations.** The graph "abstract data type" has a concrete implementation: DuckDB for the graph, LanceDB for vectors, Pydantic for schema validation.
 
 ### For Understanding System Architecture
 

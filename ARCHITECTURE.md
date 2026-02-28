@@ -35,7 +35,7 @@
   - [3.5 Edge Properties Schema](#35-edge-properties-schema)
   - [3.6 Context Networks](#36-context-networks)
 - [4. Database Schemas](#4-database-schemas)
-  - [4.1 Graph Database (RyuGraph / DuckDB)](#41-graph-database-ryugraph--duckdb)
+  - [4.1 Graph Database (DuckDB)](#41-graph-database-duckdb)
   - [4.2 Vector Database (LanceDB)](#42-vector-database-lancedb)
   - [4.3 Truth Layer Tables](#43-truth-layer-tables)
 - [5. AI Agent System Design](#5-ai-agent-system-design)
@@ -119,12 +119,12 @@ graph TB
         Frontend["React Frontend<br/>localhost:5173"]
         API["FastAPI Backend<br/>localhost:8000"]
         Agents["AI Council<br/>(3 Agents + Orchestrator)"]
-        Graph["Knowledge Graph<br/>(RyuGraph/DuckDB)"]
+        Graph["Knowledge Graph<br/>(DuckDB)"]
         Vector["Vector Store<br/>(LanceDB)"]
         Engine["Core Engine<br/>(Background Mechanics)"]
     end
 
-    Claude["Claude API<br/>(BYOK)"]
+    OpenAI["OpenAI API<br/>(BYOK)"]
     Internet["Public Internet<br/>(via MCP Servers)"]
 
     User -->|"text, voice, images"| Frontend
@@ -133,7 +133,7 @@ graph TB
     API --> Graph
     API --> Vector
     API --> Engine
-    Agents -->|"extraction, analysis"| Claude
+    Agents -->|"extraction, analysis"| OpenAI
     Agents -->|"research (anonymized)"| Internet
 ```
 
@@ -146,13 +146,13 @@ graph TB
 ├─────────────────────────────────────────────────────────────────────────┤
 │  API             FastAPI + Uvicorn │ WebSocket + SSE │ Python 3.12+    │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  INTELLIGENCE    LangGraph Orchestrator │ Claude Agent SDK │           │
-│                  6 MCP Servers │ Claude API (BYOK)                      │
+│  INTELLIGENCE    LangGraph Orchestrator │ OpenAI Responses API │       │
+│                  6 MCP Servers │ OpenAI API (BYOK)                      │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  CORE ENGINE     APScheduler │ Decay/SM-2 │ Health Scoring │           │
 │                  Bridge Discovery │ Truth Layer                         │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  INFRASTRUCTURE  RyuGraph / DuckDB │ LanceDB │ BGE-M3 (local)         │
+│  INFRASTRUCTURE  DuckDB │ LanceDB │ all-mpnet-base-v2 (local)                │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -227,7 +227,7 @@ flowchart LR
 1. **Transcription** (voice only): Whisper model converts audio to text with speaker diarization
 2. **OCR + Visual Understanding** (images only): Extract text via OCR; pass image + extracted text to LLM for structured interpretation ("This is a receipt from Starbucks for $5.40 on Feb 20")
 3. **Text Normalization**: Standardize dates ("next Tuesday" → `2026-03-03`), currency ("5 bucks" → `$5.00`), names ("Dr. Smith" → normalized form)
-4. **Language Detection**: BGE-M3 supports 100+ languages; detect language for proper tokenization
+4. **Language Detection**: Detect language for proper tokenization
 5. **Deduplication Check**: Content hash compared against recent captures to prevent duplicate processing
 
 ### 2.4 Stage 3: Archivist Extraction
@@ -235,7 +235,7 @@ flowchart LR
 **Purpose:** Transform unstructured natural language into structured graph operations.
 **LLM required:** Yes — this is the first and highest-frequency LLM invocation.
 
-**Agent:** The Archivist (Claude Haiku)
+**Agent:** The Archivist (GPT-5-nano)
 **Cost optimization:** Prompt caching reduces costs by 60–70%. The system prompt (~2,000–4,000 tokens: schema + rules + network definitions) is near-identical across 95%+ of calls. Only the RAG context window and the user's actual capture change.
 
 **What the Archivist does per capture:**
@@ -325,7 +325,7 @@ class EdgeProposal(BaseModel):
     """A proposed relationship between two nodes."""
     source_id: str                      # node temp_id or existing graph ID
     target_id: str
-    edge_type: str                      # 30+ subtypes
+    edge_type: str                      # 28 subtypes
     edge_category: EdgeCategory         # 7 categories
     properties: dict
     confidence: float
@@ -379,7 +379,7 @@ This is the single hardest problem in the pipeline.
 | Signal | Weight | Details |
 |---|---|---|
 | Exact name match | 0.95 | Normalized canonical name comparison |
-| Embedding similarity (>0.92) | 0.80 | BGE-M3 dense vector cosine similarity |
+| Embedding similarity (>0.92) | 0.80 | all-mpnet-base-v2 dense vector cosine similarity |
 | Same context network | 0.15 | Bonus if in overlapping networks |
 | Temporal proximity | 0.10 | Mentioned within 7-day window of existing node |
 | Shared relationships | 0.20 | Connected to same PERSON/EVENT nodes |
@@ -440,7 +440,7 @@ A graph proposal contains:
 **LLM required:** No
 
 1. **Transaction begin**: All node/edge creations and updates wrapped in a single atomic transaction
-2. **Node creation/update**: Nodes written to RyuGraph/DuckDB with all properties, timestamps, and approval status
+2. **Node creation/update**: Nodes written to DuckDB with all properties, timestamps, and approval status
 3. **Edge creation/update**: Typed edges created between nodes with provenance metadata
 4. **Provenance logging**: Full audit trail — which capture, which agent, which extraction rules, human approval status
 5. **Transaction commit**: All-or-nothing — if any step fails, the entire proposal is rolled back
@@ -450,7 +450,7 @@ A graph proposal contains:
 **Purpose:** Asynchronous enrichment after a successful commit.
 **LLM required:** Partially (bridge discovery daily batch uses 1 LLM call)
 
-1. **Embedding generation**: BGE-M3 generates dense (Float[1024]) + sparse embeddings for all new/updated nodes → written to LanceDB
+1. **Embedding generation**: all-mpnet-base-v2 generates dense (Float[768]) + sparse embeddings for all new/updated nodes → written to LanceDB
 2. **Bridge discovery** (incremental): New node's embedding compared against nodes in *other* context networks via HNSW index lookup (O(log N), ~1–5ms at 10K nodes). High-similarity cross-network pairs flagged as potential bridges
 3. **Network health recalculation**: If the new data affects commitment completion rates or alert counts, network health status is updated
 4. **Notification triggers**: Check if the new data triggers any notification rules (deadline approaching, relationship decay, goal drift)
@@ -497,8 +497,8 @@ Every node in the graph carries a standard set of properties — the metadata th
 | `content_hash` | SHA-256 | Deduplication key — identical content = identical hash | Unique |
 | `created_at` | Timestamp | When this node was first created | Auto-set |
 | `updated_at` | Timestamp | Last modification timestamp | Auto-updated |
-| `embedding` | Float[1024] | BGE-M3 dense vector for semantic search | Generated post-commit |
-| `sparse_embedding` | Sparse vector | BGE-M3 BM25-compatible sparse representation | Generated post-commit |
+| `embedding` | Float[768] | all-mpnet-base-v2 dense vector for semantic search | Generated post-commit |
+| `sparse_embedding` | Sparse vector | BM25-compatible sparse representation (if available) | Generated post-commit |
 | `confidence` | Float [0–1] | Extraction confidence from the Archivist | Required |
 | `networks` | List[NetworkType] | Which context networks this node belongs to | At least one |
 | `human_approved` | Boolean | Whether a human has reviewed and approved this node | Default: false |
@@ -597,9 +597,9 @@ Health is computed from **commitment completion rate** (actionable), **alert rat
 
 ## 4. Database Schemas
 
-### 4.1 Graph Database (RyuGraph / DuckDB)
+### 4.1 Graph Database (DuckDB)
 
-Primary graph storage using RyuGraph (Kuzu fork) with DuckDB as fallback. Both are embedded — zero infrastructure cost.
+Primary graph storage using DuckDB — an embedded analytical SQL database. Zero infrastructure cost, runs in-process.
 
 ```sql
 -- ============================================================
@@ -732,38 +732,29 @@ CREATE TABLE bridges (
 Embedded vector store for semantic search. Uses HNSW index for O(log N) approximate nearest neighbor search.
 
 ```python
+import pyarrow as pa
 import lancedb
-from lancedb.pydantic import LanceModel, Vector
 
+EMBEDDING_DIM = 768
 
-class NodeEmbedding(LanceModel):
-    """Vector representation of a graph node for semantic search."""
-    node_id: str                    # UUID reference to nodes table
-    content: str                    # text that was embedded
-    node_type: str                  # NodeType for filtered search
-    networks: list[str]             # NetworkType list for filtered search
-    dense: Vector(1024)             # BGE-M3 dense embedding
-    # sparse embedding stored separately for BM25 hybrid search
-    created_at: str                 # ISO timestamp
-
+# PyArrow schema for the vector table
+SCHEMA = pa.schema([
+    pa.field("node_id", pa.string()),       # UUID reference to nodes table
+    pa.field("content", pa.string()),       # text that was embedded
+    pa.field("node_type", pa.string()),     # NodeType for filtered search
+    pa.field("networks", pa.string()),      # JSON-encoded NetworkType list
+    pa.field("dense", pa.list_(pa.float32(), EMBEDDING_DIM)),  # 768-dim embedding
+    pa.field("created_at", pa.string()),    # ISO timestamp
+])
 
 # Database setup
 db = lancedb.connect("~/.memora/vectors")
-table = db.create_table("node_embeddings", schema=NodeEmbedding)
-
-# HNSW index configuration
-table.create_index(
-    metric="cosine",
-    num_partitions=4,
-    num_sub_vectors=16,
-    index_type="IVF_HNSW_SQ"
-)
+table = db.create_table("node_embeddings", schema=SCHEMA)
 ```
 
 **Search capabilities:**
-- **Dense search**: Cosine similarity on BGE-M3 1024-dim vectors
-- **Sparse search**: BM25-compatible sparse vectors for keyword matching
-- **Hybrid search**: Reciprocal rank fusion of dense + sparse results
+- **Dense search**: Cosine similarity on all-mpnet-base-v2 768-dim vectors
+- **Hybrid search**: Dense vector search with optional full-text search fusion
 - **Filtered search**: Pre-filter by `node_type` and/or `networks` before vector search
 
 ### 4.3 Truth Layer Tables
@@ -772,37 +763,33 @@ table.create_index(
 -- ============================================================
 -- VERIFIED_FACTS: The fact store
 -- ============================================================
-CREATE TABLE verified_facts (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    claim           TEXT NOT NULL,                   -- the factual claim
-    source_type     VARCHAR NOT NULL,                -- PRIMARY/SECONDARY/SELF_REPORTED
-    source_url      TEXT,
-    source_title    TEXT,
-    source_author   TEXT,
-    verified_at     TIMESTAMP,
-    expiry_type     VARCHAR DEFAULT 'STATIC',        -- STATIC/DYNAMIC
-    next_check_date TIMESTAMP,                       -- for DYNAMIC facts
-    confidence      FLOAT,
-    related_node_ids UUID[],                         -- graph nodes this fact supports
-    created_by      VARCHAR,                         -- agent that deposited this fact
-    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS verified_facts (
+    id                    VARCHAR PRIMARY KEY,
+    node_id               VARCHAR NOT NULL,           -- graph node this fact supports
+    statement             TEXT NOT NULL,               -- the factual claim
+    confidence            DOUBLE CHECK (confidence >= 0 AND confidence <= 1),
+    status                VARCHAR DEFAULT 'active',    -- active/stale/contradicted/retired
+    lifecycle             VARCHAR DEFAULT 'dynamic',   -- static/dynamic
+    source_capture_id     VARCHAR,                     -- originating capture
+    verified_at           TIMESTAMP,
+    verified_by           VARCHAR,                     -- agent that deposited this fact
+    recheck_interval_days INTEGER DEFAULT 90,          -- days between rechecks (DYNAMIC)
+    last_checked          TIMESTAMP,
+    next_check            TIMESTAMP,                   -- for DYNAMIC facts
+    metadata              JSON,
+    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE INDEX idx_facts_source_type ON verified_facts(source_type);
-CREATE INDEX idx_facts_expiry ON verified_facts(next_check_date);
-CREATE INDEX idx_facts_nodes ON verified_facts USING GIN(related_node_ids);
 
 
 -- ============================================================
 -- FACT_CHECKS: Audit trail of verification attempts
 -- ============================================================
-CREATE TABLE fact_checks (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    fact_id         UUID REFERENCES verified_facts(id),
+CREATE TABLE IF NOT EXISTS fact_checks (
+    id              VARCHAR PRIMARY KEY,
+    fact_id         VARCHAR NOT NULL,                -- references verified_facts(id)
     check_type      VARCHAR NOT NULL,                -- 'initial', 'recheck', 'contradiction'
     result          VARCHAR NOT NULL,                -- 'confirmed', 'contradicted', 'inconclusive'
-    source_url      TEXT,
     evidence        TEXT,
     checked_by      VARCHAR,                         -- agent ID
     checked_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -826,7 +813,7 @@ flowchart TB
     Orch -->|"analysis queries"| Strat
     Orch -->|"needs external data"| Res
 
-    subgraph Arch["🏛️ Archivist (Claude Haiku)"]
+    subgraph Arch["🏛️ Archivist (GPT-5-nano)"]
         direction TB
         A1["Graph Schema Context"]
         A2["RAG: Recent Nodes"]
@@ -835,7 +822,7 @@ flowchart TB
         A2 --> A3
     end
 
-    subgraph Strat["🎯 Strategist (Claude Sonnet)"]
+    subgraph Strat["🎯 Strategist (GPT-5-nano)"]
         direction TB
         S1["Graph Reader"]
         S2["Health Scores"]
@@ -843,7 +830,7 @@ flowchart TB
         S4["Critic Mode"]
     end
 
-    subgraph Res["🔬 Researcher (Claude Sonnet)"]
+    subgraph Res["🔬 Researcher (GPT-5-nano)"]
         direction TB
         R1["Query Anonymizer"]
         R2["MCP Servers (6)"]
@@ -862,7 +849,7 @@ flowchart TB
 | Attribute | Value |
 |---|---|
 | **Role** | Graph construction engine — writes to the graph |
-| **Model** | Claude Haiku (fast, cheap, structured output) |
+| **Model** | GPT-5-nano (fast, cheap, structured output via Responses API) |
 | **Frequency** | Every single capture (10+/day) |
 | **Input** | Raw capture + RAG context of existing nodes + graph schema |
 | **Output** | Pydantic-validated `GraphProposal` |
@@ -873,14 +860,14 @@ flowchart TB
 2. Recent nodes via RAG (dynamic) — prevents duplicate creation
 3. User's capture (input) — the actual text/image to process
 
-**Prompt caching:** The system prompt (schema + rules + network definitions) is ~2,000–4,000 tokens and identical across 95%+ of calls. With Anthropic's prompt caching at 0.1x base cost, this means the expensive part is cached, and only the variable suffix (RAG context + capture) incurs full cost. **Cost reduction: 60–70%.**
+**Prompt caching:** The system prompt (schema + rules + network definitions) is ~2,000–4,000 tokens and identical across 95%+ of calls. With OpenAI's prompt caching (automatic for repeated prefixes), the expensive part is cached, and only the variable suffix (RAG context + capture) incurs full cost. **Cost reduction: 60–70%.**
 
 ### 5.3 Agent 2: The Strategist (Graph Reader + Analyst)
 
 | Attribute | Value |
 |---|---|
 | **Role** | Intelligence analyst — reads the graph, computes cross-network analysis, delivers actionable intelligence |
-| **Model** | Claude Sonnet (complex reasoning) |
+| **Model** | GPT-5-nano (complex reasoning) |
 | **Frequency** | (1) Daily — morning briefing; (2) On-demand — complex queries |
 | **Input** | Graph state, health scores, bridge discoveries, Truth Layer facts |
 | **Output** | Briefings, recommendations, risk assessments, priority rankings |
@@ -900,7 +887,7 @@ flowchart TB
 | Attribute | Value |
 |---|---|
 | **Role** | Bridges private graph with public internet |
-| **Model** | Claude Sonnet (synthesis from web sources) |
+| **Model** | GPT-5-nano (synthesis from web sources) |
 | **Frequency** | On-demand (triggered by Strategist or user) |
 | **Input** | Research query + anonymized graph context |
 | **Output** | Verified facts deposited into Truth Layer |
@@ -970,17 +957,17 @@ sequenceDiagram
 
 | Agent | Model | Use Case | Est. Cost (per user/month) |
 |---|---|---|---|
-| Archivist | Claude Haiku | Every capture (~10/day) | ~$3–4 (with caching) |
-| Strategist | Claude Sonnet | Daily briefing + ~2 queries/day | ~$5–8 |
-| Researcher | Claude Sonnet | On-demand (~2 queries/day) | ~$2–3 |
+| Archivist | GPT-5-nano | Every capture (~10/day) | ~$3–4 (with caching) |
+| Strategist | GPT-5-nano | Daily briefing + ~2 queries/day | ~$5–8 |
+| Researcher | GPT-5-nano | On-demand (~2 queries/day) | ~$2–3 |
 
 **Blended user cost: $10–15/month** at 10 captures/day and 2 council queries.
 
 | Scenario | Monthly Cost | Notes |
 |---|---|---|
-| Floor (all Haiku) | ~$4/month | Minimal quality |
-| **Recommended (Haiku + Sonnet blend)** | **~$10–15/month** | Optimal quality/cost ratio |
-| Ceiling (all Sonnet) | ~$15–20/month | Maximum quality |
+| Light usage (5 captures/day) | ~$5–8/month | Basic capture and analysis |
+| **Recommended (10 captures/day + 2 queries)** | **~$10–15/month** | Optimal usage pattern |
+| Heavy usage (20+ captures/day + frequent queries) | ~$15–25/month | Power user |
 
 ---
 
@@ -1085,9 +1072,10 @@ stateDiagram-v2
     Resolved --> Archived: Fact retired
 ```
 
-- **STATIC** facts (birth dates, published papers) never expire
-- **DYNAMIC** facts (company valuations, market conditions) get periodic rechecking via the Researcher agent
-- Stale facts are flagged: *"This fact was last verified 30 days ago — recheck?"*
+- **STATIC** lifecycle facts (birth dates, published papers) never expire
+- **DYNAMIC** lifecycle facts (company valuations, market conditions) get periodic rechecking via the Researcher agent (default: every 90 days)
+- Status transitions: `active` → `stale` (when recheck overdue) → `contradicted` (conflicting evidence) or back to `active` (recheck passes) → `retired` (permanently archived)
+- Stale facts are flagged: *"This fact was last verified 90 days ago — recheck?"*
 
 ### 7.3 Fact-Check Gate Integration
 
@@ -1226,7 +1214,7 @@ flowchart LR
         G["Gap Detection<br/>Results"]
     end
 
-    Inputs --> Strategist["🎯 Strategist<br/>(Claude Sonnet)"]
+    Inputs --> Strategist["🎯 Strategist<br/>(GPT-5-nano)"]
     Strategist --> Briefing["📋 Daily Briefing"]
 
     Briefing --> Push["Push Notification"]
@@ -1461,7 +1449,7 @@ interface MemoraStore {
 
 ### 12.1 Local-First Architecture
 
-Everything runs on the user's machine. The only external dependency is the Claude API (BYOK).
+Everything runs on the user's machine. The only external dependency is the OpenAI API (BYOK).
 
 ```mermaid
 graph TB
@@ -1477,9 +1465,9 @@ graph TB
         end
 
         subgraph Data["Embedded Storage"]
-            RG[("RyuGraph /<br/>DuckDB")]
+            RG[("DuckDB")]
             LDB[("LanceDB")]
-            BGE["BGE-M3<br/>(Local Model)"]
+            BGE["all-mpnet-base-v2<br/>(Local Model)"]
         end
 
         subgraph MCP["MCP Servers (local processes)"]
@@ -1500,8 +1488,8 @@ graph TB
         Scheduler --> LDB
     end
 
-    Claude["☁️ Claude API (BYOK)"]
-    LG --> Claude
+    OpenAI["☁️ OpenAI API (BYOK)"]
+    LG --> OpenAI
 ```
 
 ### 12.2 File System Layout
@@ -1509,13 +1497,13 @@ graph TB
 ```
 ~/.memora/
 ├── config.yaml              # User configuration + API key
-├── graph/                   # RyuGraph/DuckDB files
-│   ├── memora.db            # Main graph database
+├── graph/                   # DuckDB files
+│   ├── memora.duckdb        # Main graph database
 │   └── wal/                 # Write-ahead log
 ├── vectors/                 # LanceDB files
 │   └── node_embeddings/     # Vector index
 ├── models/                  # Local model cache
-│   └── bge-m3/              # BGE-M3 embedding model
+│   └── all-mpnet-base-v2/   # Sentence-transformers embedding model
 ├── captures/                # Raw capture storage
 │   ├── audio/               # Voice memo files
 │   └── images/              # Screenshot/photo files
@@ -1528,13 +1516,13 @@ graph TB
 
 | Component | Cost | Notes |
 |---|---|---|
-| Graph DB (RyuGraph/DuckDB) | $0/month | Embedded, runs in-process |
+| Graph DB (DuckDB) | $0/month | Embedded, runs in-process |
 | Vector DB (LanceDB) | $0/month | Embedded, runs in-process |
-| Embedding Model (BGE-M3) | $0/month | Local model, runs on CPU/GPU |
+| Embedding Model (all-mpnet-base-v2) | $0/month | Local model, runs on CPU/GPU |
 | MCP Servers | $0/month | Local processes, free API tiers |
 | Background Engine | $0/month | APScheduler in-process |
 | **Total Infrastructure** | **$0/month** | |
-| Claude API (Haiku + Sonnet) | $10–15/month | BYOK, user pays directly |
+| OpenAI API (GPT-5-nano) | $10–15/month | BYOK, user pays directly |
 
 ---
 
@@ -1611,7 +1599,7 @@ memora/
 │   │   │
 │   │   ├── vector/                    # LanceDB interface
 │   │   │   ├── store.py              # Vector CRUD + search
-│   │   │   └── embeddings.py         # BGE-M3 wrapper
+│   │   │   └── embeddings.py         # sentence-transformers wrapper
 │   │   │
 │   │   ├── mcp/                       # MCP server configurations
 │   │   │   ├── google_search.py
@@ -1662,7 +1650,7 @@ memora/
 
 | Week | Deliverables |
 |---|---|
-| W1–2 | Graph DB setup (RyuGraph/DuckDB), LanceDB setup, BGE-M3 integration, Pydantic domain models (all node/edge types), basic capture ingestion (text only) |
+| W1–2 | Graph DB setup (DuckDB), LanceDB setup, all-mpnet-base-v2 integration, Pydantic domain models (all node/edge types), basic capture ingestion (text only) |
 | W3 | Archivist agent (LLM extraction → Pydantic-constrained output), entity resolution v1 (exact match + embedding similarity) |
 | W4 | Validation gate, proposal system (create/approve/reject), graph commit with atomic transactions, entity resolution v2 (full multi-signal) |
 | W5 | Truth Layer (schema + basic fact storage), post-commit processing (embeddings, basic bridge detection), unit tests for all core algorithms |
@@ -1746,8 +1734,8 @@ gantt
 |---|---|---|---|
 | Entity resolution complexity exceeds estimates (3–4 weeks alone) | High | High | Phase 0–1 includes explicit entity resolution scope; prototype early with synthetic data |
 | Auto-approve threshold poorly calibrated, eroding trust | Medium | High | Track correction rate (< 5% target); allow user to adjust threshold; daily review digest as safety net |
-| RyuGraph insufficient (Kuzu fork quality unknown) | Medium | Medium | DuckDB fallback ready; abstract graph interface allows swap without API changes |
-| LLM cost higher than projected | Medium | Medium | Prompt caching, Haiku for high-frequency ops; monitor per-user cost metrics |
+| DuckDB performance at scale | Low | Medium | DuckDB handles analytical workloads well; abstract graph interface allows future migration if needed |
+| LLM cost higher than projected | Medium | Medium | Prompt caching, GPT-5-nano for all ops; monitor per-user cost metrics |
 | Bridge discovery produces too many false positives | Medium | Medium | LLM batch validation filters candidates; user feedback loop to tune similarity threshold |
 | User doesn't develop capture habit | High | High | Zero-friction capture (< 2s), multiple entry points (text, voice, image, share sheet), never show blank page |
 
@@ -1966,7 +1954,7 @@ Your role is to extract structured graph operations from natural language input.
 [Complete list of 12 node types with all properties]
 
 ## Edge Types
-[Complete list of 7 categories with 30+ subtypes and valid source/target constraints]
+[Complete list of 7 categories with 28 subtypes and valid source/target constraints]
 
 ## Valid Combinations
 [Rules for which edge types connect which node types]
@@ -2025,7 +2013,7 @@ The following nodes were recently created or may be referenced:
 | Term | Definition |
 |---|---|
 | **Bridge** | A cross-network connection discovered by embedding similarity — the highest-value intelligence in the system |
-| **BYOK** | Bring Your Own Key — user provides their own Claude API key |
+| **BYOK** | Bring Your Own Key — user provides their own OpenAI API key |
 | **Capture** | A single piece of user input (text, voice, image) entering the system |
 | **Context Network** | One of seven living subgraphs (Academic, Professional, Financial, Health, Personal Growth, Social, Ventures) |
 | **Council** | The three-agent AI system (Archivist + Strategist + Researcher) coordinated by a LangGraph orchestrator |
