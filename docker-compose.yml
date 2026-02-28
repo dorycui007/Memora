@@ -1,0 +1,26 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${MEMORA_DATA_DIR:-~/.memora}:/root/.memora
+      - ./backend:/app
+    env_file:
+      - .env
+    environment:
+      - MEMORA_DATA_DIR=/root/.memora
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
