@@ -2,9 +2,9 @@
 
 **A local-first decision intelligence platform that turns your life into a structured, interconnected knowledge graph.**
 
-You tell Memora things — by typing, speaking, or taking screenshots. It builds a living graph of your life, then three AI agents continuously reason over it to surface hidden connections, flag forgotten commitments, and help you make better decisions.
+You tell Memora things by typing text captures. An AI agent extracts structured entities and relationships, resolves them against your existing graph, and commits them atomically. Deterministic algorithms then continuously maintain the graph — scoring decay, discovering cross-domain bridges, computing network health, and scheduling spaced repetition reviews.
 
-**This is not a note-taking app.** Context capture is the input. Better high-stakes decisions, proactive recommendations, and strategic foresight are the output.
+**This is not a note-taking app.** Context capture is the input. A living, queryable knowledge graph is the output.
 
 ---
 
@@ -18,7 +18,7 @@ Your life is fragmented across dozens of tools. Calendar, notes, messages, finan
 
 ## What Memora Does
 
-Memora ingests raw data from your life, resolves entities, builds an ontology graph, deploys AI agents, and surfaces hidden connections — the same pipeline Palantir uses at enterprise/government scale, applied to a single human life.
+Memora ingests text, resolves entities, builds an ontology graph, and runs deterministic algorithms over it — the same pipeline Palantir uses at enterprise/government scale, applied to a single human life.
 
 **Capture anything:**
 > "Had coffee with Sam Chen today. He promised to introduce me to his investor by next Friday. We discussed the pitch deck — he thinks we should emphasize the graph differentiation more."
@@ -29,10 +29,11 @@ Memora ingests raw data from your life, resolves entities, builds an ontology gr
 - Classifies into the right life domains (Professional, Ventures)
 - Scores confidence, checks for duplicates, and commits atomically
 
-**Then reasons over it continuously:**
-- "Sam has missed 2 of his last 5 commitments — follow up Thursday, not Friday"
-- "Your stress mentions correlate with your 4 overdue commitments — you're overextended"
-- "Your Academic network has had no input in 8 days — CSC148 assignment due in 2 days"
+**Then maintains the graph continuously:**
+- Flags overdue commitments and approaching deadlines
+- Discovers cross-network bridges via embedding similarity
+- Computes per-network health status from commitment completion rates
+- Resurfaces fading knowledge through SM-2 spaced repetition
 
 ---
 
@@ -40,7 +41,7 @@ Memora ingests raw data from your life, resolves entities, builds an ontology gr
 
 ### The Knowledge Graph
 
-Everything in your life becomes nodes and edges in a typed, attributed graph:
+Everything in your life becomes nodes and edges in a typed, attributed graph stored in DuckDB:
 
 **12 node types** across two clusters:
 
@@ -67,15 +68,14 @@ The graph is organized into seven living subgraphs, each representing a domain o
 
 A single node can belong to multiple networks. These multi-membership nodes are where cross-domain intelligence naturally emerges.
 
-### Three AI Agents
+### AI Agents
 
-| Agent | Role | What It Does |
+| Agent | Role | Status |
 |---|---|---|
-| **Archivist** | Graph Writer | Extracts structured entities and relationships from every capture |
-| **Strategist** | Graph Analyst | Reads the graph, generates daily briefings, recommends actions, challenges your assumptions |
-| **Researcher** | Internet Bridge | Searches the web (with anonymized queries), deposits verified facts into the Truth Layer |
-
-An orchestrator coordinates the agents. For high-stakes questions like "Should I take this job offer?", all three agents work in parallel, then deliberate and synthesize a recommendation with citations.
+| **Archivist** | Extracts structured entities and relationships from text captures via GPT-5-nano | Working |
+| **Strategist** | Reads the graph, generates analysis and briefings | Partial — analysis works, briefing generation in progress |
+| **Researcher** | Searches the web with anonymized queries, deposits verified facts | Scaffolded — MCP tool integrations in progress |
+| **Orchestrator** | LangGraph-based multi-agent coordination and query routing | Partial — routing works, deliberation in progress |
 
 ### The Living Graph Engine
 
@@ -85,96 +85,90 @@ Unlike static note-taking apps, Memora's graph evolves on its own through determ
 - **Bridge discovery** — finds hidden connections between different life domains using embedding similarity
 - **Network health** — computes per-network status (On Track / Needs Attention / Falling Behind) from commitment completion rates and alert ratios
 - **Spaced repetition (SM-2)** — resurfaces important knowledge on a scientifically-optimized schedule
-- **Gap detection** — identifies orphaned commitments, stalled goals, and neglected relationships
+- **Gap detection** — identifies orphaned nodes and stalled goals
 - **Commitment scanning** — flags overdue promises and approaching deadlines
 
 These algorithms are the anti-wrapper defense. Remove the LLM entirely and the graph, the decay mechanics, the health scores, the bridge discovery, the spaced repetition — all of it still works.
 
 ### The Truth Layer
 
-A verified fact store that prevents AI recommendations from being built on fiction:
+A verified fact store with lifecycle management:
 
-- Facts are typed by source reliability: **Primary** (official records) > **Secondary** (articles, papers) > **Self-Reported** (hearsay)
-- Static facts never expire. Dynamic facts get periodic rechecking.
-- Every agent recommendation is cross-referenced against verified facts. Contradictions are flagged.
+- Facts are stored with confidence scores and lifecycle type (static or dynamic)
+- Dynamic facts track recheck intervals (default 90 days)
+- Status tracking: active, stale, contradicted, retired
 
 ### Human-in-the-Loop
 
 Memora proposes, you decide:
 
-- High-confidence extractions (>85%) are auto-approved, with a daily review digest as a safety net
+- High-confidence extractions (>=85%) are auto-approved, with a daily review digest as a safety net
 - Ambiguous cases are flagged for your review
-- High-impact changes (merges, deletions, contradictions) always require explicit confirmation
+- High-impact changes (merges, deletions) require explicit confirmation
 
 ---
 
-## Architecture at a Glance
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  PRESENTATION    React + TypeScript + Sigma.js graph viz        │
+│  PRESENTATION    React + TypeScript + Sigma.js + TipTap         │
 ├─────────────────────────────────────────────────────────────────┤
 │  API             FastAPI + WebSocket streaming                  │
 ├─────────────────────────────────────────────────────────────────┤
-│  INTELLIGENCE    3 AI Agents + LangGraph Orchestrator           │
+│  INTELLIGENCE    Archivist + Strategist + Researcher agents     │
+│                  LangGraph Orchestrator + OpenAI API (BYOK)     │
 ├─────────────────────────────────────────────────────────────────┤
 │  CORE ENGINE     Decay, Bridges, Health, SM-2, Gap Detection    │
+│                  Commitment Scan, Relationship Decay, Backup    │
 ├─────────────────────────────────────────────────────────────────┤
 │  INFRASTRUCTURE  DuckDB + LanceDB + all-mpnet-base-v2           │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Local-first.** Everything runs on your machine. The databases are embedded. The embedding model runs locally. The only external call is to the LLM API (BYOK — bring your own key). Infrastructure cost: **$0/month**. LLM cost: **~$10–15/month**.
+**Local-first.** Everything runs on your machine. The databases are embedded. The embedding model runs locally. The only external call is to the OpenAI API (BYOK — bring your own key). Infrastructure cost: **$0/month**. LLM cost: **~$10–15/month**.
 
 ---
 
-## The 9-Stage Pipeline
+## The Capture Pipeline
 
-Every capture flows through a complete pipeline before becoming committed knowledge:
+Every text capture flows through a 9-stage pipeline before becoming committed knowledge:
 
 ```
-You type / speak / photograph something
+Text input
     │
     ▼
- 1. Raw Input Capture ─── accept and timestamp
+ 1. Raw Input ─── accept, timestamp, content-hash for dedup
     │
     ▼
- 2. Preprocessing ─── normalize dates, detect language, dedup (no AI)
+ 2. Preprocessing ─── normalize dates and currency, detect language (no AI)
     │
     ▼
- 3. Archivist Extraction ─── AI proposes graph changes (structured JSON)
+ 3. Archivist Extraction ─── LLM proposes graph changes as structured JSON
     │
     ▼
- 4. Entity Resolution ─── is "Sam" the same Sam from yesterday? (6 signals)
+ 4. Entity Resolution ─── 6-signal matching against existing nodes
     │
     ▼
- 5. Proposal Assembly ─── package all changes atomically
+ 5. Proposal Assembly ─── package all changes into atomic proposal
     │
     ▼
  6. Validation Gate ─── route by confidence
     │
-    ├── Auto-Approve (≥85%)
+    ├── Auto-Approve (>=85%)
     ├── Daily Digest (60–85%)
     └── Explicit Confirm (high-impact)
     │
     ▼
- 7. Graph Commit ─── atomic transaction, all-or-nothing
+ 7. Human Review / Auto-Approve
     │
     ▼
- 8. Post-Commit ─── embeddings, bridge discovery, notifications, fact-checking
+ 8. Graph Commit ─── atomic DuckDB transaction, all-or-nothing
+    │
+    ▼
+ 9. Post-Commit ─── generate embeddings, discover bridges,
+                    update health scores, trigger notifications
 ```
-
----
-
-## Daily Briefing
-
-Every morning, Memora delivers a life situation report:
-
-1. **Network Status** — per-network health with momentum direction
-2. **Open Alerts** — approaching deadlines, decaying relationships, stale commitments
-3. **Cross-Network Bridges** — new correlations discovered ("Your stress mentions correlate with your overdue commitments")
-4. **Recommended Actions** — people to contact, deadlines to renegotiate, opportunities to pursue
-5. **Review Queue** — knowledge nodes due for spaced repetition
 
 ---
 
@@ -182,11 +176,13 @@ Every morning, Memora delivers a life situation report:
 
 | Layer | Technologies |
 |---|---|
-| **Frontend** | React, TypeScript, Vite, Sigma.js, TipTap, Tailwind, Zustand |
-| **Backend** | Python 3.12+, FastAPI, Uvicorn, Pydantic, LangGraph |
-| **AI** | OpenAI API (GPT-5-nano), MCP servers for web research |
-| **Storage** | DuckDB (graph), LanceDB (vectors), all-mpnet-base-v2 (embeddings) |
-| **Scheduling** | APScheduler for background jobs |
+| **Frontend** | React 19, TypeScript, Vite, Sigma.js, TipTap, Tailwind CSS, Zustand |
+| **Backend** | Python 3.12+, FastAPI, Uvicorn, Pydantic v2, LangGraph |
+| **AI** | OpenAI Responses API (GPT-5-nano with json_schema mode) |
+| **Storage** | DuckDB (graph + proposals + health snapshots), LanceDB (vector embeddings) |
+| **Embeddings** | all-mpnet-base-v2 via sentence-transformers (768-dim, runs locally) |
+| **Scheduling** | APScheduler (decay, health, bridges, commitment scan, spaced repetition) |
+| **CLI** | Rich terminal interface (1600+ lines) with capture, graph browse, review, dashboard |
 
 ---
 
@@ -196,27 +192,43 @@ Every morning, Memora delivers a life situation report:
 memora/
 ├── frontend/                 # React + TypeScript web app
 │   └── src/
-│       ├── components/       # Capture, graph, network, briefing, council UI
-│       ├── views/            # Page-level components
-│       ├── stores/           # Zustand state management
+│       ├── components/
+│       │   ├── capture/      # CaptureBar (TipTap text input)
+│       │   ├── graph/        # GraphCanvas (Sigma.js), NodeDetailPanel, controls
+│       │   ├── network/      # NetworkGrid, NetworkCard, NetworkDetail
+│       │   ├── council/      # CouncilChat, AgentResponse, streaming
+│       │   ├── proposals/    # ReviewQueue, ProposalCard, ProposalDetail
+│       │   ├── briefing/     # BriefingView, AlertCard, BridgeCard
+│       │   └── common/       # CommandPalette, Layout, EmptyState, errors
+│       ├── stores/           # Zustand (graph, capture, council, network, notification)
 │       └── lib/              # API client, utilities
 │
 ├── backend/
 │   ├── memora/
 │   │   ├── agents/           # Archivist, Strategist, Researcher, Orchestrator
-│   │   ├── api/              # FastAPI routes, schemas, WebSocket
+│   │   │   └── prompts/      # System prompt templates (.md files)
+│   │   ├── api/
+│   │   │   ├── routes/       # captures, graph, proposals, council, facts, networks
+│   │   │   ├── schemas/      # Pydantic request/response models
+│   │   │   └── websocket.py  # WebSocket streaming handler
 │   │   ├── core/             # Pipeline, entity resolution, decay, bridges,
-│   │   │                     # health scoring, SM-2, truth layer, gap detection
+│   │   │                     # health scoring, SM-2, truth layer, gap detection,
+│   │   │                     # commitment scan, relationship decay, notifications
 │   │   ├── graph/            # DuckDB models, repository, ontology, migrations
-│   │   ├── vector/           # LanceDB store, embedding engine
-│   │   ├── scheduler/        # APScheduler job definitions
+│   │   ├── vector/           # LanceDB store, sentence-transformers embeddings
+│   │   ├── scheduler/        # APScheduler job definitions and setup
 │   │   └── mcp/              # MCP tool servers (search, scraping, academic)
 │   ├── cli.py                # Rich terminal interface
 │   └── tests/
+│       ├── unit/             # 15 test files (models, repo, vectors, pipeline,
+│       │                     # entity resolution, decay, health, SM-2, bridges, etc.)
+│       └── integration/      # 5 test files (archivist, council, e2e, RAG)
 │
 ├── architecture.md           # Full system architecture document
 ├── lecture.md                # Architecture lecture (CSC148 context)
-└── docker-compose.yml        # Local deployment
+├── docker-compose.yml        # Docker setup (backend + frontend)
+├── Makefile
+└── .env.example              # Environment template
 ```
 
 ---
@@ -232,50 +244,88 @@ memora/
 ### Setup
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/memora.git
+# Clone
+git clone <repo-url>
 cd memora
 
 # Backend
 cd backend
 pip install -r requirements.txt
-cp .env.example .env          # Add your OPENAI_API_KEY
+cp ../.env.example ../.env    # Add your OPENAI_API_KEY
 
 # Frontend
 cd ../frontend
 npm install
-
-# Run
-cd ../backend && uvicorn memora.api.app:app --reload &
-cd ../frontend && npm run dev
 ```
 
-Memora will be available at `http://localhost:5173` with the API at `http://localhost:8000`.
+### Run
 
-### CLI
+**Option 1: Docker**
+```bash
+docker compose up
+```
 
+**Option 2: Manual**
+```bash
+# Terminal 1 — Backend
+cd backend
+uvicorn memora.api.app:app --reload
+
+# Terminal 2 — Frontend
+cd frontend
+npm run dev
+```
+
+**Option 3: CLI only (no frontend needed)**
 ```bash
 cd backend
 python cli.py
 ```
 
-The CLI provides a full terminal interface for captures, graph browsing, proposal review, network health dashboards, and council queries.
+The web app runs at `http://localhost:5173`, API at `http://localhost:8000`.
+
+### Configuration
+
+Memora auto-creates `~/.memora/` on first run with a default `config.yaml`. Key settings:
+
+| Setting | Default | What It Controls |
+|---|---|---|
+| `auto_approve_threshold` | 0.85 | Confidence cutoff for auto-approving proposals |
+| `embedding_model` | all-mpnet-base-v2 | Sentence-transformers model for embeddings |
+| `bridge_similarity_threshold` | 0.75 | Cosine similarity cutoff for cross-network bridges |
+| `sm2_default_easiness` | 2.5 | SM-2 initial easiness factor |
+| `decay_lambda` | per-network | Exponential decay rate (higher = faster fade) |
 
 ---
 
-## Why Not Just Use ChatGPT?
+## What Works Today
 
-| Capability | ChatGPT | Memora |
-|---|---|---|
-| Remembers your life across sessions | No | Yes — persistent knowledge graph |
-| Tracks commitments and deadlines | No | Yes — with decay and alerts |
-| Finds cross-domain connections | No | Yes — bridge discovery algorithm |
-| Cites specific evidence | Hallucination risk | Yes — graph nodes + verified facts |
-| Works without internet | No | Mostly — only LLM calls need internet |
-| You own your data | No | Yes — everything local on your disk |
-| Resurfaces forgotten knowledge | No | Yes — SM-2 spaced repetition |
+**Fully functional:**
+- Text capture with content-hash deduplication
+- 9-stage async pipeline (preprocess → extract → resolve → validate → commit)
+- Archivist agent: LLM extraction into Pydantic-validated graph proposals
+- Entity resolution: 6-signal weighted matching (exact name, embedding similarity, network overlap, temporal proximity, shared relationships, LLM adjudication)
+- DuckDB graph storage with atomic transactions and full CRUD
+- LanceDB vector store with dense search, hybrid search, and filtered search
+- Proposal review system (auto-approve, digest, explicit confirm)
+- Decay scoring with per-network lambda rates
+- Network health scoring (on_track / needs_attention / falling_behind)
+- SM-2 spaced repetition scheduling
+- Bridge discovery (cross-network embedding similarity)
+- Commitment scanning (overdue detection)
+- Gap detection (orphaned nodes, stalled goals)
+- Relationship decay tracking
+- Rich CLI with full capture, browse, review, and dashboard flows
+- REST API with 6 route groups (captures, graph, proposals, council, facts, networks)
+- WebSocket streaming for council queries
+- 20 test files (15 unit + 5 integration)
 
-**The graph is the product, the LLM is the interface.** Remove the LLM and the knowledge graph, truth layer, decay mechanics, health scoring, bridge discovery, and spaced repetition all remain a fully queryable life database.
+**In progress:**
+- Strategist agent: graph analysis works, briefing generation partially implemented
+- Orchestrator: query routing works, multi-agent deliberation incomplete
+- Researcher agent: query anonymization works, MCP tool integrations scaffolded but not yet connected
+- Truth Layer: fact storage and lifecycle tracking work, contradiction detection not yet implemented
+- Frontend: components exist for all views (graph, capture, council, network, proposals, briefing, command palette) but integration is ongoing
 
 ---
 

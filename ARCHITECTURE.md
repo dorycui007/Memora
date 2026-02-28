@@ -70,7 +70,7 @@
 - [10. API Specification](#10-api-specification)
   - [10.1 API Overview](#101-api-overview)
   - [10.2 Core Endpoints](#102-core-endpoints)
-  - [10.3 WebSocket & SSE](#103-websocket--sse)
+  - [10.3 WebSocket Streaming](#103-websocket-streaming)
   - [10.4 Request/Response Examples](#104-requestresponse-examples)
 - [11. Frontend Architecture](#11-frontend-architecture)
   - [11.1 Technology Stack](#111-technology-stack)
@@ -101,7 +101,7 @@
 
 ### 1.1 What Memora Is
 
-Memora is a **local-first decision intelligence platform** that turns everything a person captures — text, voice, images — into a structured, interconnected knowledge graph. Three specialized AI agents continuously reason over this living graph to surface hidden connections, flag neglected commitments, recommend optimal actions, and deliver real-time situational awareness that no human memory can maintain.
+Memora is a **local-first decision intelligence platform** that turns everything a person captures — text — into a structured, interconnected knowledge graph. Three specialized AI agents continuously reason over this living graph to surface hidden connections, flag neglected commitments, recommend optimal actions, and deliver real-time situational awareness that no human memory can maintain.
 
 **This is not a note-taking app.** Context capture is the input; **better high-stakes decisions, proactive recommendations, and strategic foresight** are the output.
 
@@ -127,7 +127,7 @@ graph TB
     OpenAI["OpenAI API<br/>(BYOK)"]
     Internet["Public Internet<br/>(via MCP Servers)"]
 
-    User -->|"text, voice, images"| Frontend
+    User -->|"text"| Frontend
     Frontend -->|"REST / WebSocket"| API
     API --> Agents
     API --> Graph
@@ -144,10 +144,10 @@ graph TB
 │  PRESENTATION    Vite + React + TypeScript │ Sigma.js │ TipTap │       │
 │                  Tailwind + Zustand                                     │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  API             FastAPI + Uvicorn │ WebSocket + SSE │ Python 3.12+    │
+│  API             FastAPI + Uvicorn │ WebSocket │ Python 3.12+          │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  INTELLIGENCE    LangGraph Orchestrator │ OpenAI Responses API │       │
-│                  6 MCP Servers │ OpenAI API (BYOK)                      │
+│                  3 MCP Servers │ OpenAI API (BYOK)                      │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  CORE ENGINE     APScheduler │ Decay/SM-2 │ Health Scoring │           │
 │                  Bridge Discovery │ Truth Layer                         │
@@ -169,7 +169,7 @@ graph TB
 4. **Capture-first, structure-later** — every entry goes to the Archivist. You just talk naturally
 5. **Progressive disclosure of AI** — show the answer first. Collapsible sections reveal reasoning, sources, agent deliberation
 6. **Decay and resurfacing** — unvisited knowledge fades. Revisited knowledge strengthens. SM-2 spaced repetition on all nodes
-7. **Zero-friction capture** — capture action < 2 seconds. Share sheet, voice, screenshot, global shortcut
+7. **Zero-friction capture** — capture action < 2 seconds. Text input via capture bar or command palette
 8. **Never show a blank page** — always suggest, pre-populate, show context
 9. **Human-in-the-loop by default** — the system proposes, you decide
 
@@ -191,8 +191,8 @@ Every piece of information traverses all nine stages before becoming committed k
 
 ```mermaid
 flowchart LR
-    S1["Stage 1<br/>Raw Input<br/><i>text / voice / image</i>"]
-    S2["Stage 2<br/>Preprocessing<br/><i>transcription, OCR,<br/>normalization</i>"]
+    S1["Stage 1<br/>Raw Input<br/><i>text</i>"]
+    S2["Stage 2<br/>Preprocessing<br/><i>normalization</i>"]
     S3["Stage 3<br/>Archivist Extraction<br/><i>LLM + schema</i>"]
     S4["Stage 4<br/>Entity Resolution<br/><i>dedup + merge</i>"]
     S5["Stage 5<br/>Graph Proposal<br/><i>structured diff</i>"]
@@ -207,28 +207,23 @@ flowchart LR
 
 ### 2.2 Stage 1: Raw Input Capture
 
-**Purpose:** Accept user input through three modalities.
+**Purpose:** Accept user input as text.
 **LLM required:** No
 
 | Input Type | Format | How It Enters |
 |---|---|---|
-| Text (typed) | Raw string | Capture UI text box, command palette, global shortcut |
-| Voice memo | Audio → text | Whisper transcription (local or API) to text |
-| Screenshot | Image → text | OCR + LLM visual understanding to structured text |
-| Photo (whiteboard, document) | Image → text | SigLIP 2 (400M) lazy-loaded for image captures |
+| Text (typed) | Raw string | Capture UI text box, command palette, CLI |
 
-**Design constraint:** Capture action must complete in **< 2 seconds**. Every entry is timestamped, tagged with input modality, and assigned a unique content hash (SHA-256) for deduplication.
+**Design constraint:** Capture action must complete in **< 2 seconds**. Every entry is timestamped, tagged with input modality (`text`), and assigned a unique content hash (SHA-256) for deduplication.
 
 ### 2.3 Stage 2: Preprocessing
 
 **Purpose:** Deterministic normalization before the Archivist sees the input.
 **LLM required:** No — entirely deterministic. This ensures reproducibility and keeps costs at zero for this stage.
 
-1. **Transcription** (voice only): Whisper model converts audio to text with speaker diarization
-2. **OCR + Visual Understanding** (images only): Extract text via OCR; pass image + extracted text to LLM for structured interpretation ("This is a receipt from Starbucks for $5.40 on Feb 20")
-3. **Text Normalization**: Standardize dates ("next Tuesday" → `2026-03-03`), currency ("5 bucks" → `$5.00`), names ("Dr. Smith" → normalized form)
-4. **Language Detection**: Detect language for proper tokenization
-5. **Deduplication Check**: Content hash compared against recent captures to prevent duplicate processing
+1. **Text Normalization**: Standardize dates ("next Tuesday" → `2026-03-03`), currency ("5 bucks" → `$5.00`), names ("Dr. Smith" → normalized form)
+2. **Language Detection**: Detect language for proper tokenization
+3. **Deduplication Check**: Content hash compared against recent captures to prevent duplicate processing
 
 ### 2.4 Stage 3: Archivist Extraction
 
@@ -236,7 +231,6 @@ flowchart LR
 **LLM required:** Yes — this is the first and highest-frequency LLM invocation.
 
 **Agent:** The Archivist (GPT-5-nano)
-**Cost optimization:** Prompt caching reduces costs by 60–70%. The system prompt (~2,000–4,000 tokens: schema + rules + network definitions) is near-identical across 95%+ of calls. Only the RAG context window and the user's actual capture change.
 
 **What the Archivist does per capture:**
 
@@ -607,12 +601,12 @@ Primary graph storage using DuckDB — an embedded analytical SQL database. Zero
 -- ============================================================
 CREATE TABLE captures (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    modality        VARCHAR NOT NULL,               -- 'text', 'voice', 'image'
+    modality        VARCHAR NOT NULL,               -- 'text'
     raw_content     TEXT NOT NULL,
     processed_content TEXT,
     content_hash    VARCHAR(64) NOT NULL UNIQUE,     -- SHA-256 dedup
     language        VARCHAR(10),                     -- detected language code
-    metadata        JSON,                            -- modality-specific metadata
+    metadata        JSON,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -642,7 +636,7 @@ CREATE TABLE nodes (
 );
 
 CREATE INDEX idx_nodes_type ON nodes(node_type);
-CREATE INDEX idx_nodes_networks ON nodes USING GIN(networks);
+CREATE INDEX idx_nodes_networks ON nodes(networks);
 CREATE INDEX idx_nodes_content_hash ON nodes(content_hash);
 CREATE INDEX idx_nodes_decay ON nodes(decay_score);
 CREATE INDEX idx_nodes_review ON nodes(review_date);
@@ -833,7 +827,7 @@ flowchart TB
     subgraph Res["🔬 Researcher (GPT-5-nano)"]
         direction TB
         R1["Query Anonymizer"]
-        R2["MCP Servers (6)"]
+        R2["MCP Servers (3)"]
         R3["Truth Layer Writer"]
         R1 --> R2 --> R3
     end
@@ -858,9 +852,9 @@ flowchart TB
 **Context sources:**
 1. Graph schema (static) — node types, edge types, valid combinations
 2. Recent nodes via RAG (dynamic) — prevents duplicate creation
-3. User's capture (input) — the actual text/image to process
+3. User's capture (input) — the actual text to process
 
-**Prompt caching:** The system prompt (schema + rules + network definitions) is ~2,000–4,000 tokens and identical across 95%+ of calls. With OpenAI's prompt caching (automatic for repeated prefixes), the expensive part is cached, and only the variable suffix (RAG context + capture) incurs full cost. **Cost reduction: 60–70%.**
+**System prompt:** The system prompt (schema + rules + network definitions) is ~2,000–4,000 tokens and near-identical across 95%+ of calls. Only the RAG context window and user's capture change per invocation.
 
 ### 5.3 Agent 2: The Strategist (Graph Reader + Analyst)
 
@@ -891,18 +885,17 @@ flowchart TB
 | **Frequency** | On-demand (triggered by Strategist or user) |
 | **Input** | Research query + anonymized graph context |
 | **Output** | Verified facts deposited into Truth Layer |
-| **Tools** | 6 MCP servers (see below) |
+| **Tools** | 3 MCP servers (see below) |
 
 **MCP Servers:**
 
-| MCP Server | Purpose | Rate Limit |
+| MCP Server | Purpose | Status |
 |---|---|---|
-| Google Search | Primary web search | 100 free/day |
-| Brave Search | Fallback search | 2,000 free/month |
-| Playwright | Full web scraping for deep research | On-demand |
-| Semantic Scholar + arXiv | Academic paper search and retrieval | On-demand |
-| GitHub MCP | Code and repository search | On-demand |
-| Graph + Vector DB (custom) | Query Memora's own graph as agent tool | Unlimited |
+| Semantic Scholar + arXiv | Academic paper search and retrieval | Enabled |
+| Playwright | Full web scraping for deep research | Enabled |
+| GitHub MCP | Code and repository search | Enabled |
+
+> **Note:** Google Search and Brave Search MCP servers are scaffolded but currently disabled in the codebase.
 
 > [!WARNING]
 > **Critical constraint:** The Researcher must **anonymize graph context** before sending external queries. It cannot leak personal information to search engines. Query construction strips PII and uses abstract patterns.
@@ -975,14 +968,14 @@ sequenceDiagram
 
 ### 6.1 Query Classification & Routing
 
-When querying Memora, the retrieval system routes adaptively based on query complexity:
+When querying Memora, the orchestrator classifies queries and routes them to appropriate agents:
 
-| Query Type | Retrieval Strategy | Example |
+| Query Type | Routing | Example |
 |---|---|---|
-| Simple factual | Vector search only (LanceDB) | "When did I meet Sam?" |
-| Relationship | Graph traversal + vector merge | "Who introduced me to the VC?" |
-| Cross-network | Multi-network graph walk | "How is my health affecting my work?" |
-| Complex decision | Multi-step agentic RAG | "Should I take this job offer?" |
+| CAPTURE | Archivist (graph write) | "Had coffee with Sam today, he'll intro me to his VC" |
+| RESEARCH | Researcher (web search) | "What's the latest funding round for Stripe?" |
+| ANALYSIS | Strategist (graph read + analysis) | "How is my health affecting my work?" |
+| COUNCIL | Multi-agent deliberation | "Should I take this job offer?" |
 
 ### 6.2 RAG Pipeline Flow
 
@@ -990,10 +983,10 @@ When querying Memora, the retrieval system routes adaptively based on query comp
 flowchart TD
     Query["User Query"] --> Classify["Query Classifier"]
 
-    Classify -->|"Simple factual"| VS["Vector Search<br/>(LanceDB)"]
-    Classify -->|"Relationship"| GT["Graph Traversal<br/>+ Vector Merge"]
-    Classify -->|"Cross-network"| MN["Multi-Network<br/>Graph Walk"]
-    Classify -->|"Complex decision"| AR["Multi-Step<br/>Agentic RAG"]
+    Classify -->|"CAPTURE"| VS["Archivist<br/>(Graph Write)"]
+    Classify -->|"RESEARCH"| GT["Researcher<br/>(Web Search)"]
+    Classify -->|"ANALYSIS"| MN["Strategist<br/>(Graph Read + Analysis)"]
+    Classify -->|"COUNCIL"| AR["Multi-Agent<br/>Deliberation"]
 
     VS --> Hybrid["Hybrid Search<br/>(BM25 + Dense Fusion)"]
     GT --> Hybrid
@@ -1228,7 +1221,7 @@ flowchart LR
 ### 10.1 API Overview
 
 - **Framework**: FastAPI + Uvicorn
-- **Protocol**: REST (CRUD operations) + WebSocket (streaming agent responses) + SSE (background notifications)
+- **Protocol**: REST (CRUD operations) + WebSocket (streaming agent responses)
 - **Base URL**: `http://localhost:8000/api/v1`
 - **Authentication**: Local-only (no auth required for MVP; token-based for multi-device)
 
@@ -1238,10 +1231,9 @@ flowchart LR
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/captures` | Create a new capture (text, voice, image) |
+| `POST` | `/captures` | Create a new capture (text) |
 | `GET` | `/captures` | List captures with pagination and filters |
 | `GET` | `/captures/{id}` | Get single capture with linked proposals |
-| `DELETE` | `/captures/{id}` | Delete a capture (soft delete) |
 
 **Graph:**
 
@@ -1290,7 +1282,7 @@ flowchart LR
 | `GET` | `/facts/{id}` | Get fact with full provenance chain |
 | `GET` | `/facts/stale` | List facts due for rechecking |
 
-### 10.3 WebSocket & SSE
+### 10.3 WebSocket Streaming
 
 **WebSocket** — `WS /api/v1/ws/stream`
 
@@ -1304,21 +1296,6 @@ Used for real-time streaming of agent responses during council queries. Client r
     "metadata": {
         "confidence": 0.87,
         "citing_nodes": ["uuid-1", "uuid-2"]
-    }
-}
-```
-
-**SSE** — `GET /api/v1/events`
-
-Used for background notifications (new proposals, health changes, bridge discoveries, briefing ready).
-
-```json
-{
-    "event": "proposal_created",
-    "data": {
-        "proposal_id": "uuid-abc",
-        "route": "digest",
-        "summary": "Adding person Sam Chen, creating commitment: intro to investor"
     }
 }
 ```
@@ -1382,7 +1359,7 @@ Response streams via WebSocket with agent contributions, citations, and final sy
 
 | View | Description | Primary Component |
 |---|---|---|
-| **Capture** | Quick-entry input (text box, voice record, image upload) | TipTap editor + capture bar |
+| **Capture** | Quick-entry text input | TipTap editor + capture bar |
 | **Graph** | Interactive graph visualization (local neighborhood default) | Sigma.js canvas |
 | **Network Dashboard** | 7 networks with health status, momentum, alerts | Cards + sparklines |
 | **Daily Briefing** | Morning intelligence report | Structured sections with collapsibles |
@@ -1408,7 +1385,7 @@ interface MemoraStore {
     // Capture state
     capture: {
         isCapturing: boolean;
-        currentModality: 'text' | 'voice' | 'image';
+        currentModality: 'text';
         pendingCaptures: Capture[];
     };
 
@@ -1440,8 +1417,6 @@ interface MemoraStore {
 | Channel | Protocol | Use Case |
 |---|---|---|
 | Agent streaming | WebSocket | Token-by-token agent responses during council queries |
-| Background events | SSE | Proposal notifications, health changes, bridge discoveries |
-| Capture pipeline | Polling → SSE | Track pipeline progress (Stage 1 → 9) |
 
 ---
 
@@ -1471,12 +1446,9 @@ graph TB
         end
 
         subgraph MCP["MCP Servers (local processes)"]
-            GS["Google Search"]
-            BS["Brave Search"]
             PW["Playwright"]
             SS["Semantic Scholar"]
             GH["GitHub"]
-            GM["Graph + VectorDB"]
         end
 
         React --> FastAPI
@@ -1505,8 +1477,6 @@ graph TB
 ├── models/                  # Local model cache
 │   └── all-mpnet-base-v2/   # Sentence-transformers embedding model
 ├── captures/                # Raw capture storage
-│   ├── audio/               # Voice memo files
-│   └── images/              # Screenshot/photo files
 ├── backups/                 # Periodic graph snapshots
 │   └── 2026-02-27.snapshot
 └── logs/                    # Application logs
@@ -1664,7 +1634,7 @@ memora/
 | Week | Deliverables |
 |---|---|
 | W6 | LangGraph orchestrator, Strategist agent (daily briefing generation, network health reading) |
-| W7 | Researcher agent with MCP servers (Google Search, Brave, Playwright), query anonymization, Truth Layer integration |
+| W7 | Researcher agent with MCP servers (Semantic Scholar, Playwright, GitHub), query anonymization, Truth Layer integration |
 | W8 | Council decision pattern (multi-agent deliberation), bridge discovery (incremental + daily batch), background job scheduling (APScheduler) |
 | W9 | Health scoring, commitment scan, relationship decay, notification triggers, spaced repetition (SM-2) |
 
@@ -1676,8 +1646,8 @@ memora/
 
 | Week | Deliverables |
 |---|---|
-| W10–11 | Capture UI (text + voice + image), proposal review digest, basic graph visualization (Sigma.js local neighborhood) |
-| W12–13 | Network dashboard (7 networks + health), council chat with streaming (WebSocket/SSE), daily briefing view |
+| W10–11 | Capture UI (text), proposal review digest, basic graph visualization (Sigma.js local neighborhood) |
+| W12–13 | Network dashboard (7 networks + health), council chat with streaming (WebSocket), daily briefing view |
 | W14–15 | Command palette (Cmd+K), keyboard-first UX, node detail view, search integration |
 | W16 | Integration testing, performance optimization, gap detection UI, polish |
 
@@ -1735,9 +1705,9 @@ gantt
 | Entity resolution complexity exceeds estimates (3–4 weeks alone) | High | High | Phase 0–1 includes explicit entity resolution scope; prototype early with synthetic data |
 | Auto-approve threshold poorly calibrated, eroding trust | Medium | High | Track correction rate (< 5% target); allow user to adjust threshold; daily review digest as safety net |
 | DuckDB performance at scale | Low | Medium | DuckDB handles analytical workloads well; abstract graph interface allows future migration if needed |
-| LLM cost higher than projected | Medium | Medium | Prompt caching, GPT-5-nano for all ops; monitor per-user cost metrics |
+| LLM cost higher than projected | Medium | Medium | GPT-5-nano for all ops; monitor per-user cost metrics |
 | Bridge discovery produces too many false positives | Medium | Medium | LLM batch validation filters candidates; user feedback loop to tune similarity threshold |
-| User doesn't develop capture habit | High | High | Zero-friction capture (< 2s), multiple entry points (text, voice, image, share sheet), never show blank page |
+| User doesn't develop capture habit | High | High | Zero-friction capture (< 2s), text input via capture bar / command palette / CLI, never show blank page |
 
 ---
 
@@ -2014,7 +1984,7 @@ The following nodes were recently created or may be referenced:
 |---|---|
 | **Bridge** | A cross-network connection discovered by embedding similarity — the highest-value intelligence in the system |
 | **BYOK** | Bring Your Own Key — user provides their own OpenAI API key |
-| **Capture** | A single piece of user input (text, voice, image) entering the system |
+| **Capture** | A single piece of user input (text) entering the system |
 | **Context Network** | One of seven living subgraphs (Academic, Professional, Financial, Health, Personal Growth, Social, Ventures) |
 | **Council** | The three-agent AI system (Archivist + Strategist + Researcher) coordinated by a LangGraph orchestrator |
 | **CRAG** | Corrective RAG — if retrieval quality is poor, fall back to web search via the Researcher |
