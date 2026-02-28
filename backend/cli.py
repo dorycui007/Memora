@@ -14,7 +14,7 @@ import shutil
 import textwrap
 import time
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -1497,7 +1497,7 @@ class MemoraApp:
         briefing_art = f"""
 {C.CYAN}    .─────────────────────────.
     |   {C.BOLD}DAILY BRIEFING{C.RESET}{C.CYAN}          |
-    |   {C.DIM}{datetime.utcnow().strftime('%A, %B %d, %Y')}{C.RESET}{C.CYAN}  |
+    |   {C.DIM}{datetime.now(UTC).strftime('%A, %B %d, %Y')}{C.RESET}{C.CYAN}  |
     '─────────────────────────'{C.RESET}
 """
         print(briefing_art)

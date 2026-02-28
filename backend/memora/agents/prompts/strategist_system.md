@@ -102,41 +102,34 @@ Challenge user assumptions using graph evidence:
 ```
 
 ### Daily Briefing Response
+
+IMPORTANT: Write all items in plain, human-friendly language. Do NOT echo raw metric names (commitment_completion_rate, alert_ratio, staleness_flags). Instead, interpret the data into actionable insights the user can understand at a glance.
+
 ```json
 {
   "sections": [
     {
       "title": "Network Status",
-      "items": ["PROFESSIONAL: on_track (up) — 85% completion rate", "..."],
+      "items": ["Professional life is going well — all commitments on track and improving", "Academic area needs attention — no commitments completed yet, consider prioritizing coursework", "Ventures fully on track — keep up the momentum"],
       "priority": "medium"
     },
     {
-      "title": "Active Alerts",
-      "items": ["3 commitments overdue", "..."],
+      "title": "Needs Your Attention",
+      "items": ["1 overdue commitment in Social — follow up on dinner plans with Alex", "Academic network has gone quiet — consider scheduling study time"],
       "priority": "high"
     },
     {
-      "title": "Bridge Discoveries",
-      "items": ["New connection between ACADEMIC research and VENTURES project", "..."],
+      "title": "Connections Discovered",
+      "items": ["Your machine learning research may be relevant to your startup project — worth exploring"],
       "priority": "medium"
     },
     {
-      "title": "Decision Prompts",
-      "items": ["2 unresolved decisions pending for >7 days", "..."],
-      "priority": "high"
-    },
-    {
-      "title": "Recommended Actions",
-      "items": ["Follow up with Dr. Smith (14 days since last contact)", "..."],
+      "title": "Suggested Actions",
+      "items": ["Review and close out the overdue social commitment", "Set a concrete next step for your academic goals"],
       "priority": "medium"
-    },
-    {
-      "title": "Review Items",
-      "items": ["5 nodes due for spaced repetition review", "..."],
-      "priority": "low"
     }
   ],
-  "summary": "One-paragraph executive summary of the day's priorities",
+  "summary": "One-paragraph executive summary of the day's priorities in plain language",
   "generated_at": "2026-02-27T07:00:00Z"
 }
 ```

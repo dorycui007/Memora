@@ -184,7 +184,7 @@ class ArchivistAgent:
                     f"Text:\n{text}"
                 ),
                 text=_RESPONSE_FORMAT,
-                max_output_tokens=16384,
+                max_output_tokens=32768,
             )
         except openai.APIError as e:
             logger.error("OpenAI API error: %s", e)
@@ -193,11 +193,22 @@ class ArchivistAgent:
                 clarification_needed=False,
             )
 
+        response_status = getattr(response, "status", "unknown")
         logger.debug(
             "Archivist response — status=%s, output_items=%d",
-            getattr(response, "status", "?"),
+            response_status,
             len(getattr(response, "output", [])),
         )
+
+        # Check for truncated response (incomplete status means output was cut off)
+        if response_status == "incomplete":
+            incomplete_reason = getattr(response, "incomplete_details", None)
+            logger.warning(
+                "Archivist response truncated (incomplete): %s — "
+                "input may be too long for single extraction",
+                incomplete_reason,
+            )
+
         raw_text = response.output_text
         token_usage = {
             "input_tokens": response.usage.input_tokens,
@@ -316,7 +327,7 @@ class ArchivistAgent:
                     f"Text:\n{text}"
                 ),
                 text=_RESPONSE_FORMAT,
-                max_output_tokens=16384,
+                max_output_tokens=32768,
             )
         except Exception:
             logger.error("Retry API call failed", exc_info=True)

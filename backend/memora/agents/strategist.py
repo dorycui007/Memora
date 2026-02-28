@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +106,8 @@ class StrategistAgent:
                     f"Graph Context:\n{context_text}"
                 ),
                 text={"format": {"type": "json_object"}},
-                max_output_tokens=4096,
+                reasoning={"effort": "low"},
+                max_output_tokens=16384,
             )
         except openai.APIError as e:
             logger.error("OpenAI API error in Strategist: %s", e)
@@ -142,10 +143,16 @@ class StrategistAgent:
                 input=(
                     f"Generate today's daily briefing using this data. "
                     f"Respond with a JSON object matching the Daily Briefing schema.\n\n"
+                    f"IMPORTANT: Write section items in plain, actionable language a human would understand. "
+                    f"Do NOT echo raw metric names like 'commitment_completion_rate' or 'alert_ratio'. "
+                    f"Instead, interpret the data — e.g. 'You have no completed commitments in ACADEMIC yet' "
+                    f"or 'VENTURES is on track — all commitments done'. "
+                    f"Focus on what the user should know and what they can do about it.\n\n"
                     f"{briefing_input}"
                 ),
                 text={"format": {"type": "json_object"}},
-                max_output_tokens=4096,
+                reasoning={"effort": "low"},
+                max_output_tokens=16384,
             )
         except openai.APIError as e:
             logger.error("OpenAI API error generating briefing: %s", e)
@@ -154,6 +161,11 @@ class StrategistAgent:
             )
 
         raw_text = response.output_text
+        if not raw_text:
+            # Log output items to diagnose why there's no text (e.g., refusal, tool calls only)
+            output_types = [item.type for item in response.output] if response.output else []
+            logger.warning("Empty briefing response from LLM, output types: %s, status: %s", output_types, response.status)
+            return DailyBriefing(summary="Briefing generation returned empty response.")
         return self._parse_briefing_response(raw_text)
 
     async def critique(self, statement: str, graph_context: dict[str, Any] | None = None) -> StrategistResult:
@@ -185,7 +197,8 @@ class StrategistAgent:
                     f"Graph Context:\n{context_text}"
                 ),
                 text={"format": {"type": "json_object"}},
-                max_output_tokens=4096,
+                reasoning={"effort": "low"},
+                max_output_tokens=16384,
             )
         except openai.APIError as e:
             logger.error("OpenAI API error in Strategist critique: %s", e)
@@ -303,7 +316,7 @@ class StrategistAgent:
         review_items: list[dict[str, Any]],
     ) -> str:
         """Format all background job data for the briefing prompt."""
-        parts = [f"Date: {datetime.utcnow().date().isoformat()}"]
+        parts = [f"Date: {datetime.now(UTC).date().isoformat()}"]
 
         if health_scores:
             parts.append(f"Network Health Scores:\n{json.dumps(health_scores, indent=2, default=str)}")
@@ -346,6 +359,7 @@ class StrategistAgent:
         """Parse the LLM briefing response into a DailyBriefing."""
         try:
             data = self._extract_json(raw_text)
+            logger.debug("Parsed briefing JSON keys: %s", list(data.keys()))
             sections = []
             for s in data.get("sections", []):
                 raw_items = s.get("items", [])
@@ -363,7 +377,7 @@ class StrategistAgent:
                 summary=data.get("summary", ""),
             )
         except ValueError:
-            logger.warning("Failed to parse briefing JSON, using truncated raw text")
+            logger.warning("Failed to parse briefing JSON, using truncated raw text. Raw response (first 300 chars): %s", raw_text[:300])
             truncated = raw_text[:500] + ("..." if len(raw_text) > 500 else "")
             return DailyBriefing(summary=truncated)
 

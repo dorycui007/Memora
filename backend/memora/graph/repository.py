@@ -755,8 +755,12 @@ class GraphRepository:
                 """SELECT network, status, momentum, commitment_completion_rate,
                           alert_ratio, staleness_flags, computed_at
                    FROM network_health
-                   ORDER BY computed_at DESC
-                   LIMIT 7"""
+                   WHERE (network, computed_at) IN (
+                       SELECT network, MAX(computed_at)
+                       FROM network_health
+                       GROUP BY network
+                   )
+                   ORDER BY network"""
             ).fetchall()
             cols = ["network", "status", "momentum", "commitment_completion_rate",
                     "alert_ratio", "staleness_flags", "computed_at"]
