@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 os.environ.setdefault("MEMORA_LOG_LEVEL", "WARNING")
 
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent / ".env")
 
 from memora.config import load_settings, Settings
 from memora.graph.repository import GraphRepository, YOU_NODE_ID
@@ -1855,6 +1855,12 @@ class MemoraApp:
                     b_mid = ngy[b] + 1
                     a_right = ngx[a] + box_w
                     b_right = ngx[b] + box_w
+
+                    # skip if rows are out of grid bounds
+                    if (a_mid < 0 or a_mid >= g.gh
+                            or b_mid < 0 or b_mid >= g.gh):
+                        continue
+
                     top_y = min(a_mid, b_mid)
                     bot_y = max(a_mid, b_mid)
 
@@ -1869,7 +1875,7 @@ class MemoraApp:
                             g.put(cx, b_mid, CROSS_CHAR_H, CROSS_COLOR)
 
                     # vertical in the gutter column
-                    for cy in range(top_y, bot_y + 1):
+                    for cy in range(top_y, min(bot_y + 1, g.gh)):
                         if col_idx < g.gw and g.ch[cy][col_idx] == ' ':
                             g.put(col_idx, cy, CROSS_CHAR_V, CROSS_COLOR)
 
@@ -1878,7 +1884,8 @@ class MemoraApp:
                     short_lbl = lbl[:5]
                     for li, lch in enumerate(short_lbl):
                         ly = mid_y - len(short_lbl) // 2 + li
-                        if (top_y < ly < bot_y and col_idx < g.gw
+                        if (top_y < ly < bot_y and 0 <= ly < g.gh
+                                and col_idx < g.gw
                                 and g.ch[ly][col_idx] in (' ', CROSS_CHAR_V)):
                             g.put(col_idx, ly, lch, CROSS_COLOR)
 

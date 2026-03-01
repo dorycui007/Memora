@@ -1,13 +1,13 @@
 services:
   backend:
     build:
-      context: ./backend
+      context: .
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
     volumes:
       - ${MEMORA_DATA_DIR:-~/.memora}:/root/.memora
-      - ./backend:/app
+      - .:/app
     env_file:
       - .env
     environment:

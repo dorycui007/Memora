@@ -1409,91 +1409,87 @@ graph TB
 
 ```
 memora/
-├── backend/
-│   ├── memora/
-│   │   ├── api/                       # FastAPI application
-│   │   │   ├── routes/
-│   │   │   │   ├── captures.py
-│   │   │   │   ├── graph.py
-│   │   │   │   ├── proposals.py
-│   │   │   │   ├── council.py
-│   │   │   │   ├── networks.py
-│   │   │   │   └── facts.py
-│   │   │   ├── middleware/
-│   │   │   ├── schemas/               # Pydantic request/response models
-│   │   │   │   ├── capture_schemas.py
-│   │   │   │   ├── graph_schemas.py
-│   │   │   │   ├── proposal_schemas.py
-│   │   │   │   └── council_schemas.py
-│   │   │   ├── websocket.py           # WebSocket handler
-│   │   │   └── app.py                 # FastAPI app factory
-│   │   │
-│   │   ├── agents/                    # AI Council
-│   │   │   ├── archivist.py           # Graph writer agent
-│   │   │   ├── strategist.py          # Graph reader + analyst
-│   │   │   ├── researcher.py          # Internet bridge agent
-│   │   │   ├── orchestrator.py        # LangGraph coordination
-│   │   │   └── prompts/               # System prompt templates
-│   │   │       ├── archivist_system.md
-│   │   │       ├── strategist_system.md
-│   │   │       └── researcher_system.md
-│   │   │
-│   │   ├── core/                      # Core Engine (deterministic)
-│   │   │   ├── pipeline.py            # 9-stage pipeline orchestration
-│   │   │   ├── entity_resolution.py   # Multi-signal entity matching
-│   │   │   ├── decay.py               # Exponential decay scoring
-│   │   │   ├── bridge_discovery.py    # Cross-network bridge detection
-│   │   │   ├── health_scoring.py      # Network health computation
-│   │   │   ├── spaced_repetition.py   # SM-2 algorithm
-│   │   │   ├── gap_detection.py       # Structural weakness analysis
-│   │   │   ├── commitment_scan.py     # Deadline monitoring
-│   │   │   ├── relationship_decay.py  # Interaction window analysis
-│   │   │   └── truth_layer.py         # Fact verification pipeline
-│   │   │
-│   │   ├── graph/                     # Graph DB interface
-│   │   │   ├── models.py             # Pydantic domain models (NodeType, EdgeType, etc.)
-│   │   │   ├── repository.py         # CRUD operations
-│   │   │   ├── ontology.py           # Node/edge type definitions + validation
-│   │   │   └── migrations.py         # Schema migration utilities
-│   │   │
-│   │   ├── vector/                    # LanceDB interface
-│   │   │   ├── store.py              # Vector CRUD + search
-│   │   │   └── embeddings.py         # sentence-transformers wrapper
-│   │   │
-│   │   ├── mcp/                       # MCP server configurations
-│   │   │   ├── google_search.py
-│   │   │   ├── brave_search.py
-│   │   │   ├── playwright_scraper.py
-│   │   │   ├── semantic_scholar.py
-│   │   │   ├── github_mcp.py
-│   │   │   └── graph_mcp.py          # Internal graph as MCP tool
-│   │   │
-│   │   ├── scheduler/                 # APScheduler job definitions
-│   │   │   ├── jobs.py               # Job registry
-│   │   │   └── scheduler.py          # APScheduler setup
-│   │   │
-│   │   └── config.py                 # Configuration management
+├── memora/
+│   ├── api/                       # FastAPI application
+│   │   ├── routes/
+│   │   │   ├── captures.py
+│   │   │   ├── graph.py
+│   │   │   ├── proposals.py
+│   │   │   ├── council.py
+│   │   │   ├── networks.py
+│   │   │   └── facts.py
+│   │   ├── middleware/
+│   │   ├── schemas/               # Pydantic request/response models
+│   │   │   ├── capture_schemas.py
+│   │   │   ├── graph_schemas.py
+│   │   │   ├── proposal_schemas.py
+│   │   │   └── council_schemas.py
+│   │   ├── websocket.py           # WebSocket handler
+│   │   └── app.py                 # FastAPI app factory
 │   │
-│   ├── tests/
-│   │   ├── unit/
-│   │   │   ├── test_pipeline.py
-│   │   │   ├── test_entity_resolution.py
-│   │   │   ├── test_decay.py
-│   │   │   ├── test_bridge_discovery.py
-│   │   │   ├── test_health_scoring.py
-│   │   │   └── test_spaced_repetition.py
-│   │   ├── integration/
-│   │   │   ├── test_archivist.py
-│   │   │   ├── test_council.py
-│   │   │   └── test_rag_pipeline.py
-│   │   └── conftest.py
+│   ├── agents/                    # AI Council
+│   │   ├── archivist.py           # Graph writer agent
+│   │   ├── strategist.py          # Graph reader + analyst
+│   │   ├── researcher.py          # Internet bridge agent
+│   │   ├── orchestrator.py        # LangGraph coordination
+│   │   └── prompts/               # System prompt templates
+│   │       ├── archivist_system.md
+│   │       ├── strategist_system.md
+│   │       └── researcher_system.md
 │   │
-│   ├── pyproject.toml
-│   └── requirements.txt
+│   ├── core/                      # Core Engine (deterministic)
+│   │   ├── pipeline.py            # 9-stage pipeline orchestration
+│   │   ├── entity_resolution.py   # Multi-signal entity matching
+│   │   ├── decay.py               # Exponential decay scoring
+│   │   ├── bridge_discovery.py    # Cross-network bridge detection
+│   │   ├── health_scoring.py      # Network health computation
+│   │   ├── spaced_repetition.py   # SM-2 algorithm
+│   │   ├── gap_detection.py       # Structural weakness analysis
+│   │   ├── commitment_scan.py     # Deadline monitoring
+│   │   ├── relationship_decay.py  # Interaction window analysis
+│   │   └── truth_layer.py         # Fact verification pipeline
+│   │
+│   ├── graph/                     # Graph DB interface
+│   │   ├── models.py             # Pydantic domain models (NodeType, EdgeType, etc.)
+│   │   ├── repository.py         # CRUD operations
+│   │   ├── ontology.py           # Node/edge type definitions + validation
+│   │   └── migrations.py         # Schema migration utilities
+│   │
+│   ├── vector/                    # LanceDB interface
+│   │   ├── store.py              # Vector CRUD + search
+│   │   └── embeddings.py         # sentence-transformers wrapper
+│   │
+│   ├── mcp/                       # MCP server configurations
+│   │   ├── google_search.py
+│   │   ├── brave_search.py
+│   │   ├── playwright_scraper.py
+│   │   ├── semantic_scholar.py
+│   │   ├── github_mcp.py
+│   │   └── graph_mcp.py          # Internal graph as MCP tool
+│   │
+│   ├── scheduler/                 # APScheduler job definitions
+│   │   ├── jobs.py               # Job registry
+│   │   └── scheduler.py          # APScheduler setup
+│   │
+│   └── config.py                 # Configuration management
 │
-├── docs/
-│   └── ARCHITECTURE.md                # This document
+├── tests/
+│   ├── unit/
+│   │   ├── test_pipeline.py
+│   │   ├── test_entity_resolution.py
+│   │   ├── test_decay.py
+│   │   ├── test_bridge_discovery.py
+│   │   ├── test_health_scoring.py
+│   │   └── test_spaced_repetition.py
+│   ├── integration/
+│   │   ├── test_archivist.py
+│   │   ├── test_council.py
+│   │   └── test_rag_pipeline.py
+│   └── conftest.py
 │
+├── cli.py                         # Rich terminal interface
+├── pyproject.toml
+├── requirements.txt
 ├── .env.example                       # Environment template
 ├── docker-compose.yml                 # Optional containerized dev setup
 └── README.md

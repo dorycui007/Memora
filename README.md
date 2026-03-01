@@ -189,30 +189,28 @@ Text input
 
 ```
 memora/
-├── backend/
-│   ├── memora/
-│   │   ├── agents/           # Archivist, Strategist, Researcher, Orchestrator
-│   │   │   └── prompts/      # System prompt templates (.md files)
-│   │   ├── api/
-│   │   │   ├── routes/       # captures, graph, proposals, council, facts, networks
-│   │   │   ├── schemas/      # Pydantic request/response models
-│   │   │   └── websocket.py  # WebSocket streaming handler
-│   │   ├── core/             # Pipeline, entity resolution, decay, bridges,
-│   │   │                     # health scoring, SM-2, truth layer, gap detection,
-│   │   │                     # commitment scan, relationship decay, notifications
-│   │   ├── graph/            # DuckDB models, repository, ontology, migrations
-│   │   ├── vector/           # LanceDB store, sentence-transformers embeddings
-│   │   ├── scheduler/        # APScheduler job definitions and setup
-│   │   └── mcp/              # MCP tool servers (search, scraping, academic)
-│   ├── cli.py                # Rich terminal interface
-│   └── tests/
-│       ├── unit/             # 15 test files (models, repo, vectors, pipeline,
-│       │                     # entity resolution, decay, health, SM-2, bridges, etc.)
-│       └── integration/      # 5 test files (archivist, council, e2e, RAG)
-│
+├── memora/
+│   ├── agents/           # Archivist, Strategist, Researcher, Orchestrator
+│   │   └── prompts/      # System prompt templates (.md files)
+│   ├── api/
+│   │   ├── routes/       # captures, graph, proposals, council, facts, networks
+│   │   ├── schemas/      # Pydantic request/response models
+│   │   └── websocket.py  # WebSocket streaming handler
+│   ├── core/             # Pipeline, entity resolution, decay, bridges,
+│   │                     # health scoring, SM-2, truth layer, gap detection,
+│   │                     # commitment scan, relationship decay, notifications
+│   ├── graph/            # DuckDB models, repository, ontology, migrations
+│   ├── vector/           # LanceDB store, sentence-transformers embeddings
+│   ├── scheduler/        # APScheduler job definitions and setup
+│   └── mcp/              # MCP tool servers (search, scraping, academic)
+├── cli.py                # Rich terminal interface
+├── tests/
+│   ├── unit/             # 15 test files (models, repo, vectors, pipeline,
+│   │                     # entity resolution, decay, health, SM-2, bridges, etc.)
+│   └── integration/      # 5 test files (archivist, council, e2e, RAG)
 ├── architecture.md           # Full system architecture document
 ├── lecture.md                # Architecture lecture (CSC148 context)
-├── docker-compose.yml        # Docker setup (backend)
+├── docker-compose.yml        # Docker setup
 ├── Makefile
 └── .env.example              # Environment template
 ```
@@ -233,10 +231,9 @@ memora/
 git clone <repo-url>
 cd memora
 
-# Backend
-cd backend
+# Install
 pip install -r requirements.txt
-cp ../.env.example ../.env    # Add your OPENAI_API_KEY
+cp .env.example .env          # Add your OPENAI_API_KEY
 ```
 
 ### Run
@@ -248,13 +245,11 @@ docker compose up
 
 **Option 2: Backend API**
 ```bash
-cd backend
 uvicorn memora.api.app:app --reload
 ```
 
 **Option 3: CLI**
 ```bash
-cd backend
 python cli.py
 ```
 

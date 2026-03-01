@@ -27,7 +27,7 @@ os.environ["TQDM_DISABLE"] = "1"
 sys.path.insert(0, str(Path(__file__).parent))
 
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parent.parent / ".env")
+load_dotenv(Path(__file__).parent / ".env")
 
 from memora.config import load_settings
 from memora.graph.repository import GraphRepository
