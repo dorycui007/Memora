@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -26,7 +26,7 @@ def _insert_node(
 ) -> str:
     """Insert a raw node row for testing."""
     nid = node_id or str(uuid4())
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     repo._conn.execute(
         """INSERT INTO nodes
            (id, node_type, title, content, content_hash, properties,
@@ -149,7 +149,7 @@ class TestReviewQueue:
         sr = SpacedRepetition(repo)
 
         # Node due yesterday -- should appear
-        past = datetime.utcnow() - timedelta(days=1)
+        past = datetime.now(timezone.utc) - timedelta(days=1)
         nid_due = _insert_node(
             repo,
             title="Due Node",
@@ -158,7 +158,7 @@ class TestReviewQueue:
         )
 
         # Node due tomorrow -- should NOT appear
-        future = datetime.utcnow() + timedelta(days=1)
+        future = datetime.now(timezone.utc) + timedelta(days=1)
         _insert_node(
             repo,
             title="Future Node",

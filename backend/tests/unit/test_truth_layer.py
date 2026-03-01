@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -191,7 +191,7 @@ class TestStaleFacts:
             recheck_interval_days=1,
         )
         # Force next_check to the past
-        past = (datetime.utcnow() - timedelta(days=2)).isoformat()
+        past = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
         conn.execute(
             "UPDATE verified_facts SET next_check = ? WHERE id = ?",
             [past, fid],

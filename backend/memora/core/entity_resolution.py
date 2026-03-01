@@ -7,10 +7,11 @@ shared relationships, and optional LLM adjudication.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 from uuid import UUID
@@ -90,10 +91,55 @@ class EntityResolver:
         self,
         proposal: GraphProposal,
     ) -> list[ResolutionResult]:
-        """Resolve all proposed nodes against the existing graph."""
+        """Resolve all proposed nodes against the existing graph.
+
+        Uses batch prefetching for embeddings, created_at timestamps,
+        and adjacency data to minimize DB round-trips.
+        """
+        nodes = proposal.nodes_to_create
+        if not nodes:
+            return []
+
+        # Batch embedding search for all nodes at once
+        similar_map = self._find_similar_nodes_batch(nodes)
+
+        # Batch exact match search
+        exact_map: dict[str, list[dict[str, Any]]] = {}
+        for node in nodes:
+            exact_map[node.temp_id] = self._find_exact_matches(node)
+
+        # Collect all candidate IDs across all nodes
+        all_candidate_ids: set[str] = set()
+        for node in nodes:
+            for match in exact_map.get(node.temp_id, []):
+                all_candidate_ids.add(match["id"])
+            for sim in similar_map.get(node.temp_id, []):
+                all_candidate_ids.add(sim["node_id"])
+
+        # Batch prefetch created_at timestamps
+        created_at_map: dict[str, datetime] = {}
+        if all_candidate_ids:
+            created_at_map = self._repo.get_node_created_at_batch(list(all_candidate_ids))
+
+        # Batch prefetch adjacency
+        adjacency_map: dict[str, set[str]] = {}
+        if all_candidate_ids:
+            edge_rows = self._repo.get_edges_for_node_ids(all_candidate_ids)
+            for edge in edge_rows:
+                src, tgt = edge["source_id"], edge["target_id"]
+                adjacency_map.setdefault(src, set()).add(tgt)
+                adjacency_map.setdefault(tgt, set()).add(src)
+
+        # Resolve each node using prefetched data
         results = []
-        for node_proposal in proposal.nodes_to_create:
-            result = self._resolve_single(node_proposal, proposal)
+        for node in nodes:
+            result = self._resolve_single(
+                node, proposal,
+                exact_matches=exact_map.get(node.temp_id, []),
+                similar_nodes=similar_map.get(node.temp_id, []),
+                created_at_map=created_at_map,
+                adjacency_map=adjacency_map,
+            )
             results.append(result)
         return results
 
@@ -101,6 +147,10 @@ class EntityResolver:
         self,
         node: NodeProposal,
         proposal: GraphProposal,
+        exact_matches: list[dict[str, Any]] | None = None,
+        similar_nodes: list[dict[str, Any]] | None = None,
+        created_at_map: dict[str, datetime] | None = None,
+        adjacency_map: dict[str, set[str]] | None = None,
     ) -> ResolutionResult:
         """Resolve a single proposed node."""
         result = ResolutionResult(
@@ -110,11 +160,13 @@ class EntityResolver:
         audit = result.audit_log
 
         # 1. Find exact name matches in DB
-        exact_matches = self._find_exact_matches(node)
+        if exact_matches is None:
+            exact_matches = self._find_exact_matches(node)
         audit.append(f"Exact name search: {len(exact_matches)} matches for '{node.title}'")
 
         # 2. Find embedding-similar nodes
-        similar_nodes = self._find_similar_nodes(node)
+        if similar_nodes is None:
+            similar_nodes = self._find_similar_nodes(node)
         audit.append(f"Embedding search: {len(similar_nodes)} similar nodes")
 
         # 3. Build candidate list from union
@@ -140,6 +192,11 @@ class EntityResolver:
                 )
 
         candidates = list(candidates_map.values())
+
+        # Never merge into the central "You" node
+        from memora.graph.repository import YOU_NODE_ID
+        candidates = [c for c in candidates if c.existing_node_id != YOU_NODE_ID]
+
         if not candidates:
             result.outcome = ResolutionOutcome.CREATE
             audit.append("No candidates found — creating new node")
@@ -150,19 +207,56 @@ class EntityResolver:
             self._score_exact_name(candidate, node)
             self._score_embedding(candidate, similar_nodes)
             self._score_network_overlap(candidate, node)
-            self._score_temporal(candidate, node)
-            self._score_shared_relationships(candidate, node, proposal)
+            self._score_temporal(
+                candidate, node,
+                created_at=created_at_map.get(candidate.existing_node_id) if created_at_map else None,
+            )
+            self._score_shared_relationships(
+                candidate, node, proposal,
+                existing_neighbors=adjacency_map.get(candidate.existing_node_id) if adjacency_map else None,
+            )
             candidate.combined_score = self._weighted_sum(candidate.signals)
 
-        # 5. LLM adjudication for ambiguous cases
+        # 4b. Early-exit: perfect exact name match forces MERGE
+        #     A perfect name match (score 1.0) means identical title+type.
+        #     Without this, zero signals for embedding/network/temporal/relationships
+        #     dilute the weighted average below the merge threshold.
+        for candidate in candidates:
+            if candidate.signals.get("exact_name", 0.0) >= 1.0:
+                candidate.combined_score = 1.0
+                candidate.outcome = ResolutionOutcome.MERGE
+                result.outcome = ResolutionOutcome.MERGE
+                result.chosen = candidate
+                result.candidates = candidates
+                audit.append(
+                    f"MERGE (exact name): '{node.title}' → '{candidate.existing_title}' "
+                    f"(exact_name=1.0, forced merge)"
+                )
+                return result
+
+        # 5. LLM adjudication for ambiguous cases — run in parallel
+        ambiguous_pairs: list[tuple[NodeProposal, ResolutionCandidate]] = []
         for candidate in candidates:
             if self.CREATE_THRESHOLD <= candidate.combined_score < self.MERGE_THRESHOLD:
                 if self._llm_client:
-                    llm_score = self._llm_adjudicate(node, candidate)
-                    candidate.signals["llm_adjudication"] = llm_score
-                    candidate.combined_score = self._weighted_sum(candidate.signals)
+                    ambiguous_pairs.append((node, candidate))
+
+        if ambiguous_pairs:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                futures = {
+                    executor.submit(self._llm_adjudicate, n, c): c
+                    for n, c in ambiguous_pairs
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    cand = futures[future]
+                    try:
+                        llm_score = future.result()
+                    except Exception:
+                        llm_score = 0.5
+                    cand.signals["llm_adjudication"] = llm_score
+                    cand.combined_score = self._weighted_sum(cand.signals)
                     audit.append(
-                        f"LLM adjudication for '{candidate.existing_title}': {llm_score:.2f}"
+                        f"LLM adjudication for '{cand.existing_title}': {llm_score:.2f}"
                     )
 
         # 6. Determine outcome for best candidate
@@ -197,25 +291,9 @@ class EntityResolver:
     def _find_exact_matches(self, node: NodeProposal) -> list[dict[str, Any]]:
         """Find nodes with matching title (case-insensitive) and same type."""
         try:
-            rows = self._repo._conn.execute(
-                """SELECT id, node_type, title, networks, created_at
-                   FROM nodes
-                   WHERE deleted = FALSE
-                   AND node_type = ?
-                   AND LOWER(title) = LOWER(?)""",
-                [node.node_type.value, node.title],
-            ).fetchall()
-
-            results = []
-            for row in rows:
-                results.append({
-                    "id": row[0],
-                    "node_type": row[1],
-                    "title": row[2],
-                    "networks": row[3] if row[3] else [],
-                    "created_at": row[4],
-                })
-            return results
+            return self._repo.find_exact_node_matches(
+                node.node_type.value, node.title
+            )
         except Exception:
             logger.warning("Exact match search failed", exc_info=True)
             return []
@@ -238,17 +316,70 @@ class EntityResolver:
             logger.warning("Embedding similarity search failed", exc_info=True)
             return []
 
+    def _find_similar_nodes_batch(
+        self, nodes: list[NodeProposal]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Find embedding-similar nodes for all proposed nodes using batch embedding.
+
+        Returns a dict keyed by temp_id with similar node lists as values.
+        """
+        if not self._vector_store or not self._embedding_engine or not nodes:
+            return {n.temp_id: [] for n in nodes}
+
+        try:
+            texts = [f"{n.title} {n.content}" for n in nodes]
+            embeddings = self._embedding_engine.embed_batch(texts)
+
+            result: dict[str, list[dict[str, Any]]] = {}
+            for node, emb in zip(nodes, embeddings):
+                try:
+                    search_results = self._vector_store.dense_search(
+                        emb["dense"],
+                        top_k=5,
+                        filters={"node_type": node.node_type.value},
+                    )
+                    result[node.temp_id] = [r.to_dict() for r in search_results]
+                except Exception:
+                    result[node.temp_id] = []
+            return result
+        except Exception:
+            logger.warning("Batch embedding similarity search failed", exc_info=True)
+            return {n.temp_id: [] for n in nodes}
+
     def _score_exact_name(
         self,
         candidate: ResolutionCandidate,
         node: NodeProposal,
     ) -> None:
-        """Score based on exact name match."""
-        if candidate.existing_title.lower().strip() == node.title.lower().strip():
+        """Score based on name match — exact, substring, or token overlap."""
+        proposed = node.title.lower().strip()
+        existing = candidate.existing_title.lower().strip()
+
+        # Exact match
+        if proposed == existing:
             candidate.signals["exact_name"] = 1.0
-        else:
-            # Partial match
-            candidate.signals["exact_name"] = 0.0
+            return
+
+        # One name is a substring of the other (e.g., "Aisha" in "Aisha Nakamura")
+        if proposed in existing or existing in proposed:
+            # Score by ratio of shorter to longer — "Aisha" (5) / "Aisha Nakamura" (14) = 0.36
+            # But we want this to score high enough to matter, so use a floor
+            shorter = min(len(proposed), len(existing))
+            longer = max(len(proposed), len(existing))
+            candidate.signals["exact_name"] = max(0.7, shorter / longer)
+            return
+
+        # Token overlap (e.g., "Carlos Rivera" vs "Carlos" shares "carlos")
+        proposed_tokens = set(proposed.split())
+        existing_tokens = set(existing.split())
+        if proposed_tokens and existing_tokens:
+            overlap = proposed_tokens & existing_tokens
+            if overlap:
+                union = proposed_tokens | existing_tokens
+                candidate.signals["exact_name"] = 0.6 * len(overlap) / len(union)
+                return
+
+        candidate.signals["exact_name"] = 0.0
 
     def _score_embedding(
         self,
@@ -291,31 +422,38 @@ class EntityResolver:
         self,
         candidate: ResolutionCandidate,
         node: NodeProposal,
+        created_at: datetime | None = None,
     ) -> None:
-        """Score based on temporal proximity (created within 7-day window)."""
+        """Score based on temporal proximity (created within 7-day window).
+
+        Args:
+            created_at: Pre-fetched created_at for the candidate. When provided,
+                        skips the DB query.
+        """
         # Check temporal anchor on the proposal
         if node.temporal and node.temporal.occurred_at:
             proposed_time = node.temporal.occurred_at
         else:
-            proposed_time = datetime.utcnow()
+            proposed_time = datetime.now(timezone.utc)
 
-        # Get creation date of existing node
-        try:
-            row = self._repo._conn.execute(
-                "SELECT created_at FROM nodes WHERE id = ?",
-                [candidate.existing_node_id],
-            ).fetchone()
-            if row and row[0]:
-                if isinstance(row[0], str):
-                    existing_time = datetime.fromisoformat(row[0])
-                else:
-                    existing_time = row[0]
-                delta = abs((proposed_time - existing_time).days)
-                if delta <= self.TEMPORAL_WINDOW_DAYS:
-                    candidate.signals["temporal_proximity"] = 1.0 - (delta / self.TEMPORAL_WINDOW_DAYS)
-                    return
-        except Exception:
-            pass
+        # Use pre-fetched or query DB
+        existing_time = created_at
+        if existing_time is None:
+            try:
+                existing_time = self._repo.get_node_created_at(candidate.existing_node_id)
+            except Exception:
+                pass
+
+        if existing_time:
+            # Ensure both are timezone-aware for comparison
+            if existing_time.tzinfo is None:
+                existing_time = existing_time.replace(tzinfo=timezone.utc)
+            if proposed_time.tzinfo is None:
+                proposed_time = proposed_time.replace(tzinfo=timezone.utc)
+            delta = abs((proposed_time - existing_time).days)
+            if delta <= self.TEMPORAL_WINDOW_DAYS:
+                candidate.signals["temporal_proximity"] = 1.0 - (delta / self.TEMPORAL_WINDOW_DAYS)
+                return
 
         candidate.signals["temporal_proximity"] = 0.0
 
@@ -324,19 +462,29 @@ class EntityResolver:
         candidate: ResolutionCandidate,
         node: NodeProposal,
         proposal: GraphProposal,
+        existing_neighbors: set[str] | None = None,
     ) -> None:
-        """Score based on shared relationships (connected to same nodes)."""
+        """Score based on shared relationships (connected to same nodes).
+
+        Args:
+            existing_neighbors: Pre-fetched neighbor IDs for the candidate.
+                                When provided, skips the DB query.
+        """
         # Get existing edges for the candidate
-        try:
-            existing_edges = self._repo.get_edges(UUID(candidate.existing_node_id))
-            existing_neighbors = set()
-            for edge in existing_edges:
-                existing_neighbors.add(str(edge.source_id))
-                existing_neighbors.add(str(edge.target_id))
-            existing_neighbors.discard(candidate.existing_node_id)
-        except Exception:
-            candidate.signals["shared_relationships"] = 0.0
-            return
+        if existing_neighbors is None:
+            try:
+                existing_edges = self._repo.get_edges(UUID(candidate.existing_node_id))
+                existing_neighbors = set()
+                for edge in existing_edges:
+                    existing_neighbors.add(str(edge.source_id))
+                    existing_neighbors.add(str(edge.target_id))
+                existing_neighbors.discard(candidate.existing_node_id)
+            except Exception:
+                candidate.signals["shared_relationships"] = 0.0
+                return
+        else:
+            # Remove self from pre-fetched neighbors
+            existing_neighbors = existing_neighbors - {candidate.existing_node_id}
 
         # Get proposed edges involving this node
         proposed_neighbors = set()

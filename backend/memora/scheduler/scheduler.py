@@ -32,12 +32,14 @@ class MemoraScheduler:
     def __init__(
         self,
         repo,
+        app_state=None,
         vector_store=None,
         embedding_engine=None,
         truth_layer=None,
         settings=None,
     ) -> None:
         self._repo = repo
+        self._app_state = app_state
         self._vector_store = vector_store
         self._embedding_engine = embedding_engine
         self._truth_layer = truth_layer
@@ -50,6 +52,17 @@ class MemoraScheduler:
                 "misfire_grace_time": 3600,  # 1 hour grace period
             },
         )
+
+    # ── Lazy dependency resolution ─────────────────────────────────
+
+    def _resolve(self, attr: str):
+        """Resolve a dependency, falling back to app_state for lazy-init deps."""
+        val = getattr(self, f"_{attr}", None)
+        if val is not None:
+            return val
+        if self._app_state is not None:
+            return getattr(self._app_state, attr, None)
+        return None
 
     # ── Lifecycle ────────────────────────────────────────────────────
 
@@ -83,14 +96,17 @@ class MemoraScheduler:
         )
 
         # Bridge discovery batch — daily at 3:00 AM
+        # Use a wrapper to resolve lazy-init dependencies at runtime
+        async def _bridge_discovery_wrapper():
+            await run_bridge_discovery_batch(
+                repo=self._repo,
+                vector_store=self._resolve("vector_store"),
+                embedding_engine=self._resolve("embedding_engine"),
+            )
+
         self._scheduler.add_job(
-            run_bridge_discovery_batch,
+            _bridge_discovery_wrapper,
             trigger=CronTrigger(hour=3, minute=0),
-            kwargs={
-                "repo": self._repo,
-                "vector_store": self._vector_store,
-                "embedding_engine": self._embedding_engine,
-            },
             id="bridge_discovery_batch",
             name="Bridge Discovery Batch",
             replace_existing=True,
@@ -147,16 +163,18 @@ class MemoraScheduler:
         )
 
         # Daily briefing — daily at 7:00 AM
+        async def _daily_briefing_wrapper():
+            await run_daily_briefing(
+                repo=self._repo,
+                vector_store=self._resolve("vector_store"),
+                embedding_engine=self._resolve("embedding_engine"),
+                truth_layer=self._resolve("truth_layer"),
+                settings=self._settings,
+            )
+
         self._scheduler.add_job(
-            run_daily_briefing,
+            _daily_briefing_wrapper,
             trigger=CronTrigger(hour=7, minute=0),
-            kwargs={
-                "repo": self._repo,
-                "vector_store": self._vector_store,
-                "embedding_engine": self._embedding_engine,
-                "truth_layer": self._truth_layer,
-                "settings": self._settings,
-            },
             id="daily_briefing",
             name="Daily Briefing",
             replace_existing=True,

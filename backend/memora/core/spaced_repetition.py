@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from memora.graph.repository import GraphRepository
@@ -28,7 +28,7 @@ class SpacedRepetition:
 
     def initialize_node(self, node_id: str) -> None:
         """Set initial SM-2 parameters on a node's properties."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         sm2_params = {
             "easiness_factor": DEFAULT_EASINESS_FACTOR,
             "repetition_number": 0,
@@ -82,7 +82,7 @@ class SpacedRepetition:
         if ef < MIN_EASINESS_FACTOR:
             ef = MIN_EASINESS_FACTOR
 
-        next_review = datetime.utcnow() + timedelta(days=interval)
+        next_review = datetime.now(timezone.utc) + timedelta(days=interval)
 
         new_params: dict[str, Any] = {
             "easiness_factor": round(ef, 4),
@@ -97,7 +97,7 @@ class SpacedRepetition:
         try:
             self._repo._conn.execute(
                 "UPDATE nodes SET review_date = ?, updated_at = ? WHERE id = ?",
-                [next_review.isoformat(), datetime.utcnow().isoformat(), node_id],
+                [next_review.isoformat(), datetime.now(timezone.utc).isoformat(), node_id],
             )
         except Exception:
             logger.warning("Failed to update review_date column for node %s", node_id)
@@ -113,7 +113,7 @@ class SpacedRepetition:
 
         Ordered by most overdue first, then ascending easiness factor.
         """
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         try:
             rows = self._repo._conn.execute(
                 """SELECT id, node_type, title, properties, review_date
@@ -180,7 +180,7 @@ class SpacedRepetition:
         try:
             self._repo._conn.execute(
                 "UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?",
-                [json.dumps(current), datetime.utcnow().isoformat(), node_id],
+                [json.dumps(current), datetime.now(timezone.utc).isoformat(), node_id],
             )
         except Exception:
             logger.warning(

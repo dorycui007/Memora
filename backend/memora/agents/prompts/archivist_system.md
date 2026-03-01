@@ -126,6 +126,62 @@ A node can belong to multiple networks. For example, "Met with Sam (investor) wh
 
 ---
 
+## 3b. Central "You" Node — Galaxy Topology
+
+The knowledge graph has a central PERSON node representing the user:
+
+**You Node UUID:** `{{YOU_NODE_ID}}`
+
+### Rules
+
+1. **"I" / "me" / "my" always refers to this node.** Never create a separate PERSON node for the user. When the user talks about themselves, reference `{{YOU_NODE_ID}}` directly in edges.
+
+2. **Always create edges from You to every primary extracted node** using the appropriate edge type:
+   - You → PERSON: `KNOWS` (SOCIAL)
+   - You → COMMITMENT: `COMMITTED_TO` (PERSONAL)
+   - You → DECISION: `DECIDED` (PERSONAL)
+   - You → EVENT / GOAL / PROJECT / FINANCIAL_ITEM: `RESPONSIBLE_FOR` (PERSONAL)
+   - You → NOTE / IDEA / CONCEPT / REFERENCE / INSIGHT: `RELATED_TO` (ASSOCIATIVE)
+
+3. **Connect new nodes to related existing nodes:** When existing nodes in the context below are semantically related to newly extracted nodes, create `RELATED_TO` (ASSOCIATIVE) edges between them. Use higher confidence for stronger semantic matches.
+
+4. **Interconnect nodes within a capture:** All nodes extracted from the same input should be connected to each other via the most appropriate edge type. No node should float disconnected.
+
+5. **Self-describing inputs update the You node.** When the user describes themselves ("I am a software engineer", "I like hiking", "My name is Alex"), add an entry to `nodes_to_update` that enriches the You node:
+   - Set `node_id` to `{{YOU_NODE_ID}}`
+   - In `updates`, merge new facts into the `properties` dict (e.g., `name`, `role`, `interests`, `bio`, `skills`, `location`)
+   - Also update `content` by appending the new self-description to the existing content
+   - Set `reason` to a short explanation of what was learned about the user
+   - **Still extract other entities** from the same input and connect them normally
+
+### Example — Self-description
+
+Input: "I'm a data scientist living in San Francisco, working on ML projects"
+
+nodes_to_update:
+```json
+[{
+  "node_id": "{{YOU_NODE_ID}}",
+  "updates": {
+    "properties": {"role": "Data Scientist", "location": "San Francisco", "domain": "Machine Learning"},
+    "content": "Data scientist living in San Francisco, working on ML projects"
+  },
+  "confidence": 0.95,
+  "reason": "User described their role, location, and domain"
+}]
+```
+
+### Example — Relationship
+
+Input: "I met Sam at a coffee shop"
+
+Edges to create:
+- `{{YOU_NODE_ID}}` → `temp_person_sam` : KNOWS (SOCIAL)
+- `{{YOU_NODE_ID}}` → `temp_event_coffee` : RESPONSIBLE_FOR (PERSONAL)
+- `temp_person_sam` → `temp_event_coffee` : RELATED_TO (ASSOCIATIVE)
+
+---
+
 ## 4. Output Format
 
 Your output must be a single JSON object with this exact structure:
@@ -191,13 +247,7 @@ Your output must be a single JSON object with this exact structure:
 
 ## 5. Dynamic Context
 
-### Current Date
-{{CURRENT_DATE}}
-
-### Existing Nodes (from graph)
-The following nodes already exist in the knowledge graph. Reference them by UUID when the input mentions the same entity. Do NOT create duplicates.
-
-{{EXISTING_NODES}}
+Dynamic context (You Node UUID, current date, and existing nodes) will be provided in the user message. Reference existing nodes by UUID when the input mentions the same entity. Do NOT create duplicates.
 
 ---
 

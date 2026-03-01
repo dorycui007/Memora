@@ -62,11 +62,11 @@ def _insert_node(repo, title, node_type="PERSON", networks=None):
     """Helper to insert a node directly into the DB."""
     import hashlib
     import json
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     nid = str(uuid4())
     content_hash = hashlib.sha256(f"{title}|".encode()).hexdigest()
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     repo._conn.execute(
         """INSERT INTO nodes (id, node_type, title, content, content_hash,
            properties, confidence, networks, human_approved, proposed_by,
@@ -296,15 +296,13 @@ class TestOutcomeDetermination:
         assert len(results) == 1
         assert results[0].outcome == ResolutionOutcome.CREATE
 
-    def test_exact_match_finds_candidate(self, resolver, repo, sample_proposal):
+    def test_exact_name_match_forces_merge(self, resolver, repo, sample_proposal):
         _insert_node(repo, "Bob Johnson", "PERSON", ["PROFESSIONAL"])
         results = resolver.resolve_nodes(sample_proposal)
         assert len(results) == 1
-        # Without embedding similarity, exact name alone is diluted
-        # by other 0-scoring signals below MERGE threshold.
-        # But a candidate should still be found.
-        assert len(results[0].candidates) >= 1
-        assert results[0].candidates[0].signals.get("exact_name") == 1.0
+        assert results[0].outcome == ResolutionOutcome.MERGE
+        assert results[0].chosen is not None
+        assert results[0].chosen.existing_title == "Bob Johnson"
 
     def test_different_type_no_match(self, resolver, repo, sample_proposal):
         _insert_node(repo, "Bob Johnson", "EVENT")
@@ -406,3 +404,88 @@ class TestApplyMerges:
         assert result.edges_to_create[0].source_id == existing_id
         # Edge target_id should stay as temp_id (event_1 is CREATE)
         assert result.edges_to_create[0].target_id == "event_1"
+
+
+# ── Batch Methods ────────────────────────────────────────────────────
+
+
+class TestBatchSimilarNodes:
+    def test_batch_uses_embed_batch(self, repo):
+        """_find_similar_nodes_batch calls embed_batch instead of embed_text."""
+        mock_vs = MagicMock()
+        mock_ee = MagicMock()
+        mock_ee.embed_batch.return_value = [
+            {"dense": [0.0] * 768, "sparse": {}},
+            {"dense": [0.0] * 768, "sparse": {}},
+        ]
+        mock_vs.dense_search.return_value = []
+
+        resolver = EntityResolver(
+            repo=repo,
+            vector_store=mock_vs,
+            embedding_engine=mock_ee,
+        )
+
+        nodes = [
+            NodeProposal(
+                temp_id="p1", node_type=NodeType.PERSON,
+                title="Alice", content="dev", confidence=0.9,
+                networks=[NetworkType.PROFESSIONAL],
+            ),
+            NodeProposal(
+                temp_id="p2", node_type=NodeType.PERSON,
+                title="Bob", content="mgr", confidence=0.9,
+                networks=[NetworkType.PROFESSIONAL],
+            ),
+        ]
+        result = resolver._find_similar_nodes_batch(nodes)
+        assert "p1" in result
+        assert "p2" in result
+        mock_ee.embed_batch.assert_called_once()
+
+    def test_batch_no_vector_store(self, repo):
+        """Without vector store, returns empty lists for all nodes."""
+        resolver = EntityResolver(repo=repo)
+        nodes = [
+            NodeProposal(
+                temp_id="p1", node_type=NodeType.PERSON,
+                title="Alice", content="", confidence=0.9,
+                networks=[NetworkType.PROFESSIONAL],
+            ),
+        ]
+        result = resolver._find_similar_nodes_batch(nodes)
+        assert result == {"p1": []}
+
+    def test_resolve_nodes_batch_integration(self, repo):
+        """resolve_nodes uses batch embedding path end-to-end."""
+        mock_vs = MagicMock()
+        mock_ee = MagicMock()
+        mock_ee.embed_batch.return_value = [{"dense": [0.0] * 768, "sparse": {}}]
+        mock_vs.dense_search.return_value = []
+
+        resolver = EntityResolver(
+            repo=repo,
+            vector_store=mock_vs,
+            embedding_engine=mock_ee,
+        )
+
+        proposal = GraphProposal(
+            source_capture_id=str(uuid4()),
+            confidence=0.90,
+            nodes_to_create=[
+                NodeProposal(
+                    temp_id="person_1",
+                    node_type=NodeType.PERSON,
+                    title="Nobody Special",
+                    content="",
+                    confidence=0.9,
+                    networks=[NetworkType.PROFESSIONAL],
+                ),
+            ],
+            edges_to_create=[],
+            human_summary="test",
+        )
+        results = resolver.resolve_nodes(proposal)
+        assert len(results) == 1
+        assert results[0].outcome == ResolutionOutcome.CREATE
+        mock_ee.embed_batch.assert_called_once()

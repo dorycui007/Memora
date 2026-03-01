@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import select
 import shutil
 import textwrap
 import time
@@ -28,7 +29,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
 from memora.config import load_settings, Settings
-from memora.graph.repository import GraphRepository
+from memora.graph.repository import GraphRepository, YOU_NODE_ID
 from memora.graph.models import NodeType, NetworkType, ProposalRoute, ProposalStatus
 from memora.core.pipeline import PipelineStage, STAGE_NAMES
 
@@ -322,6 +323,52 @@ class MemoraApp:
 
         print(f"  {C.GREEN}Ready.{C.RESET} Data dir: {C.DIM}{self.settings.data_dir}{C.RESET}\n")
 
+    def _get_embedding_engine(self):
+        """Lazily initialize the embedding engine."""
+        if not hasattr(self, '_embedding_engine') or self._embedding_engine is None:
+            try:
+                import logging as _logging
+                from memora.vector.embeddings import EmbeddingEngine
+
+                # Suppress noisy model-loading logs
+                _noisy = ["sentence_transformers", "httpx", "huggingface_hub",
+                           "transformers", "torch", "tqdm"]
+                _prev = {n: _logging.getLogger(n).level for n in _noisy}
+                for n in _noisy:
+                    _logging.getLogger(n).setLevel(_logging.ERROR)
+
+                import os as _os
+                _prev_tqdm = _os.environ.get("TQDM_DISABLE")
+                _os.environ["TQDM_DISABLE"] = "1"
+
+                try:
+                    self._embedding_engine = EmbeddingEngine(
+                        model_name=self.settings.embedding_model,
+                        cache_dir=self.settings.models_dir,
+                    )
+                finally:
+                    for n, lvl in _prev.items():
+                        _logging.getLogger(n).setLevel(lvl)
+                    if _prev_tqdm is None:
+                        _os.environ.pop("TQDM_DISABLE", None)
+                    else:
+                        _os.environ["TQDM_DISABLE"] = _prev_tqdm
+            except Exception as e:
+                print(f"  {C.DIM}(embedding engine unavailable: {e}){C.RESET}")
+                self._embedding_engine = None
+        return self._embedding_engine
+
+    def _get_vector_store(self):
+        """Lazily initialize the vector store."""
+        if not hasattr(self, '_vector_store') or self._vector_store is None:
+            try:
+                from memora.vector.store import VectorStore
+                self._vector_store = VectorStore(db_path=self.settings.vector_dir)
+            except Exception as e:
+                print(f"  {C.DIM}(vector store unavailable: {e}){C.RESET}")
+                self._vector_store = None
+        return self._vector_store
+
     def _get_pipeline(self):
         if self._pipeline:
             return self._pipeline
@@ -329,9 +376,16 @@ class MemoraApp:
             return None
         try:
             from memora.core.pipeline import ExtractionPipeline
+
+            spinner("Loading embedding model", 0.3)
+            vector_store = self._get_vector_store()
+            embedding_engine = self._get_embedding_engine()
+
             self._pipeline = ExtractionPipeline(
                 repo=self.repo,
                 settings=self.settings,
+                vector_store=vector_store,
+                embedding_engine=embedding_engine,
             )
             return self._pipeline
         except Exception as e:
@@ -384,6 +438,8 @@ class MemoraApp:
             if choice in ("q", "quit", "exit"):
                 self.goodbye()
                 break
+            elif choice == "0":
+                self.cmd_profile()
             elif choice == "1":
                 self.cmd_capture()
             elif choice == "2":
@@ -400,13 +456,18 @@ class MemoraApp:
                 self.cmd_briefing()
             elif choice == "8":
                 self.cmd_critique()
+            elif choice == "9":
+                self.cmd_dossier()
+            elif choice in ("c", "clear"):
+                self.cmd_clear_data()
             else:
-                print(f"  {C.DIM}Unknown command. Try 1-8 or 'q' to quit.{C.RESET}")
+                print(f"  {C.DIM}Unknown command. Try 0-9, 'c', or 'q' to quit.{C.RESET}")
 
     def show_main_menu(self):
         print(f"\n{divider('═', C.CYAN)}")
         print(f"  {C.BOLD}{C.CYAN}MAIN MENU{C.RESET}")
         print(divider())
+        print(menu_option("0", "Profile",    "Tell Memora about yourself"))
         print(menu_option("1", "Capture",    "Record a thought, event, or decision"))
         print(menu_option("2", "Council",    "Ask the AI council a question"))
         print(menu_option("3", "Browse",     "Explore your knowledge graph"))
@@ -415,6 +476,9 @@ class MemoraApp:
         print(menu_option("6", "Stats",      "Full graph statistics & charts"))
         print(menu_option("7", "Briefing",   "Generate your daily briefing"))
         print(menu_option("8", "Critique",   "Challenge a statement or decision"))
+        print(menu_option("9", "Dossier",    "Deep search — everything about an entity"))
+        print()
+        print(menu_option("c", "Clear data", "Erase all databases and start fresh"))
         print(divider())
         print(f"  {C.DIM}[q] Quit{C.RESET}")
 
@@ -429,7 +493,20 @@ class MemoraApp:
             nets = len(stats.get("network_breakdown", {}))
 
             api_status = f"{C.GREEN}connected{C.RESET}" if self._has_api_key else f"{C.RED}no key{C.RESET}"
-            status = (f"  {C.BOLD}{nodes}{C.RESET} nodes  {C.DIM}|{C.RESET}  "
+
+            # Show You node profile hint
+            you_node = self.repo.get_node(UUID(YOU_NODE_ID))
+            you_label = ""
+            if you_node and you_node.properties:
+                name = you_node.properties.get("name", "")
+                role = you_node.properties.get("role", "")
+                if name and name != "You":
+                    you_label = f"  {C.YELLOW}\u2605{C.RESET} {name}"
+                    if role:
+                        you_label += f" ({role})"
+                    you_label += f"  {C.DIM}|{C.RESET}"
+
+            status = (f"{you_label}  {C.BOLD}{nodes}{C.RESET} nodes  {C.DIM}|{C.RESET}  "
                       f"{C.BOLD}{edges}{C.RESET} edges  {C.DIM}|{C.RESET}  "
                       f"{C.BOLD}{nets}{C.RESET} networks  {C.DIM}|{C.RESET}  "
                       f"API: {api_status}")
@@ -438,17 +515,273 @@ class MemoraApp:
         except Exception:
             pass
 
-    # ── 1. Capture ────────────────────────────────────────────────
+    # ── 0. Profile ─────────────────────────────────────────────────
 
-    def cmd_capture(self):
-        print(f"\n{box('CAPTURE', 'Record a new thought, event, meeting note, decision, or anything.', C.YELLOW)}")
-        print(f"\n  {C.DIM}Type your text below. Press Enter twice to submit, or 'cancel' to abort.{C.RESET}")
+    def cmd_profile(self):
+        """View and update the central You node."""
+        from uuid import UUID as _UUID
+
+        you_id = _UUID(YOU_NODE_ID)
+        you_node = self.repo.get_node(you_id)
+
+        if not you_node:
+            print(f"  {C.RED}You node not found.{C.RESET}")
+            return
+
+        # Show current profile
+        profile_art = f"""
+{C.CYAN}{C.BOLD}
+         .---.
+        / YOU \\
+       |  {C.YELLOW}★{C.RESET}{C.CYAN}{C.BOLD}   |    YOUR PROFILE
+        \\_____/
+{C.RESET}"""
+        print(profile_art)
+
+        props = you_node.properties or {}
+        content = you_node.content or ""
+
+        # Show identity fields
+        if props.get("name") and props["name"] != "You":
+            print(f"  {C.BOLD}Name:{C.RESET}      {props['name']}")
+        if props.get("role"):
+            print(f"  {C.BOLD}Role:{C.RESET}      {props['role']}")
+        if props.get("location"):
+            print(f"  {C.BOLD}Location:{C.RESET}  {props['location']}")
+        if props.get("organization"):
+            print(f"  {C.BOLD}Org:{C.RESET}       {props['organization']}")
+        if props.get("interests"):
+            interests = props["interests"]
+            if isinstance(interests, list):
+                interests = ", ".join(interests)
+            print(f"  {C.BOLD}Interests:{C.RESET} {interests}")
+        if props.get("skills"):
+            skills = props["skills"]
+            if isinstance(skills, list):
+                skills = ", ".join(skills)
+            print(f"  {C.BOLD}Skills:{C.RESET}    {skills}")
+        if props.get("bio"):
+            print(f"  {C.BOLD}Bio:{C.RESET}       {props['bio']}")
+
+        # Show other custom properties
+        shown = {"name", "role", "location", "organization", "interests",
+                 "skills", "bio", "relationship_to_user"}
+        extras = {k: v for k, v in props.items() if k not in shown}
+        if extras:
+            for k, v in extras.items():
+                print(f"  {C.DIM}{k}:{C.RESET}  {v}")
+
+        # Show content (accumulated self-descriptions)
+        if content and content != "Central node representing the user":
+            print(f"\n  {C.BOLD}About you:{C.RESET}")
+            for line in textwrap.wrap(content, min(term_width() - 6, 68)):
+                print(f"    {C.DIM}{line}{C.RESET}")
+
+        # Show connections count
+        try:
+            edges = self.repo.get_edges(you_id)
+            print(f"\n  {C.BOLD}Connections:{C.RESET} {len(edges)} nodes in your galaxy")
+        except Exception:
+            pass
+
+        # Menu: update profile or view galaxy
+        print(f"\n{divider()}")
+        print(menu_option("1", "Update profile",  "Tell Memora about yourself"))
+        print(menu_option("2", "View galaxy",     "See your galaxy graph"))
+        print(menu_option("b", "Back",            "Return to main menu"))
+
+        choice = prompt("profile> ")
+        if choice == "1":
+            self._profile_update()
+        elif choice == "2":
+            self._browse_galaxy()
+
+    def _profile_update(self):
+        """Let user write self-descriptions to enrich the You node."""
+        print(f"\n  {C.BOLD}Tell Memora about yourself.{C.RESET}")
+        print(f"  {C.DIM}Examples: \"I'm a software engineer at Acme Corp\"{C.RESET}")
+        print(f"  {C.DIM}          \"I live in San Francisco and love hiking\"{C.RESET}")
+        print(f"  {C.DIM}          \"My goal is to launch a startup by Q3\"{C.RESET}")
+        print(f"  {C.DIM}Press Enter twice to submit, 'cancel' to abort.{C.RESET}")
         print(f"  {C.DIM}{'─' * 60}{C.RESET}")
 
         lines = []
         while True:
-            line = prompt(f"  {C.YELLOW}| {C.RESET}")
+            line = prompt(f"  {C.CYAN}| {C.RESET}")
             if line.lower() == "cancel":
+                print(f"  {C.DIM}Cancelled.{C.RESET}")
+                return
+            if line == "" and lines and lines[-1] == "":
+                lines.pop()
+                break
+            lines.append(line)
+
+        text = "\n".join(lines).strip()
+        if not text:
+            print(f"  {C.DIM}Nothing to update.{C.RESET}")
+            return
+
+        pipeline = self._get_pipeline()
+        if pipeline:
+            # Run through pipeline — the archivist will detect self-description
+            # and add nodes_to_update for the You node
+            from memora.graph.models import Capture
+            import hashlib
+            content_hash = hashlib.sha256(text.encode()).hexdigest()
+            capture = Capture(modality="text", raw_content=text, content_hash=content_hash)
+            cid = self.repo.create_capture(capture)
+
+            tracker = PipelineTracker()
+            print()
+            try:
+                state = asyncio.run(pipeline.run(str(cid), text, on_stage=tracker.on_stage))
+                self._render_pipeline_result(state, text)
+                if state.proposal_id and state.status == "awaiting_review":
+                    action = prompt(f"\n  Approve this proposal? [{C.GREEN}Y{C.RESET}/n/skip] ")
+                    if action.lower() not in ("n", "no", "skip"):
+                        self._approve_proposal(state.proposal_id[:8])
+            except Exception as e:
+                print(f"\n  {C.RED}Pipeline error: {e}{C.RESET}")
+                # Fall back to direct update
+                self._profile_direct_update(text)
+        else:
+            # No API key — update You node directly
+            self._profile_direct_update(text)
+
+    def _profile_direct_update(self, text: str):
+        """Directly update the You node content without AI processing."""
+        import json as _json
+        from uuid import UUID as _UUID
+
+        you_id = _UUID(YOU_NODE_ID)
+        you_node = self.repo.get_node(you_id)
+        if not you_node:
+            return
+
+        # Append to content
+        current = you_node.content or ""
+        if current == "Central node representing the user":
+            new_content = text
+        else:
+            new_content = f"{current}\n{text}"
+
+        self.repo.update_node(you_id, {"content": new_content})
+
+        print(f"\n  {C.GREEN}Profile updated!{C.RESET}")
+        print(f"  {C.DIM}Added: {text[:60]}{'...' if len(text) > 60 else ''}{C.RESET}")
+
+    # ── 1. Capture ────────────────────────────────────────────────
+
+    # Recommended max characters for a single capture.  Longer text still
+    # works but may degrade extraction quality in the archivist LLM call.
+    CAPTURE_CHAR_LIMIT = 2000
+
+    # ── Raw-mode capture input with live character counter ─────────
+
+    def _show_capture_counter(self, chars: int, limit: int):
+        """Render a right-aligned char counter on the current line."""
+        w = term_width()
+        if chars > limit:
+            color = C.RED
+        elif chars > int(limit * 0.8):
+            color = C.YELLOW
+        else:
+            color = C.DIM
+        label = f"{chars:,}/{limit:,}"
+        col = w - len(label)
+        # Save cursor ➜ jump to column ➜ print ➜ restore cursor
+        sys.stdout.write(f"\033[s\033[{col}G{color}{label}{C.RESET}\033[u")
+        sys.stdout.flush()
+
+    def _read_capture_line(
+        self, prompt_str: str, char_total: int, limit: int,
+    ) -> str | None:
+        """Read one line char-by-char so the counter updates per keystroke.
+
+        Returns the line text, or *None* on Ctrl-C / Ctrl-D.
+        """
+        try:
+            import tty, termios
+        except ImportError:
+            # Fallback (e.g. Windows) — use plain input(), no live counter
+            try:
+                return input(f"\n{prompt_str}").strip()
+            except (EOFError, KeyboardInterrupt):
+                return None
+
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        buf: list[str] = []
+
+        sys.stdout.write(f"\n{prompt_str}")
+        sys.stdout.flush()
+        self._show_capture_counter(char_total, limit)
+
+        try:
+            tty.setcbreak(fd)
+            while True:
+                ch = sys.stdin.read(1)
+
+                if ch in ("\r", "\n"):
+                    sys.stdout.write("\n")
+                    break
+                elif ch in ("\x7f", "\x08"):          # Backspace
+                    if buf:
+                        buf.pop()
+                        sys.stdout.write("\b \b")
+                elif ch == "\x03":                     # Ctrl-C
+                    sys.stdout.write("\n")
+                    return None
+                elif ch == "\x04":                     # Ctrl-D
+                    sys.stdout.write("\n")
+                    return None
+                elif ch == "\x1b":                     # ESC sequence (arrows)
+                    # Consume remaining bytes of the sequence
+                    if select.select([sys.stdin], [], [], 0.05)[0]:
+                        sys.stdin.read(1)
+                        if select.select([sys.stdin], [], [], 0.05)[0]:
+                            sys.stdin.read(1)
+                    continue
+                elif ch == "\t":                       # Tab → 4 spaces
+                    for _ in range(4):
+                        buf.append(" ")
+                        sys.stdout.write(" ")
+                elif ch >= " ":                        # Printable
+                    buf.append(ch)
+                    sys.stdout.write(ch)
+
+                self._show_capture_counter(
+                    char_total + len(buf), limit,
+                )
+                sys.stdout.flush()
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+        return "".join(buf)
+
+    def cmd_capture(self):
+        limit = self.CAPTURE_CHAR_LIMIT
+        print(f"\n{box('CAPTURE', 'Record a new thought, event, meeting note, decision, or anything.', C.YELLOW)}")
+        print(f"\n  {C.DIM}Type your text below. Press Enter twice to submit, or 'cancel' to abort.{C.RESET}")
+        print(f"  {C.DIM}Recommended limit: {limit:,} characters{C.RESET}")
+        print(f"  {C.DIM}{'─' * 60}{C.RESET}")
+
+        lines: list[str] = []
+        while True:
+            # Current accumulated length (including newlines between lines)
+            running = "\n".join(lines)
+            char_total = len(running.strip())
+            if lines:
+                char_total += 1          # the newline before this new line
+
+            line = self._read_capture_line(
+                f"  {C.YELLOW}| {C.RESET}", char_total, limit,
+            )
+
+            if line is None:                           # Ctrl-C / Ctrl-D
+                print(f"  {C.DIM}Cancelled.{C.RESET}")
+                return
+            if line.strip().lower() == "cancel":
                 print(f"  {C.DIM}Cancelled.{C.RESET}")
                 return
             if line == "" and lines and lines[-1] == "":
@@ -462,8 +795,12 @@ class MemoraApp:
             return
 
         # Show preview
+        char_count = len(text)
         print(f"\n{divider()}")
-        print(f"  {C.BOLD}Preview:{C.RESET}")
+        if char_count > limit:
+            print(f"  {C.YELLOW}Warning:{C.RESET} {char_count:,} chars exceeds the recommended {limit:,} limit.")
+            print(f"  {C.DIM}The capture will still be saved, but extraction quality may be reduced.{C.RESET}")
+        print(f"  {C.BOLD}Preview{C.RESET} {C.DIM}({char_count:,} chars):{C.RESET}")
         for line in text.split("\n"):
             print(f"  {C.DIM}>{C.RESET} {line}")
         print(divider())
@@ -609,15 +946,15 @@ class MemoraApp:
 
     def cmd_council(self):
         council_art = f"""
-{C.CYAN}      .---.       .---.       .---.
-     / A   \\     / S   \\     / R   \\
-    |rchvst |   |trtgst |   |srcher |
-     \\     /     \\     /     \\     /
-      '---'       '---'       '---'
-        \\           |           /
-         '-----.----'-----.----'
-               |  COUNCIL |
-               '---------'{C.RESET}
+{C.DIM}       ┌────────────┐ ┌─────────────┐ ┌─────────────┐{C.RESET}
+       {C.DIM}│{C.RESET} {C.YELLOW}☽ ARCHIVIST{C.RESET}{C.DIM}│ │{C.RESET} {C.CYAN}⚖ STRATEGIST{C.RESET}{C.DIM} │ │{C.RESET} {C.MAGENTA}☀ RESEARCHER{C.RESET}{C.DIM} │{C.RESET}
+{C.DIM}       └─────┬──────┘ └──────┬──────┘ └──────┬──────┘
+             │               │               │
+             ▼               ▼               ▼
+       ══════╪═══════════════╪═══════════════╪══════
+             ║     ┏━━━━━━━━━━━━━━━━┓        ║
+             ╚═════┫{C.RESET}  {C.BOLD}{C.CYAN}  COUNCIL     {C.RESET}{C.DIM}┣════════╝
+                   ┗━━━━━━━━━━━━━━━━┛{C.RESET}
 """
         print(council_art)
         print(f"  {C.BOLD}Ask the AI Council{C.RESET}")
@@ -715,6 +1052,7 @@ class MemoraApp:
             print(menu_option("5", "Node detail",   "View a node and its connections"))
             print(menu_option("6", "Graph map",     "ASCII relationship graph around a node"))
             print(menu_option("7", "Full map",      "Visualize the entire graph"))
+            print(menu_option("8", "Galaxy",        "Your universe centered on You"))
             print(menu_option("b", "Back",          "Return to main menu"))
             print(divider())
 
@@ -735,6 +1073,8 @@ class MemoraApp:
                 self._browse_graph_map()
             elif choice == "7":
                 self._browse_full_map()
+            elif choice == "8":
+                self._browse_galaxy()
 
     def _browse_all_nodes(self, filters=None):
         from memora.graph.models import NodeFilter
@@ -955,7 +1295,34 @@ class MemoraApp:
                 pass
 
         subgraph = Subgraph(nodes=nodes, edges=all_edges)
-        self._render_ascii_graph(subgraph, center_id=None)
+        # Center on the You node if present
+        you_center = UUID(YOU_NODE_ID) if YOU_NODE_ID in node_ids else None
+        self._render_ascii_graph(subgraph, center_id=you_center)
+
+    def _browse_galaxy(self):
+        """Galaxy view — centered on the You node with configurable depth."""
+        from uuid import UUID as _UUID
+
+        you_id = _UUID(YOU_NODE_ID)
+
+        hops_str = prompt(f"  Depth [{C.GREEN}1{C.RESET}-3, default 2]: ")
+        hops = 2
+        if hops_str.isdigit() and 1 <= int(hops_str) <= 3:
+            hops = int(hops_str)
+
+        spinner("Mapping your galaxy", 0.5)
+
+        try:
+            subgraph = self.repo.get_neighborhood(you_id, hops=hops)
+        except Exception as e:
+            print(f"  {C.RED}Error: {e}{C.RESET}")
+            return
+
+        if not subgraph.nodes:
+            print(f"\n  {C.DIM}Your galaxy is empty. Start by capturing some thoughts!{C.RESET}")
+            return
+
+        self._render_ascii_graph(subgraph, center_id=you_id)
 
     def _render_ascii_graph(self, subgraph, center_id: UUID | None = None):
         """Render a subgraph as a 2D mind-map / flowchart with boxed nodes
@@ -1028,9 +1395,19 @@ class MemoraApp:
         n_comps = len(multi) + (1 if isolated else 0)
 
         # ── 3. Header ────────────────────────────────────────────
-        print(f"\n{divider('\u2550', C.CYAN)}")
-        mode = "neighborhood" if center_id else "full graph"
-        print(f"  {C.BOLD}{C.CYAN}RELATIONSHIP GRAPH{C.RESET}  "
+        is_galaxy = center_str and center_str == YOU_NODE_ID
+        hdr_color = C.YELLOW if is_galaxy else C.CYAN
+        print(f"\n{divider('\u2550', hdr_color)}")
+        if is_galaxy:
+            mode = "galaxy"
+            title = "YOUR GALAXY"
+        elif center_id:
+            mode = "neighborhood"
+            title = "RELATIONSHIP GRAPH"
+        else:
+            mode = "full graph"
+            title = "RELATIONSHIP GRAPH"
+        print(f"  {C.BOLD}{hdr_color}{title}{C.RESET}  "
               f"{C.DIM}({len(nodes)} nodes, {len(edges)} edges, "
               f"{n_comps} component"
               f"{'s' if n_comps != 1 else ''}, {mode}){C.RESET}")
@@ -1134,32 +1511,55 @@ class MemoraApp:
         CONN_W = 14     # horizontal gap between columns (connectors)
         LABEL_MAX = 8   # max edge-label chars on a connector
 
+        # Cross-edge (non-tree edge) rendering
+        CROSS_CHAR_H = '╌'   # dotted horizontal
+        CROSS_CHAR_V = '╎'   # dotted vertical
+        CROSS_COLOR = C.MAGENTA
+        CROSS_MAX_ROUTES = 8  # max cross-edges to draw visually
+
         # ── 8. Draw a node box on the grid ────────────────────────
         def draw_box(g, x, y, bw, nid,
                      highlight=False, right_conn=False, left_conn=False):
             n = node_map[nid]
-            bc = C.CYAN if highlight else C.DIM
+            is_you = (nid == YOU_NODE_ID)
+            bc = C.YELLOW if is_you else (C.CYAN if highlight else C.DIM)
 
-            # -- borders --
-            g.put(x, y, '\u250c', bc)
-            for i in range(1, bw - 1):
-                g.put(x + i, y, '\u2500', bc)
-            g.put(x + bw - 1, y, '\u2510', bc)
+            # -- borders (double-line for You node) --
+            if is_you:
+                g.put(x, y, '\u2554', bc)
+                for i in range(1, bw - 1):
+                    g.put(x + i, y, '\u2550', bc)
+                g.put(x + bw - 1, y, '\u2557', bc)
 
-            lc = '\u2524' if left_conn else '\u2502'
-            rc = '\u251c' if right_conn else '\u2502'
-            g.put(x, y + 1, lc, bc)
-            g.put(x + bw - 1, y + 1, rc, bc)
+                lc = '\u2562' if left_conn else '\u2551'
+                rc = '\u255f' if right_conn else '\u2551'
+                g.put(x, y + 1, lc, bc)
+                g.put(x + bw - 1, y + 1, rc, bc)
 
-            g.put(x, y + 2, '\u2514', bc)
-            for i in range(1, bw - 1):
-                g.put(x + i, y + 2, '\u2500', bc)
-            g.put(x + bw - 1, y + 2, '\u2518', bc)
+                g.put(x, y + 2, '\u255a', bc)
+                for i in range(1, bw - 1):
+                    g.put(x + i, y + 2, '\u2550', bc)
+                g.put(x + bw - 1, y + 2, '\u255d', bc)
+            else:
+                g.put(x, y, '\u250c', bc)
+                for i in range(1, bw - 1):
+                    g.put(x + i, y, '\u2500', bc)
+                g.put(x + bw - 1, y, '\u2510', bc)
+
+                lc = '\u2524' if left_conn else '\u2502'
+                rc = '\u251c' if right_conn else '\u2502'
+                g.put(x, y + 1, lc, bc)
+                g.put(x + bw - 1, y + 1, rc, bc)
+
+                g.put(x, y + 2, '\u2514', bc)
+                for i in range(1, bw - 1):
+                    g.put(x + i, y + 2, '\u2500', bc)
+                g.put(x + bw - 1, y + 2, '\u2518', bc)
 
             # -- content --
             inner = bw - 2
-            ic = ICHARS.get(n.node_type.value, ' ')
-            icol = ICOLORS.get(n.node_type.value, None)
+            ic = '\u2605' if is_you else ICHARS.get(n.node_type.value, ' ')
+            icol = C.YELLOW if is_you else ICOLORS.get(n.node_type.value, None)
             sid = str(n.id)[:6]
 
             nets = n.networks[:1]
@@ -1176,7 +1576,7 @@ class MemoraApp:
             g.put(cx + 2, y + 1, ' ')
             cx += 3
 
-            tc = C.CYAN if highlight else None
+            tc = C.YELLOW if is_you else (C.CYAN if highlight else None)
             for ch in title:
                 g.put(cx, y + 1, ch, tc, bold=True)
                 cx += 1
@@ -1253,8 +1653,10 @@ class MemoraApp:
         def render_component(comp, center_nid):
             comp_set = set(comp)
 
-            # pick root
-            if center_nid and center_nid in comp_set:
+            # pick root — prefer You node, then center, then highest-degree
+            if YOU_NODE_ID in comp_set:
+                root = YOU_NODE_ID
+            elif center_nid and center_nid in comp_set:
                 root = center_nid
             else:
                 root = max(comp_set, key=lambda k: len(adj.get(k, [])))
@@ -1273,6 +1675,60 @@ class MemoraApp:
                         children_map[nid].append(nb)
                         q.append(nb)
 
+            for par in children_map:
+                children_map[par].sort(
+                    key=lambda k: (node_map[k].node_type.value,
+                                   node_map[k].title))
+
+            # Re-parent depth-1 nodes to create sub-clusters
+            # If two depth-1 nodes share an edge, move one under the other
+            # to avoid flat star topology
+            d1_nodes = [nid for nid, d in depth_map.items() if d == 1]
+            if len(d1_nodes) > 3:
+                # find edges between depth-1 nodes
+                d1_set = set(d1_nodes)
+                d1_edges: list[tuple[str, str]] = []
+                for nid in d1_nodes:
+                    for nb, _, _ in adj.get(nid, []):
+                        if nb in d1_set and nb > nid:
+                            d1_edges.append((nid, nb))
+                # pick "hub" nodes: depth-1 nodes with most cross-edges
+                d1_degree: dict[str, int] = defaultdict(int)
+                for a, b in d1_edges:
+                    d1_degree[a] += 1
+                    d1_degree[b] += 1
+                # hubs = top nodes by cross-degree among d1 peers
+                hubs = sorted(d1_degree, key=lambda n: d1_degree[n],
+                              reverse=True)
+                moved: set[str] = set()
+                for hub in hubs:
+                    if hub in moved:
+                        continue
+                    # find peers connected to this hub
+                    peers = [nb for nb, _, _ in adj.get(hub, [])
+                             if nb in d1_set and nb != hub
+                             and nb not in moved and nb != root
+                             and hub != root]
+                    if not peers or hub == root:
+                        continue
+                    for peer in peers[:4]:  # max 4 children per hub
+                        # re-parent: remove peer from root's children,
+                        # add under hub
+                        if peer in children_map.get(root, []):
+                            children_map[root].remove(peer)
+                            children_map[hub].append(peer)
+                            parent_map[peer] = hub
+                            depth_map[peer] = 2
+                            # also update any children of peer
+                            q2 = deque(children_map.get(peer, []))
+                            while q2:
+                                ch = q2.popleft()
+                                depth_map[ch] = depth_map[parent_map[ch]] + 1
+                                q2.extend(children_map.get(ch, []))
+                            moved.add(peer)
+                    moved.add(hub)
+
+            # re-sort children after re-parenting
             for par in children_map:
                 children_map[par].sort(
                     key=lambda k: (node_map[k].node_type.value,
@@ -1330,9 +1786,34 @@ class MemoraApp:
                 ngx[nid] = mx + col * (box_w + CONN_W)
                 ngy[nid] = my + slot * SLOT_H
 
-            grid_w = (mx + vis * box_w + max(0, vis - 1) * CONN_W
-                      + mx + 1)
-            grid_w = min(grid_w, w - 2)
+            # identify tree edges and cross-edges for this component
+            tree_edge_set = {frozenset({nid, par})
+                             for nid, par in parent_map.items()
+                             if par is not None}
+            cross_edges = []
+            for nid in comp_set:
+                for nb, lbl, bidi in adj.get(nid, []):
+                    if nb in comp_set and nb > nid:
+                        pair = frozenset({nid, nb})
+                        if pair not in tree_edge_set:
+                            cross_edges.append((nid, nb, lbl, bidi))
+
+            # determine gutter width for cross-edge routing
+            n_routes = min(len(cross_edges), CROSS_MAX_ROUTES)
+            gutter_w = n_routes * 2 + (2 if n_routes else 0)
+
+            base_grid_w = (mx + vis * box_w + max(0, vis - 1) * CONN_W
+                           + mx + 1)
+            grid_w = min(base_grid_w + gutter_w, w - 2)
+            # recalculate how many routes actually fit
+            actual_gutter = grid_w - base_grid_w
+            if actual_gutter < 4:
+                n_routes = 0
+                actual_gutter = 0
+                grid_w = min(base_grid_w, w - 2)
+            else:
+                n_routes = min(n_routes, (actual_gutter - 2) // 2)
+
             grid_h = min(my + total_slots * SLOT_H + my, 200)
 
             g = Grid(grid_w, grid_h)
@@ -1352,9 +1833,59 @@ class MemoraApp:
             for nid in positions:
                 if nid in ngx and nid in ngy:
                     draw_box(g, ngx[nid], ngy[nid], box_w, nid,
-                             highlight=(nid == center_nid),
+                             highlight=(nid == center_nid or nid == YOU_NODE_ID),
                              right_conn=(nid in has_right),
                              left_conn=(nid in has_left))
+
+            # draw cross-edges in the right-side gutter
+            def draw_cross_edges(g, cross_edges, ngx, ngy, box_w,
+                                 n_routes, base_grid_w):
+                """Route cross-edges as dotted lines through the gutter."""
+                if n_routes <= 0:
+                    return
+                gutter_start = base_grid_w
+                routed = 0
+                for a, b, lbl, bidi in cross_edges[:n_routes]:
+                    if a not in ngy or b not in ngy:
+                        continue
+                    col_idx = gutter_start + 1 + routed * 2
+                    if col_idx >= g.gw:
+                        break
+                    a_mid = ngy[a] + 1  # middle row of box
+                    b_mid = ngy[b] + 1
+                    a_right = ngx[a] + box_w
+                    b_right = ngx[b] + box_w
+                    top_y = min(a_mid, b_mid)
+                    bot_y = max(a_mid, b_mid)
+
+                    # horizontal from A's box right edge to gutter col
+                    for cx in range(a_right, min(col_idx + 1, g.gw)):
+                        if g.ch[a_mid][cx] == ' ':
+                            g.put(cx, a_mid, CROSS_CHAR_H, CROSS_COLOR)
+
+                    # horizontal from B's box right edge to gutter col
+                    for cx in range(b_right, min(col_idx + 1, g.gw)):
+                        if g.ch[b_mid][cx] == ' ':
+                            g.put(cx, b_mid, CROSS_CHAR_H, CROSS_COLOR)
+
+                    # vertical in the gutter column
+                    for cy in range(top_y, bot_y + 1):
+                        if col_idx < g.gw and g.ch[cy][col_idx] == ' ':
+                            g.put(col_idx, cy, CROSS_CHAR_V, CROSS_COLOR)
+
+                    # place abbreviated edge label in vertical run
+                    mid_y = (top_y + bot_y) // 2
+                    short_lbl = lbl[:5]
+                    for li, lch in enumerate(short_lbl):
+                        ly = mid_y - len(short_lbl) // 2 + li
+                        if (top_y < ly < bot_y and col_idx < g.gw
+                                and g.ch[ly][col_idx] in (' ', CROSS_CHAR_V)):
+                            g.put(col_idx, ly, lch, CROSS_COLOR)
+
+                    routed += 1
+
+            draw_cross_edges(g, cross_edges, ngx, ngy, box_w,
+                             n_routes, base_grid_w)
 
             for line in g.render():
                 print(f"  {line}")
@@ -1364,11 +1895,11 @@ class MemoraApp:
                 print(f"\n  {C.DIM}(+{deeper} nodes beyond depth "
                       f"{vis - 1} not shown){C.RESET}")
 
-            return {frozenset({nid, par})
-                    for nid, par in parent_map.items() if par is not None}
+            return (tree_edge_set, n_routes)
 
         # ── 11. Main render loop ─────────────────────────────────
         all_tree_edges: set[frozenset] = set()
+        total_routes = 0
 
         for ci, comp in enumerate(multi):
             if len(multi) > 1:
@@ -1376,8 +1907,9 @@ class MemoraApp:
                       f"{len(multi)}{C.RESET}"
                       f"  {C.DIM}({len(comp)} nodes){C.RESET}")
 
-            tree_edges = render_component(comp, center_str)
+            tree_edges, n_routes = render_component(comp, center_str)
             all_tree_edges |= tree_edges
+            total_routes += n_routes
 
             # cross-edges for this component
             cs = set(comp)
@@ -1389,27 +1921,52 @@ class MemoraApp:
                 and str(e.target_id) in cs
             ]
             if cross:
-                rule_w = max(0, w - 28)
-                print(f"\n  {C.DIM}\u2500\u2500 cross-connections "
-                      + "\u2500" * rule_w + f"{C.RESET}")
-                for e in cross[:15]:
-                    src, tgt = str(e.source_id), str(e.target_id)
+                # bold magenta boxed header
+                hdr_text = " CROSS-CONNECTIONS "
+                rule_w = max(0, w - len(hdr_text) - 8)
+                print(f"\n  {C.BOLD}{CROSS_COLOR}"
+                      f"╌╌{hdr_text}"
+                      f"{'╌' * rule_w}{C.RESET}")
+                if n_routes > 0:
+                    print(f"  {C.DIM}({n_routes} shown as dotted "
+                          f"lines above){C.RESET}")
+
+                # group by edge type
+                by_type: dict[str, list] = defaultdict(list)
+                for e in cross:
                     el = (e.edge_type.value
                           if hasattr(e.edge_type, 'value')
                           else str(e.edge_type))
-                    sn, tn = node_map.get(src), node_map.get(tgt)
-                    si = ICHARS.get(sn.node_type.value, ' ') if sn else ' '
-                    ti = ICHARS.get(tn.node_type.value, ' ') if tn else ' '
-                    st = sn.title[:16] if sn else src[:8]
-                    tt = tn.title[:16] if tn else tgt[:8]
-                    bd = getattr(e, 'bidirectional', False)
-                    arr = '\u2194' if bd else '\u2192'
-                    print(f"  {si} {st} [{src[:6]}] "
-                          f"\u2500\u2500[{el[:10]}{arr}]\u2500\u2500 "
-                          f"{ti} {tt} [{tgt[:6]}]")
-                if len(cross) > 15:
+                    by_type[el].append(e)
+
+                shown = 0
+                for etype in sorted(by_type):
+                    if shown >= 15:
+                        break
+                    print(f"  {CROSS_COLOR}{C.BOLD}{etype}:{C.RESET}")
+                    for e in by_type[etype]:
+                        if shown >= 15:
+                            break
+                        src, tgt = str(e.source_id), str(e.target_id)
+                        sn, tn = node_map.get(src), node_map.get(tgt)
+                        si = ICHARS.get(sn.node_type.value, ' ') if sn else ' '
+                        ti = ICHARS.get(tn.node_type.value, ' ') if tn else ' '
+                        sicol = ICOLORS.get(sn.node_type.value, '') if sn else ''
+                        ticol = ICOLORS.get(tn.node_type.value, '') if tn else ''
+                        st = sn.title[:16] if sn else src[:8]
+                        tt = tn.title[:16] if tn else tgt[:8]
+                        bd = getattr(e, 'bidirectional', False)
+                        arr = '\u2194' if bd else '\u2192'
+                        print(f"    {sicol}{si}{C.RESET} {st} "
+                              f"{C.DIM}[{src[:6]}]{C.RESET} "
+                              f"{CROSS_COLOR}╌╌[{arr}]╌╌{C.RESET} "
+                              f"{ticol}{ti}{C.RESET} {tt} "
+                              f"{C.DIM}[{tgt[:6]}]{C.RESET}")
+                        shown += 1
+                remaining = len(cross) - shown
+                if remaining > 0:
                     print(f"  {C.DIM}  ... and "
-                          f"{len(cross) - 15} more{C.RESET}")
+                          f"{remaining} more{C.RESET}")
                 all_tree_edges |= {
                     frozenset({str(e.source_id), str(e.target_id)})
                     for e in cross}
@@ -1433,6 +1990,11 @@ class MemoraApp:
         # ── 13. Legend ───────────────────────────────────────────
         print(f"\n{divider()}")
         print(f"  {C.BOLD}LEGEND{C.RESET}")
+
+        # You node legend entry
+        if any(str(n.id) == YOU_NODE_ID for n in nodes):
+            print(f"  {C.YELLOW}\u2605{C.RESET}={C.DIM}YOU (center){C.RESET}  "
+                  f"{C.YELLOW}\u2554\u2550\u2557{C.RESET} {C.DIM}double border = You node{C.RESET}")
 
         types_present = sorted({n.node_type.value for n in nodes})
         tl = "  Types:     "
@@ -1462,6 +2024,8 @@ class MemoraApp:
               f"\u2190 inbound  \u2194 bidirectional{C.RESET}")
         print(f"  {C.DIM}\u251c\u2500\u2500 connector exit   "
               f"\u2524\u2500\u2500 connector entry{C.RESET}")
+        print(f"  {CROSS_COLOR}╌╌╌{C.RESET}"
+              f" {C.DIM}= cross-connection (non-tree edge){C.RESET}")
         if center_id:
             print(f"  {C.CYAN}Colored box{C.RESET}"
                   f" {C.DIM}= center node{C.RESET}")
@@ -1860,7 +2424,320 @@ class MemoraApp:
 
         print(f"\n{divider('═', C.RED)}")
 
+    # ── 9. Dossier ────────────────────────────────────────────────
+
+    def cmd_dossier(self):
+        dossier_art = f"""
+{C.MAGENTA}     .─────────.
+    /  DOSSIER  \\
+   |  ┌──┬──┐   |    {C.BOLD}ENTITY DOSSIER{C.RESET}{C.MAGENTA}
+   |  │▓▓│  │   |
+   |  ├──┼──┤   |    {C.DIM}Multi-signal deep search.{C.RESET}{C.MAGENTA}
+   |  │  │▓▓│   |    {C.DIM}Title + graph + semantic.{C.RESET}{C.MAGENTA}
+   |  └──┴──┘   |
+    \\_________/{C.RESET}
+"""
+        print(dossier_art)
+
+        query = prompt(f"  {C.MAGENTA}Search entity: {C.RESET}")
+        if not query or query == "q":
+            return
+
+        spinner("Searching by title", 0.4)
+
+        # 1. Title match
+        title_matches = self.repo.search_by_title(query, limit=10)
+        if not title_matches:
+            # Fallback: semantic search via embeddings
+            spinner("No title match — trying semantic search", 0.4)
+            title_matches = self._dossier_semantic_fallback(query)
+            if not title_matches:
+                print(f"\n  {C.DIM}No entities matching '{query}'.{C.RESET}")
+                return
+
+        # Score and pick best match
+        lower_q = query.lower()
+        scored: list[tuple[float, object]] = []
+        for node in title_matches:
+            lt = node.title.lower()
+            if lt == lower_q:
+                score = 1.0
+            elif lt.startswith(lower_q):
+                score = 0.9
+            else:
+                score = 0.7
+            scored.append((score, node))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # If multiple matches, let user pick
+        if len(scored) > 1:
+            print(f"\n  {C.BOLD}{len(scored)} matches found:{C.RESET}\n")
+            for i, (sc, n) in enumerate(scored, 1):
+                icon = NODE_ICONS.get(n.node_type.value, " ")
+                nets = " ".join(NETWORK_ICONS.get(nt.value, f"[{nt.value[0]}]") for nt in n.networks)
+                print(f"  {C.DIM}{i:2}.{C.RESET} {icon} {C.BOLD}{n.title}{C.RESET}  {nets}  "
+                      f"conf={n.confidence:.0%}  {C.DIM}{str(n.id)[:8]}{C.RESET}")
+            choice = prompt(f"  Select [1-{len(scored)}, default 1]: ")
+            try:
+                idx = int(choice) - 1 if choice else 0
+                entity = scored[idx][1]
+            except (ValueError, IndexError):
+                entity = scored[0][1]
+        else:
+            entity = scored[0][1]
+
+        print()
+        self._render_node_detail(entity)
+
+        # 2. Neighborhood
+        spinner("Traversing graph neighborhood (2-hop)", 0.5)
+        subgraph = self.repo.get_neighborhood(entity.id, hops=2)
+
+        # Direct connections (sorted by strength)
+        entity_str = str(entity.id)
+        direct_edges = [e for e in subgraph.edges
+                        if str(e.source_id) == entity_str or str(e.target_id) == entity_str]
+        nodes_by_id = {str(n.id): n for n in subgraph.nodes}
+
+        connections = []
+        for edge in direct_edges:
+            neighbor_id = str(edge.target_id) if str(edge.source_id) == entity_str else str(edge.source_id)
+            neighbor_node = nodes_by_id.get(neighbor_id)
+            if neighbor_node:
+                strength = edge.weight * edge.confidence
+                connections.append((strength, edge, neighbor_node))
+        connections.sort(key=lambda x: x[0], reverse=True)
+
+        min_strength = 0.75
+        top_connections = [(s, e, n) for s, e, n in connections if s >= min_strength]
+        if connections:
+            hidden = len(connections) - len(top_connections)
+            print(f"\n{divider('─', C.CYAN)}")
+            print(f"  {C.BOLD}{C.CYAN}CONNECTIONS ({len(top_connections)}){C.RESET}  {C.DIM}sorted by strength, ≥{min_strength:.0%}{C.RESET}")
+            print(divider())
+            for i, (strength, edge, neighbor) in enumerate(top_connections, 1):
+                direction = "→" if str(edge.source_id) == entity_str else "←"
+                icon = NODE_ICONS.get(neighbor.node_type.value, " ")
+                etype = edge.edge_type.value if hasattr(edge.edge_type, 'value') else str(edge.edge_type)
+                bar = horizontal_bar(min(strength, 1.0), 10, C.CYAN)
+                print(f"  {C.DIM}{i}.{C.RESET} {C.CYAN}{direction}{C.RESET} {icon} {C.BOLD}{neighbor.title[:35]:<35}{C.RESET} "
+                      f"{C.DIM}[{etype}]{C.RESET}  {bar}")
+            if hidden:
+                print(f"    {C.DIM}... {hidden} weaker connections below {min_strength:.0%}{C.RESET}")
+        else:
+            print(f"\n  {C.DIM}No direct connections.{C.RESET}")
+
+        # 3. Vector-similar entities (not in neighborhood)
+        neighborhood_ids = {str(n.id) for n in subgraph.nodes}
+        related = self._dossier_find_related(entity, neighborhood_ids)
+        if related:
+            print(f"\n{divider('─', C.MAGENTA)}")
+            print(f"  {C.BOLD}{C.MAGENTA}RELATED ENTITIES ({len(related)}){C.RESET}  {C.DIM}semantically similar, not directly connected{C.RESET}")
+            print(divider())
+            for sim_score, rel_node in related:
+                icon = NODE_ICONS.get(rel_node.node_type.value, " ")
+                nets = " ".join(NETWORK_ICONS.get(nt.value, f"[{nt.value[0]}]") for nt in rel_node.networks)
+                pct = f"{sim_score * 100:.0f}%"
+                print(f"  {C.MAGENTA}~{C.RESET} {icon} {C.BOLD}{rel_node.title[:35]:<35}{C.RESET} "
+                      f"{nets}  {C.DIM}similarity {pct}{C.RESET}")
+
+        # 4. Facts
+        facts = self._dossier_get_facts(entity_str)
+        if facts:
+            print(f"\n{divider('─', C.GREEN)}")
+            print(f"  {C.BOLD}{C.GREEN}VERIFIED FACTS ({len(facts)}){C.RESET}")
+            print(divider())
+            for fact in facts[:15]:
+                conf = fact.get("confidence", 0)
+                lifecycle = fact.get("lifecycle", "")
+                lc_color = C.GREEN if lifecycle == "static" else C.YELLOW
+                statement = fact.get("statement", "")
+                print(f"  {C.GREEN}✓{C.RESET} {statement[:70]}")
+                print(f"    {horizontal_bar(conf, 10, C.GREEN)}  "
+                      f"{lc_color}{lifecycle}{C.RESET}")
+            if len(facts) > 15:
+                print(f"    {C.DIM}... and {len(facts) - 15} more{C.RESET}")
+        else:
+            print(f"\n  {C.DIM}No verified facts for this entity.{C.RESET}")
+
+        # 5. Graph summary
+        print(f"\n{divider('─', C.BLUE)}")
+        n_nodes = len(subgraph.nodes)
+        n_edges = len(subgraph.edges)
+        print(f"  {C.BOLD}{C.BLUE}SUBGRAPH{C.RESET}  "
+              f"{C.BOLD}{n_nodes}{C.RESET} nodes  {C.DIM}|{C.RESET}  "
+              f"{C.BOLD}{n_edges}{C.RESET} edges  {C.DIM}(2-hop neighborhood){C.RESET}")
+
+        # Offer actions
+        drill_hint = f"[1-{len(top_connections)}] Drill into connection  " if connections else ""
+        print(f"\n  {C.DIM}{drill_hint}[v] Visualize graph map  [b] Back{C.RESET}")
+        action = prompt("dossier> ").strip()
+        if action == "v":
+            self._render_ascii_graph(subgraph, center_id=entity.id)
+        elif action.isdigit() and connections:
+            idx = int(action) - 1
+            if 0 <= idx < len(top_connections):
+                _, _, drill_node = top_connections[idx]
+                print(f"\n  {C.DIM}Drilling into {drill_node.title}...{C.RESET}")
+                self._render_node_detail(drill_node)
+
+                drill_sub = self.repo.get_neighborhood(drill_node.id, hops=2)
+                drill_str = str(drill_node.id)
+                drill_edges = [e for e in drill_sub.edges
+                               if str(e.source_id) == drill_str or str(e.target_id) == drill_str]
+                drill_nodes_by_id = {str(n.id): n for n in drill_sub.nodes}
+
+                drill_conns = []
+                for edge in drill_edges:
+                    nid = str(edge.target_id) if str(edge.source_id) == drill_str else str(edge.source_id)
+                    nn = drill_nodes_by_id.get(nid)
+                    if nn:
+                        s = edge.weight * edge.confidence
+                        drill_conns.append((s, edge, nn))
+                drill_conns.sort(key=lambda x: x[0], reverse=True)
+
+                top_drill = [(s, e, n) for s, e, n in drill_conns if s >= min_strength]
+                if top_drill:
+                    drill_hidden = len(drill_conns) - len(top_drill)
+                    print(f"\n{divider('─', C.CYAN)}")
+                    print(f"  {C.BOLD}{C.CYAN}CONNECTIONS ({len(top_drill)}){C.RESET}  {C.DIM}sorted by strength, ≥{min_strength:.0%}{C.RESET}")
+                    print(divider())
+                    for j, (s, edge, nn) in enumerate(top_drill, 1):
+                        d = "→" if str(edge.source_id) == drill_str else "←"
+                        ic = NODE_ICONS.get(nn.node_type.value, " ")
+                        et = edge.edge_type.value if hasattr(edge.edge_type, 'value') else str(edge.edge_type)
+                        bar = horizontal_bar(min(s, 1.0), 10, C.CYAN)
+                        print(f"  {C.DIM}{j}.{C.RESET} {C.CYAN}{d}{C.RESET} {ic} {C.BOLD}{nn.title[:35]:<35}{C.RESET} "
+                              f"{C.DIM}[{et}]{C.RESET}  {bar}")
+                    if drill_hidden:
+                        print(f"    {C.DIM}... {drill_hidden} weaker connections below {min_strength:.0%}{C.RESET}")
+                else:
+                    print(f"\n  {C.DIM}No direct connections.{C.RESET}")
+            else:
+                print(f"  {C.DIM}Invalid selection.{C.RESET}")
+
+    def _dossier_semantic_fallback(self, query: str) -> list:
+        """Fall back to vector/semantic search when title search finds nothing."""
+        try:
+            engine = self._get_embedding_engine()
+            store = self._get_vector_store()
+            if not engine or not store:
+                return []
+
+            embedding = engine.embed_text(query)
+            results = store.dense_search(query_vector=embedding["dense"], top_k=10)
+
+            nodes = []
+            for sr in results:
+                if sr.score >= 0.5:
+                    node = self.repo.get_node(UUID(sr.node_id))
+                    if node:
+                        nodes.append(node)
+            return nodes
+        except Exception as e:
+            print(f"  {C.DIM}(semantic fallback unavailable: {e}){C.RESET}")
+            return []
+
+    def _dossier_find_related(self, entity, exclude_ids: set[str]) -> list[tuple[float, object]]:
+        """Find vector-similar entities not in the given ID set."""
+        try:
+            engine = self._get_embedding_engine()
+            store = self._get_vector_store()
+            if not engine or not store:
+                return []
+
+            spinner("Finding semantically similar entities", 0.5)
+
+            text = f"{entity.title} {entity.content or ''}"
+            embedding = engine.embed_text(text)
+            results = store.dense_search(query_vector=embedding["dense"], top_k=20)
+
+            entity_str = str(entity.id)
+            related = []
+            for sr in results:
+                if sr.node_id not in exclude_ids and sr.node_id != entity_str:
+                    node = self.repo.get_node(UUID(sr.node_id))
+                    if node:
+                        related.append((sr.score, node))
+            related.sort(key=lambda x: x[0], reverse=True)
+            return [(s, n) for s, n in related if s >= 0.75]
+        except Exception as e:
+            print(f"  {C.DIM}(vector search unavailable: {e}){C.RESET}")
+            return []
+
+    def _dossier_get_facts(self, node_id: str) -> list[dict]:
+        """Get verified facts for a node."""
+        try:
+            from memora.core.truth_layer import TruthLayer
+            truth = TruthLayer(conn=self.repo._conn)
+            return truth.query_facts(node_id=node_id, status="active", limit=50)
+        except Exception as e:
+            print(f"  {C.DIM}(facts query unavailable: {e}){C.RESET}")
+            return []
+
     # ── Goodbye ───────────────────────────────────────────────────
+
+    def cmd_clear_data(self):
+        """Erase all databases (DuckDB, LanceDB, SQLite, backups) and start fresh."""
+        print(f"\n{divider('═', C.RED)}")
+        print(f"  {C.BOLD}{C.RED}CLEAR ALL DATA{C.RESET}")
+        print(divider())
+        print(f"  {C.YELLOW}This will permanently delete:{C.RESET}")
+        print(f"    - Graph database   {C.DIM}({self.settings.graph_dir}){C.RESET}")
+        print(f"    - Vector store     {C.DIM}({self.settings.vector_dir}){C.RESET}")
+        print(f"    - Backups          {C.DIM}({self.settings.backups_dir}){C.RESET}")
+
+        sqlite_path = Path(__file__).parent / "memora.db"
+        if sqlite_path.exists():
+            print(f"    - SQLite file      {C.DIM}({sqlite_path}){C.RESET}")
+
+        print()
+        confirm = prompt(f"  {C.RED}Type 'yes' to confirm: {C.RESET}")
+        if confirm.lower() != "yes":
+            print(f"  {C.DIM}Cancelled.{C.RESET}")
+            return
+
+        # Close the repo connection before deleting
+        if self.repo:
+            self.repo.close()
+            self.repo = None
+
+        deleted = []
+
+        # Delete DuckDB graph database
+        graph_dir = self.settings.graph_dir
+        if graph_dir.exists():
+            shutil.rmtree(graph_dir)
+            deleted.append("Graph database")
+
+        # Delete LanceDB vector store
+        vector_dir = self.settings.vector_dir
+        if vector_dir.exists():
+            shutil.rmtree(vector_dir)
+            deleted.append("Vector store")
+
+        # Delete backups
+        backups_dir = self.settings.backups_dir
+        if backups_dir.exists():
+            shutil.rmtree(backups_dir)
+            deleted.append("Backups")
+
+        # Delete local SQLite file
+        if sqlite_path.exists():
+            sqlite_path.unlink()
+            deleted.append("SQLite file")
+
+        if deleted:
+            print(f"\n  {C.GREEN}Deleted:{C.RESET} {', '.join(deleted)}")
+        else:
+            print(f"\n  {C.DIM}Nothing to delete.{C.RESET}")
+
+        # Re-initialize directories and reconnect
+        from memora.config import init_data_directory
+        init_data_directory(self.settings)
+        self.repo = GraphRepository(db_path=self.settings.db_path)
+
+        print(f"  {C.GREEN}Fresh databases initialized. Memora is ready.{C.RESET}\n")
 
     def goodbye(self):
         art = f"""

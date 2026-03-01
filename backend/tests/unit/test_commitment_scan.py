@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -22,7 +22,7 @@ def _insert_commitment(
 ) -> str:
     """Insert a COMMITMENT node directly into DuckDB."""
     nid = str(uuid4())
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     props: dict = {"status": status}
     if due_date:
         props["due_date"] = due_date
@@ -71,7 +71,7 @@ class TestOverdueDetection:
         """A commitment with a past due_date should be flagged as overdue."""
         scanner = CommitmentScanner(repo)
 
-        past = (datetime.utcnow() - timedelta(days=5)).isoformat()
+        past = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
         nid = _insert_commitment(
             repo,
             title="Overdue Task",
@@ -89,7 +89,7 @@ class TestOverdueDetection:
         """A completed commitment with a past due_date should NOT appear."""
         scanner = CommitmentScanner(repo)
 
-        past = (datetime.utcnow() - timedelta(days=5)).isoformat()
+        past = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
         _insert_commitment(
             repo,
             title="Done Task",
@@ -106,7 +106,7 @@ class TestApproachingDeadline:
         """A commitment due in 2 days should match the 3-day window."""
         scanner = CommitmentScanner(repo)
 
-        future = (datetime.utcnow() + timedelta(days=2, hours=12)).isoformat()
+        future = (datetime.now(timezone.utc) + timedelta(days=2, hours=12)).isoformat()
         nid = _insert_commitment(
             repo,
             title="Approaching Task",
@@ -124,7 +124,7 @@ class TestApproachingDeadline:
         """A commitment due in 30 days should NOT appear in approaching."""
         scanner = CommitmentScanner(repo)
 
-        far_future = (datetime.utcnow() + timedelta(days=30)).isoformat()
+        far_future = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
         _insert_commitment(
             repo,
             title="Far Future Task",

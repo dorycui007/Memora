@@ -34,23 +34,12 @@ async def list_proposals(
     """List proposals with pagination, filter by status and route."""
     repo = request.app.state.repo
 
-    conditions = ["status = ?"]
-    params: list[Any] = [status]
-
-    if route:
-        conditions.append("route = ?")
-        params.append(route)
-
-    where = " AND ".join(conditions)
-    query = f"SELECT * FROM proposals WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?"
-    params.extend([limit, offset])
-
-    rows = repo._conn.execute(query, params).fetchall()
-    cols = [desc[0] for desc in repo._conn.description]
+    rows = repo.query_proposals(
+        status=status, route=route, limit=limit, offset=offset
+    )
 
     results = []
-    for row in rows:
-        data = dict(zip(cols, row))
+    for data in rows:
         proposal_data = data.get("proposal_data", "{}")
         if isinstance(proposal_data, str):
             proposal_data = json.loads(proposal_data)
@@ -75,14 +64,9 @@ async def list_proposals(
 async def get_proposal(proposal_id: str, request: Request):
     """Get full proposal detail with action breakdown."""
     repo = request.app.state.repo
-    row = repo._conn.execute(
-        "SELECT * FROM proposals WHERE id = ?", [proposal_id]
-    ).fetchone()
-    if row is None:
+    data = repo.get_proposal(UUID(proposal_id))
+    if data is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
-
-    cols = [desc[0] for desc in repo._conn.description]
-    data = dict(zip(cols, row))
 
     proposal_data = data.get("proposal_data", "{}")
     if isinstance(proposal_data, str):
@@ -112,13 +96,11 @@ async def approve_proposal(proposal_id: str, request: Request):
     repo = request.app.state.repo
 
     # Verify proposal exists and is pending
-    row = repo._conn.execute(
-        "SELECT status FROM proposals WHERE id = ?", [proposal_id]
-    ).fetchone()
-    if row is None:
+    proposal_data = repo.get_proposal(UUID(proposal_id))
+    if proposal_data is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
-    if row[0] != "pending":
-        raise HTTPException(status_code=400, detail=f"Proposal is already {row[0]}")
+    if proposal_data["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"Proposal is already {proposal_data['status']}")
 
     success = repo.commit_proposal(UUID(proposal_id))
     if not success:
@@ -139,13 +121,11 @@ async def reject_proposal(
     """Reject a proposal with optional reason."""
     repo = request.app.state.repo
 
-    row = repo._conn.execute(
-        "SELECT status FROM proposals WHERE id = ?", [proposal_id]
-    ).fetchone()
-    if row is None:
+    proposal_data = repo.get_proposal(UUID(proposal_id))
+    if proposal_data is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
-    if row[0] != "pending":
-        raise HTTPException(status_code=400, detail=f"Proposal is already {row[0]}")
+    if proposal_data["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"Proposal is already {proposal_data['status']}")
 
     repo.update_proposal_status(UUID(proposal_id), ProposalStatus.REJECTED, "human")
     return {"status": "rejected", "proposal_id": proposal_id, "reason": reason}
@@ -160,32 +140,19 @@ async def edit_proposal(
     """Edit a proposal before approving it."""
     repo = request.app.state.repo
 
-    row = repo._conn.execute(
-        "SELECT status FROM proposals WHERE id = ?", [proposal_id]
-    ).fetchone()
-    if row is None:
+    proposal_row = repo.get_proposal(UUID(proposal_id))
+    if proposal_row is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
-    if row[0] != "pending":
-        raise HTTPException(status_code=400, detail=f"Cannot edit a {row[0]} proposal")
+    if proposal_row["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"Cannot edit a {proposal_row['status']} proposal")
 
-    updates = []
-    params: list[Any] = []
-
-    if body.human_summary is not None:
-        updates.append("human_summary = ?")
-        params.append(body.human_summary)
-
-    if body.proposal_data is not None:
-        updates.append("proposal_data = ?")
-        params.append(json.dumps(body.proposal_data))
-
-    if not updates:
+    if body.human_summary is None and body.proposal_data is None:
         raise HTTPException(status_code=400, detail="No updates provided")
 
-    params.append(proposal_id)
-    repo._conn.execute(
-        f"UPDATE proposals SET {', '.join(updates)} WHERE id = ?",
-        params,
+    repo.update_proposal_data(
+        UUID(proposal_id),
+        proposal_data=body.proposal_data,
+        human_summary=body.human_summary,
     )
 
     return {"status": "updated", "proposal_id": proposal_id}
@@ -202,30 +169,23 @@ async def _post_commit_processing(app: Any, proposal_id: str) -> None:
             return
 
         # Get the capture_id for this proposal
-        row = repo._conn.execute(
-            "SELECT capture_id FROM proposals WHERE id = ?", [proposal_id]
-        ).fetchone()
-        if not row or not row[0]:
+        proposal_data = repo.get_proposal(UUID(proposal_id))
+        if not proposal_data or not proposal_data.get("capture_id"):
             return
 
-        capture_id = row[0]
+        capture_id = proposal_data["capture_id"]
 
         # Generate embeddings for committed nodes
-        nodes = repo._conn.execute(
-            "SELECT id, node_type, title, content, networks FROM nodes "
-            "WHERE source_capture_id = ? AND deleted = FALSE",
-            [capture_id],
-        ).fetchall()
+        nodes = repo.get_nodes_by_capture_id(capture_id)
 
-        for node_row in nodes:
-            node_id, node_type, title, content, networks = node_row
-            text = f"{title} {content}" if content else title
+        for node_data in nodes:
+            text = f"{node_data['title']} {node_data['content']}" if node_data['content'] else node_data['title']
             embedding = embedding_engine.embed_text(text)
             vector_store.upsert_embedding(
-                node_id=node_id,
+                node_id=node_data['id'],
                 content=text,
-                node_type=node_type,
-                networks=networks if networks else [],
+                node_type=node_data['node_type'],
+                networks=node_data['networks'] if node_data['networks'] else [],
                 vector=embedding["dense"],
             )
 
@@ -238,8 +198,8 @@ async def _post_commit_processing(app: Any, proposal_id: str) -> None:
                 vector_store=vector_store,
                 embedding_engine=embedding_engine,
             )
-            for node_row in nodes:
-                bridge_detector.discover_bridges_for_node(node_row[0])
+            for node_data in nodes:
+                bridge_detector.discover_bridges_for_node(node_data['id'])
         except Exception:
             logger.warning("Bridge detection in post-commit failed", exc_info=True)
 

@@ -6,10 +6,11 @@ unstructured text, with RAG context from existing nodes.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -90,11 +91,13 @@ class ArchivistAgent:
         vector_store: VectorStore | None = None,
         embedding_engine: EmbeddingEngine | None = None,
         model: str = DEFAULT_MODEL,
+        you_node_id: str | None = None,
     ) -> None:
         self._client = openai.AsyncOpenAI(api_key=api_key)
         self._model = model
         self._vector_store = vector_store
         self._embedding_engine = embedding_engine
+        self._you_node_id = you_node_id
         self._system_prompt = self._load_system_prompt()
 
     def _load_system_prompt(self) -> str:
@@ -102,17 +105,23 @@ class ArchivistAgent:
         prompt_path = Path(__file__).parent / "prompts" / "archivist_system.md"
         return prompt_path.read_text(encoding="utf-8")
 
-    def _retrieve_rag_context(self, text: str, top_k: int = 10) -> list[dict[str, Any]]:
-        """Embed input text and query LanceDB for similar existing nodes."""
+    async def _retrieve_rag_context(self, text: str, top_k: int = 10) -> list[dict[str, Any]]:
+        """Embed input text and query LanceDB for similar existing nodes.
+
+        Runs embedding + search in a thread to avoid blocking the event loop.
+        """
         if not self._vector_store or not self._embedding_engine:
             return []
 
-        try:
+        def _search() -> list[dict[str, Any]]:
             embedding = self._embedding_engine.embed_text(text)
             results = self._vector_store.dense_search(
                 embedding["dense"], top_k=top_k
             )
             return [r.to_dict() for r in results]
+
+        try:
+            return await asyncio.to_thread(_search)
         except Exception:
             logger.warning("RAG context retrieval failed", exc_info=True)
             return []
@@ -143,10 +152,25 @@ class ArchivistAgent:
             f"Existing Nodes in Graph:\n{nodes_text}"
         )
 
+    def _get_static_system_prompt(self) -> str:
+        """Return system prompt with only the stable YOU_NODE_ID injected.
+
+        This keeps the instructions parameter constant across calls,
+        enabling OpenAI's automatic prompt caching.
+        """
+        if not hasattr(self, "_cached_static_prompt"):
+            prompt = self._system_prompt.replace("{{YOU_NODE_ID}}", self._you_node_id or "")
+            # Remove leftover dynamic placeholders (now provided in input)
+            prompt = prompt.replace("{{CURRENT_DATE}}", "[see dynamic context in user message]")
+            prompt = prompt.replace("{{EXISTING_NODES}}", "[see dynamic context in user message]")
+            self._cached_static_prompt = prompt
+        return self._cached_static_prompt
+
     def _inject_placeholders(self, prompt: str, context: ExtractionContext) -> str:
         """Replace placeholders in the system prompt with actual values."""
-        prompt = prompt.replace("{{CURRENT_DATE}}", context.current_date or datetime.utcnow().date().isoformat())
+        prompt = prompt.replace("{{CURRENT_DATE}}", context.current_date or datetime.now(timezone.utc).date().isoformat())
         prompt = prompt.replace("{{EXISTING_NODES}}", self._format_existing_nodes(context.existing_nodes))
+        prompt = prompt.replace("{{YOU_NODE_ID}}", self._you_node_id or "")
         return prompt
 
     async def extract(self, text: str, capture_id: str) -> ArchivistResult:
@@ -159,32 +183,40 @@ class ArchivistAgent:
         Returns:
             ArchivistResult with the proposal or clarification request.
         """
+        import time as _time
+
         # 1. Retrieve similar existing nodes for RAG context
-        rag_nodes = self._retrieve_rag_context(text)
+        t0 = _time.perf_counter()
+        rag_nodes = await self._retrieve_rag_context(text)
+        logger.info("Archivist RAG retrieval took %.2fs (%d nodes)", _time.perf_counter() - t0, len(rag_nodes))
 
         # 2. Build extraction context
         context = ExtractionContext(
-            current_date=datetime.utcnow().date().isoformat(),
+            current_date=datetime.now(timezone.utc).date().isoformat(),
             existing_nodes=rag_nodes,
         )
 
-        # 3. Prepare system prompt with dynamic context injected
-        system_prompt = self._inject_placeholders(self._system_prompt, context)
+        # 3. Use static system prompt (cacheable) + dynamic context in input
+        system_prompt = self._get_static_system_prompt()
+        dynamic_context = self._build_dynamic_context(context, capture_id)
 
         # 4. Call OpenAI Responses API with json_schema format
+        t1 = _time.perf_counter()
         try:
             response = await async_call_with_retry(
                 self._client.responses.create,
                 model=self._model,
                 instructions=system_prompt,
                 input=(
+                    f"{dynamic_context}\n\n---\n\n"
                     f"Extract knowledge graph data from this text. "
                     f"Respond with a single JSON object matching the GraphProposal schema. "
                     f"Use capture ID: {capture_id}\n\n"
                     f"Text:\n{text}"
                 ),
                 text=_RESPONSE_FORMAT,
-                max_output_tokens=32768,
+                reasoning={"effort": "low"},
+                max_output_tokens=16384,
             )
         except openai.APIError as e:
             logger.error("OpenAI API error: %s", e)
@@ -192,6 +224,8 @@ class ArchivistAgent:
                 raw_response=str(e),
                 clarification_needed=False,
             )
+
+        logger.info("Archivist LLM call took %.2fs", _time.perf_counter() - t1)
 
         response_status = getattr(response, "status", "unknown")
         logger.debug(
@@ -210,10 +244,16 @@ class ArchivistAgent:
             )
 
         raw_text = response.output_text
+        cached_tokens = getattr(response.usage, "input_tokens_details", None)
+        cached_count = getattr(cached_tokens, "cached_tokens", 0) if cached_tokens else 0
         token_usage = {
             "input_tokens": response.usage.input_tokens,
             "output_tokens": response.usage.output_tokens,
         }
+        logger.info(
+            "Archivist tokens — input=%d (cached=%d), output=%d",
+            response.usage.input_tokens, cached_count, response.usage.output_tokens,
+        )
 
         # 5. Parse JSON — json_schema mode guarantees valid JSON
         if not raw_text or not raw_text.strip():
@@ -263,7 +303,7 @@ class ArchivistAgent:
             proposal = GraphProposal(**raw_json)
         except ValidationError as e:
             logger.warning("GraphProposal validation failed, retrying API call: %s", e)
-            retry_response = await self._retry_api_call(system_prompt, text, capture_id)
+            retry_response = await self._retry_api_call(system_prompt, text, capture_id, dynamic_context)
             if retry_response is None:
                 return ArchivistResult(
                     raw_response=raw_text,
@@ -310,6 +350,7 @@ class ArchivistAgent:
         system_prompt: str,
         text: str,
         capture_id: str,
+        dynamic_context: str = "",
     ) -> Any | None:
         """Re-issue the same API call once on validation failure.
 
@@ -321,13 +362,15 @@ class ArchivistAgent:
                 model=self._model,
                 instructions=system_prompt,
                 input=(
+                    f"{dynamic_context}\n\n---\n\n"
                     f"Extract knowledge graph data from this text. "
                     f"Respond with a single JSON object matching the GraphProposal schema. "
                     f"Use capture ID: {capture_id}\n\n"
                     f"Text:\n{text}"
                 ),
                 text=_RESPONSE_FORMAT,
-                max_output_tokens=32768,
+                reasoning={"effort": "low"},
+                max_output_tokens=16384,
             )
         except Exception:
             logger.error("Retry API call failed", exc_info=True)

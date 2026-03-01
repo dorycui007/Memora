@@ -198,8 +198,7 @@ async def critique(body: CritiqueRequest, request: Request):
     """
     strategist = _get_strategist(request)
 
-    result = await asyncio.to_thread(
-        strategist.critique,
+    result = await strategist.critique(
         body.statement,
         graph_context=body.context or None,
     )

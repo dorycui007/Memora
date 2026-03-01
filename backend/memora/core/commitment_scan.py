@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from memora.graph.models import CommitmentStatus, NodeType
@@ -40,7 +40,7 @@ class CommitmentScanner:
             "total_open": len(commitments),
             "overdue_count": len(overdue),
             "approaching_count": len(approaching),
-            "scanned_at": datetime.utcnow().isoformat(),
+            "scanned_at": datetime.now(timezone.utc).isoformat(),
         }
 
         logger.info(
@@ -68,10 +68,7 @@ class CommitmentScanner:
                    FROM nodes
                    WHERE deleted = FALSE
                      AND node_type = ?
-                     AND (
-                         json_extract_string(properties, '$.status') = ?
-                         OR json_extract_string(properties, '$.status') IS NULL
-                     )""",
+                     AND json_extract_string(properties, '$.status') = ?""",
                 [NodeType.COMMITMENT.value, CommitmentStatus.OPEN.value],
             ).fetchall()
         except Exception:
@@ -93,7 +90,7 @@ class CommitmentScanner:
 
     def _check_overdue(self, commitments: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Filter commitments whose due_date is in the past."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         overdue: list[dict[str, Any]] = []
 
         for c in commitments:
@@ -120,7 +117,7 @@ class CommitmentScanner:
         if windows is None:
             windows = [1, 3, 7]
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         approaching: list[dict[str, Any]] = []
 
         for c in commitments:

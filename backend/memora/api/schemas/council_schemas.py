@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
@@ -66,7 +66,7 @@ class CouncilQueryResponse(BaseModel):
     citations: list[str] = Field(default_factory=list)
     deliberation_rounds: int = 0
     high_disagreement: bool = False
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class BriefingSectionResponse(BaseModel):
@@ -82,7 +82,7 @@ class DailyBriefingResponse(BaseModel):
 
     sections: list[BriefingSectionResponse] = Field(default_factory=list)
     summary: str = ""
-    generated_at: datetime = Field(default_factory=datetime.utcnow)
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     cached: bool = False
 
 
@@ -121,4 +121,4 @@ class SSEEvent(BaseModel):
 
     event_type: str  # proposal_created, health_changed, bridge_discovered, etc.
     data: dict[str, Any] = Field(default_factory=dict)
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

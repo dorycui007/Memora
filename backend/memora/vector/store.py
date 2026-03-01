@@ -6,7 +6,7 @@ Provides upsert, delete, and multi-mode search (dense, hybrid, filtered).
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -109,21 +109,24 @@ class VectorStore:
             "node_type": node_type,
             "networks": networks,
             "dense": vector,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
         }
         self._table.add([record])
 
     def delete_embedding(self, node_id: str) -> None:
         """Delete embedding for a node."""
         try:
-            self._table.delete(f"node_id = '{node_id}'")
+            # Sanitize node_id to prevent SQL injection
+            safe_id = node_id.replace("'", "''")
+            self._table.delete(f"node_id = '{safe_id}'")
         except Exception:
             pass  # May not exist
 
     def get_embedding(self, node_id: str) -> list[float] | None:
         """Retrieve the dense vector for a node. Returns None if not found."""
         try:
-            df = self._table.search().where(f"node_id = '{node_id}'").limit(1).to_pandas()
+            safe_id = node_id.replace("'", "''")
+            df = self._table.search().where(f"node_id = '{safe_id}'").limit(1).to_pandas()
             if df.empty:
                 return None
             return df.iloc[0]["dense"].tolist()
@@ -142,7 +145,8 @@ class VectorStore:
         if filters:
             where_parts = []
             if "node_type" in filters:
-                where_parts.append(f"node_type = '{filters['node_type']}'")
+                safe_type = str(filters['node_type']).replace("'", "''")
+                where_parts.append(f"node_type = '{safe_type}'")
             if where_parts:
                 query = query.where(" AND ".join(where_parts))
 
@@ -218,6 +222,55 @@ class VectorStore:
             sr.score = scores[nid]
             results.append(sr)
         return results
+
+    def batch_upsert_embeddings(self, records: list[dict[str, Any]]) -> None:
+        """Insert or update embeddings for multiple nodes in one call.
+
+        Each record must have: node_id, content, node_type, networks, vector.
+        """
+        if not records:
+            return
+
+        # Delete existing entries (LanceDB delete() only takes filter strings)
+        for record in records:
+            self.delete_embedding(record["node_id"])
+
+        rows = []
+        now = datetime.now(timezone.utc).isoformat()
+        for record in records:
+            rows.append({
+                "node_id": record["node_id"],
+                "content": record["content"],
+                "node_type": record["node_type"],
+                "networks": record["networks"],
+                "dense": record["vector"],
+                "created_at": now,
+            })
+
+        self._table.add(rows)
+        logger.info("Batch upserted %d embeddings", len(rows))
+
+    def get_embeddings_batch(self, node_ids: list[str]) -> dict[str, list[float]]:
+        """Retrieve dense vectors for multiple nodes. Returns {node_id: vector}."""
+        if not node_ids:
+            return {}
+
+        try:
+            # Build OR filter
+            conditions = []
+            for nid in node_ids:
+                safe_id = nid.replace("'", "''")
+                conditions.append(f"node_id = '{safe_id}'")
+            where_clause = " OR ".join(conditions)
+
+            df = self._table.search().where(where_clause).limit(len(node_ids)).to_pandas()
+            result: dict[str, list[float]] = {}
+            for _, row in df.iterrows():
+                result[row["node_id"]] = row["dense"].tolist()
+            return result
+        except Exception:
+            logger.warning("Batch embedding retrieval failed", exc_info=True)
+            return {}
 
     def filtered_search(
         self,

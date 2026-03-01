@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -23,7 +23,7 @@ def _insert_node(
 ) -> str:
     """Insert a raw node row directly into DuckDB."""
     nid = node_id or str(uuid4())
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     repo._conn.execute(
         """INSERT INTO nodes
            (id, node_type, title, content, content_hash, properties,
@@ -61,7 +61,7 @@ def _insert_bridge(
 ) -> str:
     """Insert a bridge row directly into DuckDB."""
     bid = str(uuid4())
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     repo._conn.execute(
         """INSERT INTO bridges
            (id, source_node_id, target_node_id, source_network,

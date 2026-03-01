@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from memora.graph.repository import GraphRepository
@@ -37,7 +37,7 @@ class RelationshipDecayDetector:
         relationship_type, threshold, node_id, outstanding_commitments.
         """
         persons = self._get_person_nodes()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         decaying: list[dict[str, Any]] = []
 
         for p in persons:

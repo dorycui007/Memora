@@ -37,10 +37,22 @@ class TestCapturesCRUD:
         assert retrieved.raw_content == "Test capture content"
         assert len(retrieved.content_hash) == 64
 
-    def test_duplicate_capture_rejected(self, repo: GraphRepository):
+    def test_duplicate_capture_with_proposal(self, repo: GraphRepository):
+        """check_capture_exists returns True only if capture has an associated proposal."""
         c1 = Capture(raw_content="Same content")
-        repo.create_capture(c1)
+        cid = repo.create_capture(c1)
+        # Add a proposal so the capture is considered a successful duplicate
+        repo._conn.execute(
+            "INSERT INTO proposals (id, capture_id, agent_id, proposal_data) VALUES (?, ?, ?, ?)",
+            [str(uuid4()), str(cid), "archivist", "{}"],
+        )
         assert repo.check_capture_exists(c1.content_hash)
+
+    def test_stale_capture_without_proposal_not_duplicate(self, repo: GraphRepository):
+        """A capture without a proposal (failed pipeline) should not block re-ingestion."""
+        c1 = Capture(raw_content="Content with failed pipeline")
+        repo.create_capture(c1)
+        assert not repo.check_capture_exists(c1.content_hash)
 
     def test_nonexistent_capture_returns_none(self, repo: GraphRepository):
         assert repo.get_capture(uuid4()) is None
@@ -72,8 +84,9 @@ class TestNodesCRUD:
         repo.create_node(sample_event)
 
         persons = repo.query_nodes(NodeFilter(node_types=[NodeType.PERSON]))
-        assert len(persons) == 1
-        assert persons[0].title == "Sam Chen"
+        assert len(persons) == 2  # Sam Chen + You node
+        sam = [p for p in persons if p.title == "Sam Chen"]
+        assert len(sam) == 1
 
         events = repo.query_nodes(NodeFilter(node_types=[NodeType.EVENT]))
         assert len(events) == 1
@@ -101,8 +114,9 @@ class TestNodesCRUD:
         repo.create_node(node_low)
 
         results = repo.query_nodes(NodeFilter(min_confidence=0.8))
-        assert len(results) == 1
-        assert results[0].title == "High"
+        assert len(results) == 2  # "High" + You node (confidence=1.0)
+        titles = {r.title for r in results}
+        assert "High" in titles
 
 
 class TestEdgesCRUD:
@@ -186,12 +200,13 @@ class TestProposals:
 
         # Nodes should now exist
         all_nodes = repo.query_nodes(NodeFilter())
-        assert len(all_nodes) == 2  # person + event
+        assert len(all_nodes) == 3  # person + event + You node
 
         # Edges should exist
         person_nodes = repo.query_nodes(NodeFilter(node_types=[NodeType.PERSON]))
-        assert len(person_nodes) == 1
-        edges = repo.get_edges(person_nodes[0].id)
+        assert len(person_nodes) == 2  # committed person + You node
+        sam = next(p for p in person_nodes if p.title != "You")
+        edges = repo.get_edges(sam.id)
         assert len(edges) == 1
 
     def test_proposal_rejection(self, repo: GraphRepository, sample_capture, sample_graph_proposal):
@@ -206,7 +221,7 @@ class TestProposals:
 class TestGraphStats:
     def test_empty_stats(self, repo: GraphRepository):
         stats = repo.get_graph_stats()
-        assert stats["node_count"] == 0
+        assert stats["node_count"] == 1  # You node
         assert stats["edge_count"] == 0
 
     def test_stats_after_inserts(self, repo: GraphRepository, sample_person, sample_event):
@@ -214,6 +229,6 @@ class TestGraphStats:
         repo.create_node(sample_event)
 
         stats = repo.get_graph_stats()
-        assert stats["node_count"] == 2
-        assert stats["type_breakdown"]["PERSON"] == 1
+        assert stats["node_count"] == 3  # 2 inserted + You node
+        assert stats["type_breakdown"]["PERSON"] == 2  # sample_person + You
         assert stats["type_breakdown"]["EVENT"] == 1

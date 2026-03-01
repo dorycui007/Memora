@@ -46,6 +46,7 @@ def _make_pipeline(repo, mock_openai_response) -> ExtractionPipeline:
     archivist._model = "gpt-5-nano"
     archivist._vector_store = None
     archivist._embedding_engine = None
+    archivist._you_node_id = repo.get_you_node_id()
     archivist._system_prompt = "test"
 
     return ExtractionPipeline(
@@ -470,10 +471,14 @@ class TestElectionCandidateAnnouncements:
 
         assert state.status == "completed"
         nodes = repo.query_nodes(NodeFilter(node_types=[NodeType.PERSON], limit=50))
-        assert len(nodes) == 5
+        assert len(nodes) == 6  # 5 candidates + You node
 
         names = {n.title for n in nodes}
-        assert names == {"Aisha Nakamura", "Carlos Rivera", "Mei-Lin Park", "Kwame Asante", "Elena Volkov"}
+        assert "Aisha Nakamura" in names
+        assert "Carlos Rivera" in names
+        assert "Mei-Lin Park" in names
+        assert "Kwame Asante" in names
+        assert "Elena Volkov" in names
 
     @pytest.mark.asyncio
     async def test_announcement_event_and_project_created(self, repo):
@@ -549,7 +554,7 @@ class TestCampaignEvents:
         assert len(events) == 3  # debate, rally, town hall
 
         persons = repo.query_nodes(NodeFilter(node_types=[NodeType.PERSON], limit=50))
-        assert len(persons) == 4  # Jordan, Priya, Tyler, Sophie
+        assert len(persons) == 5  # Jordan, Priya, Tyler, Sophie + You
 
     @pytest.mark.asyncio
     async def test_voter_event_attendance(self, repo):
@@ -870,8 +875,11 @@ class TestFullElectionGraph:
         pipeline = _make_pipeline(repo, resp)
         await pipeline.run(cid, "Candidate announcements for linkage test.")
 
+        from memora.graph.repository import YOU_NODE_ID
         nodes = repo.query_nodes(NodeFilter(limit=50))
         for node in nodes:
+            if str(node.id) == YOU_NODE_ID:
+                continue  # You node is system-created, no capture
             assert node.source_capture_id is not None
             assert str(node.source_capture_id) == cid
 

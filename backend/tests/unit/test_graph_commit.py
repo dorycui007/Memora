@@ -132,14 +132,18 @@ class TestAtomicCommit:
         assert row[2] == 0.9
 
     def test_committed_nodes_have_source_capture_id(self, repo, proposal):
+        from memora.graph.repository import YOU_NODE_ID
+
         pid = repo.create_proposal(proposal, agent_id="archivist", route=ProposalRoute.AUTO)
         repo.commit_proposal(pid)
 
         rows = repo._conn.execute(
-            "SELECT source_capture_id FROM nodes WHERE deleted = FALSE"
+            "SELECT id, source_capture_id FROM nodes WHERE deleted = FALSE"
         ).fetchall()
         for row in rows:
-            assert row[0] == proposal.source_capture_id
+            if row[0] == YOU_NODE_ID:
+                continue  # You node is system-created
+            assert row[1] == proposal.source_capture_id
 
 
 class TestCommitIdempotency:

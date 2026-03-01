@@ -7,12 +7,17 @@ pipeline models (proposals/updates), and capture model.
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
+
+
+def _utcnow() -> datetime:
+    """Timezone-aware UTC now, for use as Pydantic default_factory."""
+    return datetime.now(timezone.utc)
 
 
 # ============================================================
@@ -197,8 +202,8 @@ class BaseNode(BaseModel):
     decay_score: float = 1.0
     review_date: datetime | None = None
     tags: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
     def compute_content_hash(self) -> str:
         """Compute SHA-256 hash of title + content for dedup."""
@@ -377,8 +382,8 @@ class Edge(BaseModel):
     weight: float = 1.0
     bidirectional: bool = False
     properties: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 # ============================================================
@@ -448,7 +453,7 @@ class GraphProposal(BaseModel):
     """Atomic set of graph changes proposed by the Archivist."""
 
     source_capture_id: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=_utcnow)
     confidence: float = Field(default=0.8, ge=0.0, le=1.0)
     nodes_to_create: list[NodeProposal] = Field(default_factory=list)
     nodes_to_update: list[NodeUpdate] = Field(default_factory=list)
@@ -473,7 +478,7 @@ class Capture(BaseModel):
     content_hash: str = ""
     language: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
     def compute_content_hash(self) -> str:
         """Compute SHA-256 hash of raw_content for dedup."""

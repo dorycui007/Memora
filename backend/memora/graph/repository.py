@@ -33,6 +33,9 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# Central "You" node — fixed UUID for the ego/user node
+YOU_NODE_ID = "00000000-0000-0000-0000-000000000001"
+
 # ============================================================
 # Schema DDL
 # ============================================================
@@ -168,6 +171,55 @@ class GraphRepository:
             )
         # Apply any pending migrations
         apply_migrations(self._conn)
+
+        # Ensure the central "You" node exists
+        self._ensure_you_node()
+
+    def _ensure_you_node(self) -> None:
+        """Create the singleton PERSON node representing the user if absent."""
+        row = self._conn.execute(
+            "SELECT id FROM nodes WHERE id = ?", [YOU_NODE_ID]
+        ).fetchone()
+        if row is not None:
+            return
+
+        import hashlib
+
+        now = datetime.utcnow().isoformat()
+        content = "Central node representing the user"
+        content_hash = hashlib.sha256(f"You|{content}".encode()).hexdigest()
+
+        self._conn.execute(
+            """INSERT INTO nodes (id, node_type, title, content, content_hash,
+               properties, confidence, networks, human_approved, proposed_by,
+               source_capture_id, access_count, decay_score, tags,
+               created_at, updated_at, deleted)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                YOU_NODE_ID,
+                "PERSON",
+                "You",
+                content,
+                content_hash,
+                json.dumps({"name": "You", "relationship_to_user": "self"}),
+                1.0,
+                [],
+                True,
+                "system",
+                None,
+                0,
+                1.0,
+                [],
+                now,
+                now,
+                False,
+            ],
+        )
+        logger.info("Created central 'You' node: %s", YOU_NODE_ID)
+
+    def get_you_node_id(self) -> str:
+        """Return the fixed UUID of the central 'You' node."""
+        return YOU_NODE_ID
 
     def close(self) -> None:
         """Close the database connection."""
@@ -650,7 +702,31 @@ class GraphRepository:
                     if k in ("id", "created_at"):
                         continue
                     if k == "properties":
-                        v = json.dumps(v)
+                        # Merge properties with existing rather than replacing
+                        existing_props = {}
+                        try:
+                            row = self._conn.execute(
+                                "SELECT properties FROM nodes WHERE id = ?",
+                                [node_id],
+                            ).fetchone()
+                            if row and row[0]:
+                                existing_props = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                        except Exception:
+                            pass
+                        existing_props.update(v)
+                        v = json.dumps(existing_props)
+                    elif k == "content":
+                        # Append new content to existing for the You node
+                        if node_id == YOU_NODE_ID:
+                            try:
+                                row = self._conn.execute(
+                                    "SELECT content FROM nodes WHERE id = ?",
+                                    [node_id],
+                                ).fetchone()
+                                if row and row[0] and row[0] != "Central node representing the user":
+                                    v = f"{row[0]}\n{v}"
+                            except Exception:
+                                pass
                     set_parts.append(f"{k} = ?")
                     vals.append(v)
                 if set_parts:
@@ -842,6 +918,133 @@ class GraphRepository:
             return [dict(zip(cols, row)) for row in rows]
         except Exception:
             return []
+
+    # ---- Capture-scoped query helpers ----
+
+    def get_nodes_by_capture_id(self, capture_id: str) -> list[dict[str, Any]]:
+        """Return all non-deleted nodes created from a given capture."""
+        rows = self._conn.execute(
+            """SELECT id, node_type, title, content, networks
+               FROM nodes
+               WHERE source_capture_id = ? AND deleted = FALSE""",
+            [capture_id],
+        ).fetchall()
+        cols = ["id", "node_type", "title", "content", "networks"]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get_node_ids_by_capture_id(self, capture_id: str) -> list[str]:
+        """Return IDs of all non-deleted nodes created from a given capture."""
+        rows = self._conn.execute(
+            "SELECT id FROM nodes WHERE source_capture_id = ? AND deleted = FALSE",
+            [capture_id],
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def get_edges_for_node_ids(self, node_ids: set[str] | list[str]) -> list[dict[str, Any]]:
+        """Return all edges where source or target is in *node_ids*."""
+        if not node_ids:
+            return []
+        id_list = list(node_ids)
+        placeholders = ", ".join(["?"] * len(id_list))
+        rows = self._conn.execute(
+            f"""SELECT id, source_id, target_id, edge_type, edge_category,
+                       confidence, weight
+                FROM edges
+                WHERE source_id IN ({placeholders})
+                   OR target_id IN ({placeholders})""",
+            id_list + id_list,
+        ).fetchall()
+        cols = ["id", "source_id", "target_id", "edge_type", "edge_category",
+                "confidence", "weight"]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get_networks_by_capture_id(self, capture_id: str) -> list[str]:
+        """Return distinct networks for nodes created from a capture."""
+        rows = self._conn.execute(
+            """SELECT DISTINCT UNNEST(networks)
+               FROM nodes
+               WHERE source_capture_id = ? AND deleted = FALSE""",
+            [capture_id],
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def get_commitment_nodes_by_capture_id(self, capture_id: str) -> list[dict[str, Any]]:
+        """Return commitment nodes with due dates from a capture."""
+        rows = self._conn.execute(
+            """SELECT id, title, json_extract_string(properties, '$.due_date') AS due_date
+               FROM nodes
+               WHERE source_capture_id = ? AND deleted = FALSE
+               AND node_type = 'COMMITMENT'
+               AND json_extract_string(properties, '$.due_date') IS NOT NULL""",
+            [capture_id],
+        ).fetchall()
+        cols = ["id", "title", "due_date"]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get_nodes_for_truth_check(self, capture_id: str) -> list[dict[str, Any]]:
+        """Return nodes suitable for truth-layer cross-referencing."""
+        rows = self._conn.execute(
+            """SELECT id, title, content
+               FROM nodes
+               WHERE source_capture_id = ? AND deleted = FALSE
+               AND node_type IN ('NOTE', 'INSIGHT', 'CONCEPT', 'DECISION')""",
+            [capture_id],
+        ).fetchall()
+        cols = ["id", "title", "content"]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def find_exact_node_matches(self, node_type: str, title: str) -> list[dict[str, Any]]:
+        """Find non-deleted nodes with same type and matching title.
+
+        Matches exact (case-insensitive), substring containment in either
+        direction, and first-token match for multi-word names.
+        """
+        # Exact match + proposed title contained in existing + existing contained in proposed
+        first_token = title.strip().split()[0] if title.strip() else title
+        rows = self._conn.execute(
+            """SELECT DISTINCT id, node_type, title, networks
+               FROM nodes
+               WHERE deleted = FALSE AND node_type = ? AND (
+                   title ILIKE ?
+                   OR title ILIKE ?
+                   OR ? ILIKE '%' || title || '%'
+                   OR (length(?) > 2 AND title ILIKE ?)
+               )""",
+            [node_type, title, f"%{title}%", title, first_token, f"{first_token}%"],
+        ).fetchall()
+        cols = ["id", "node_type", "title", "networks"]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def get_node_created_at(self, node_id: str) -> datetime | None:
+        """Return created_at for a single node."""
+        row = self._conn.execute(
+            "SELECT created_at FROM nodes WHERE id = ?", [node_id]
+        ).fetchone()
+        return row[0] if row else None
+
+    def get_node_created_at_batch(self, node_ids: list[str]) -> dict[str, datetime]:
+        """Return {node_id: created_at} for a list of node IDs."""
+        if not node_ids:
+            return {}
+        placeholders = ", ".join(["?"] * len(node_ids))
+        rows = self._conn.execute(
+            f"SELECT id, created_at FROM nodes WHERE id IN ({placeholders})",
+            node_ids,
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    # ---- Dossier / search helpers ----
+
+    def search_by_title(self, query: str, limit: int = 20) -> list[BaseNode]:
+        """Find nodes whose title or aliases contain the query string (case-insensitive)."""
+        rows = self._conn.execute(
+            """SELECT * FROM nodes WHERE deleted = FALSE
+               AND (title ILIKE ?
+                    OR CAST(properties->>'aliases' AS VARCHAR) ILIKE ?)
+               ORDER BY confidence DESC, access_count DESC LIMIT ?""",
+            [f"%{query}%", f"%{query}%", limit],
+        ).fetchall()
+        return [self._row_to_node(row) for row in rows]
 
     # ---- Row mappers ----
 

@@ -452,9 +452,9 @@ class Orchestrator:
         if any(sig in strategist_content.lower() for sig in gap_signals):
             if self._researcher:
                 try:
-                    result = self._researcher.research(
+                    result = _run_async(self._researcher.research(
                         state["query"], state.get("graph_context")
-                    )
+                    ))
                     state["researcher_output"] = {
                         "agent": "researcher",
                         "content": result.answer,

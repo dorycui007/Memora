@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +20,7 @@ class JSONFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_data: dict[str, Any] = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -127,6 +127,10 @@ def configure_logging(
     """
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level, logging.INFO))
+
+    # Silence noisy third-party loggers
+    for name in ("httpx", "huggingface_hub", "sentence_transformers"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     # Console handler (human-readable)
     console_handler = logging.StreamHandler()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -21,7 +21,7 @@ def _insert_commitment(
 ) -> str:
     """Insert a COMMITMENT node with the given status and optional due_date."""
     nid = str(uuid4())
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     props = {"status": status}
     if due_date:
         props["due_date"] = due_date

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -58,7 +58,7 @@ class HealthScoring:
             "commitment_completion_rate": completion_rate,
             "alert_ratio": alert_ratio,
             "staleness_flags": staleness_flags,
-            "computed_at": datetime.utcnow().isoformat(),
+            "computed_at": datetime.now(timezone.utc).isoformat(),
         }
 
         self._store_snapshot(health)
@@ -88,7 +88,7 @@ class HealthScoring:
     ) -> str:
         if completion_rate < 0.4 or alert_ratio > 0.3 or staleness_flags >= 2:
             return "falling_behind"
-        if (0.4 <= completion_rate <= 0.7) or (0.1 <= alert_ratio <= 0.3):
+        if (0.4 <= completion_rate < 0.7) or (0.1 <= alert_ratio <= 0.3):
             return "needs_attention"
         return "on_track"
 
@@ -150,7 +150,7 @@ class HealthScoring:
                    WHERE deleted = FALSE
                      AND node_type = 'COMMITMENT'
                      AND list_contains(networks, ?)""",
-                [datetime.utcnow().isoformat(), network],
+                [datetime.now(timezone.utc).isoformat(), network],
             ).fetchone()
             open_total = row[1] if row else 0
             if open_total == 0:

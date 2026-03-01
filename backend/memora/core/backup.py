@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class BackupManager:
 
         Returns the path to the snapshot, or None on failure.
         """
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         snapshot_name = f"memora_backup_{timestamp}.duckdb"
         snapshot_path = self._backups_dir / snapshot_name
 

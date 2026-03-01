@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 from uuid import uuid4
@@ -87,7 +87,7 @@ class TruthLayer:
     ) -> str:
         """Create a new verified fact. Returns fact ID."""
         fact_id = str(uuid4())
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         next_check = None
         if lifecycle == FactLifecycle.DYNAMIC:
@@ -161,7 +161,7 @@ class TruthLayer:
 
     def get_stale_facts(self) -> list[dict[str, Any]]:
         """Get DYNAMIC facts past their next_check date."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         rows = self._conn.execute(
             """SELECT * FROM verified_facts
                WHERE lifecycle = 'dynamic'
@@ -210,7 +210,7 @@ class TruthLayer:
     ) -> str:
         """Record a fact check result and update the fact's status."""
         check_id = str(uuid4())
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         self._conn.execute(
             """INSERT INTO fact_checks (id, fact_id, check_type, result, evidence, checked_by, checked_at)
@@ -250,7 +250,7 @@ class TruthLayer:
 
     def retire_fact(self, fact_id: str, reason: str = "") -> None:
         """Mark a fact as retired."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         self._conn.execute(
             "UPDATE verified_facts SET status = ?, updated_at = ? WHERE id = ?",
             [FactStatus.RETIRED.value, now, fact_id],

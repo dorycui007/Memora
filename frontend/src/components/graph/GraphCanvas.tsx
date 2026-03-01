@@ -123,8 +123,8 @@ export const GraphCanvas = memo(function GraphCanvas() {
       >
         <GraphLoader />
         <GraphEvents />
+        <GraphControls />
       </SigmaContainer>
-      <GraphControls />
       <NodeTooltip />
     </div>
   );

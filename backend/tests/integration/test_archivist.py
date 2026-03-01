@@ -245,8 +245,9 @@ class TestArchivistEmptyResponse:
 
 
 class TestArchivistRAGContext:
-    def test_no_vector_store_returns_empty(self, archivist):
-        result = archivist._retrieve_rag_context("test query")
+    @pytest.mark.asyncio
+    async def test_no_vector_store_returns_empty(self, archivist):
+        result = await archivist._retrieve_rag_context("test query")
         assert result == []
 
     def test_format_no_nodes(self, archivist):

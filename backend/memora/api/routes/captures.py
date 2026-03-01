@@ -107,18 +107,41 @@ async def get_capture(capture_id: str, request: Request):
     return capture.model_dump(mode="json")
 
 
+@router.get("/{capture_id}/pipeline-status")
+async def get_pipeline_status(capture_id: str):
+    """Get the status of a background pipeline run for a capture."""
+    task_info = _pipeline_tasks.get(capture_id)
+    if task_info is None:
+        return {"capture_id": capture_id, "status": "unknown"}
+    return {"capture_id": capture_id, **task_info}
+
+
+# Track background pipeline tasks for status queries
+_pipeline_tasks: dict[str, dict] = {}
+
+
 async def _run_pipeline(pipeline, capture_id: str, content: str) -> None:
-    """Run the extraction pipeline in the background."""
+    """Run the extraction pipeline in the background with status tracking."""
+    _pipeline_tasks[capture_id] = {"status": "processing", "error": None, "proposal_id": None}
     try:
         state = await pipeline.run(capture_id, content)
         if state.error:
             logger.error(
                 "Pipeline failed for capture %s: %s", capture_id, state.error
             )
+            _pipeline_tasks[capture_id] = {
+                "status": "failed", "error": state.error, "proposal_id": None,
+            }
         else:
             logger.info(
                 "Pipeline completed for capture %s (status=%s, proposal=%s)",
                 capture_id, state.status, state.proposal_id,
             )
-    except Exception:
+            _pipeline_tasks[capture_id] = {
+                "status": state.status, "error": None, "proposal_id": state.proposal_id,
+            }
+    except Exception as e:
         logger.exception("Pipeline crashed for capture %s", capture_id)
+        _pipeline_tasks[capture_id] = {
+            "status": "failed", "error": str(e), "proposal_id": None,
+        }

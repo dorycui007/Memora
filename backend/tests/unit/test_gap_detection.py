@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -23,7 +23,7 @@ def _insert_node(
 ) -> str:
     """Insert a raw node row directly into DuckDB."""
     nid = node_id or str(uuid4())
-    now = created_at or datetime.utcnow().isoformat()
+    now = created_at or datetime.now(timezone.utc).isoformat()
     repo._conn.execute(
         """INSERT INTO nodes
            (id, node_type, title, content, content_hash, properties,
@@ -61,7 +61,7 @@ def _insert_edge(
 ) -> str:
     """Insert a raw edge row directly into DuckDB."""
     eid = str(uuid4())
-    now = created_at or datetime.utcnow().isoformat()
+    now = created_at or datetime.now(timezone.utc).isoformat()
     repo._conn.execute(
         """INSERT INTO edges
            (id, source_id, target_id, edge_type, edge_category,

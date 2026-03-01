@@ -15,6 +15,7 @@ from typing import Any
 
 import openai
 
+from memora.core.json_utils import extract_json
 from memora.core.retry import async_call_with_retry
 from memora.core.truth_layer import FactLifecycle, TruthLayer
 
@@ -415,37 +416,7 @@ class ResearcherAgent:
 
     def _extract_json(self, text: str) -> dict[str, Any]:
         """Extract JSON object from LLM response."""
-        text = text.strip()
-
-        if text.startswith("{"):
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                pass
-
-        pattern = r"```(?:json)?\s*\n?(.*?)\n?\s*```"
-        matches = re.findall(pattern, text, re.DOTALL)
-        for match in matches:
-            try:
-                return json.loads(match.strip())
-            except json.JSONDecodeError:
-                continue
-
-        brace_start = text.find("{")
-        if brace_start >= 0:
-            depth = 0
-            for i in range(brace_start, len(text)):
-                if text[i] == "{":
-                    depth += 1
-                elif text[i] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        try:
-                            return json.loads(text[brace_start:i + 1])
-                        except json.JSONDecodeError:
-                            break
-
-        raise ValueError(f"No valid JSON found in response: {text[:200]}...")
+        return extract_json(text)
 
     def _extract_token_usage(self, response: Any) -> dict[str, int]:
         """Extract token usage from API response."""

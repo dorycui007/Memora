@@ -239,9 +239,9 @@ def _get_network_alerts(repo, network: str) -> list[dict[str, Any]]:
             [network],
         ).fetchall()
 
-        from datetime import datetime
+        from datetime import datetime, timezone
         import json
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         for row in rows:
             props = json.loads(row[2]) if isinstance(row[2], str) else (row[2] or {})

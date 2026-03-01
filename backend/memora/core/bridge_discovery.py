@@ -7,7 +7,7 @@ indicating potential cross-network insights or connections.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -135,7 +135,7 @@ class BridgeDiscovery:
                     False,
                     None,
                     None,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                 ],
             )
         except Exception:

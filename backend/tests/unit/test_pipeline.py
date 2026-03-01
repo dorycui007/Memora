@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, AsyncMock, patch
 from uuid import uuid4
 
@@ -71,14 +71,14 @@ class TestPreprocessing:
 
     @pytest.mark.asyncio
     async def test_date_normalization_today(self, pipeline):
-        today = datetime.utcnow().date().isoformat()
+        today = datetime.now(timezone.utc).date().isoformat()
         state = PipelineState(capture_id=str(uuid4()), raw_content="I have a meeting today")
         result = await pipeline._preprocess(state)
         assert today in result.processed_content
 
     @pytest.mark.asyncio
     async def test_date_normalization_tomorrow(self, pipeline):
-        tomorrow = (datetime.utcnow().date() + timedelta(days=1)).isoformat()
+        tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
         state = PipelineState(capture_id=str(uuid4()), raw_content="Deadline is tomorrow")
         result = await pipeline._preprocess(state)
         assert tomorrow in result.processed_content
@@ -96,18 +96,13 @@ class TestPreprocessing:
         assert "$20.00" in result.processed_content
 
     @pytest.mark.asyncio
-    async def test_duplicate_detection(self, pipeline, repo):
-        content = "Unique content for dedup test"
-        content_hash = hashlib.sha256(content.encode()).hexdigest()
-        # Insert a capture with the same hash
-        repo._conn.execute(
-            "INSERT INTO captures (id, modality, raw_content, content_hash) VALUES (?, ?, ?, ?)",
-            [str(uuid4()), "text", content, content_hash],
-        )
-        state = PipelineState(capture_id=str(uuid4()), raw_content=content)
+    async def test_content_hash_computed_on_raw(self, pipeline):
+        """Content hash is computed on raw_content (not preprocessed) to match API dedup."""
+        raw = "Met someone tomorrow for $50k discussion"
+        state = PipelineState(capture_id=str(uuid4()), raw_content=raw)
         result = await pipeline._preprocess(state)
-        assert result.is_duplicate is True
-        assert result.error == "Duplicate content detected"
+        expected_hash = hashlib.sha256(raw.encode()).hexdigest()
+        assert result.content_hash == expected_hash
 
     @pytest.mark.asyncio
     async def test_language_detection_english(self, pipeline):
@@ -138,7 +133,7 @@ class TestExtraction:
     async def test_extraction_with_mock_archivist(self, repo, sample_proposal):
         from memora.agents.archivist import ArchivistResult
 
-        mock_archivist = MagicMock()
+        mock_archivist = AsyncMock()
         mock_archivist.extract.return_value = ArchivistResult(
             proposal=sample_proposal,
             clarification_needed=False,
@@ -160,7 +155,7 @@ class TestExtraction:
     async def test_extraction_clarification_needed(self, repo):
         from memora.agents.archivist import ArchivistResult
 
-        mock_archivist = MagicMock()
+        mock_archivist = AsyncMock()
         mock_archivist.extract.return_value = ArchivistResult(
             proposal=None,
             clarification_needed=True,
@@ -387,7 +382,7 @@ class TestFullPipeline:
     async def test_pipeline_end_to_end_with_mock(self, repo, sample_proposal):
         from memora.agents.archivist import ArchivistResult
 
-        mock_archivist = MagicMock()
+        mock_archivist = AsyncMock()
         mock_archivist.extract.return_value = ArchivistResult(
             proposal=sample_proposal,
             clarification_needed=False,
@@ -416,15 +411,11 @@ class TestFullPipeline:
         assert state.proposal_id is not None
 
     @pytest.mark.asyncio
-    async def test_pipeline_duplicate_stops_early(self, repo):
+    async def test_pipeline_without_archivist_stops_at_extraction(self, repo):
+        """Pipeline without archivist fails at extraction stage (dedup is handled by API layer)."""
         content = "Exact duplicate content for pipeline test"
-        content_hash = hashlib.sha256(content.encode()).hexdigest()
-        repo._conn.execute(
-            "INSERT INTO captures (id, modality, raw_content, content_hash) VALUES (?, ?, ?, ?)",
-            [str(uuid4()), "text", content, content_hash],
-        )
 
         pipeline = ExtractionPipeline(repo=repo)
         state = await pipeline.run(str(uuid4()), content)
         assert state.status == "failed"
-        assert state.stage == PipelineStage.PREPROCESSING
+        assert state.stage == PipelineStage.EXTRACTION

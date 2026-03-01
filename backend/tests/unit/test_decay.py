@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -25,7 +25,7 @@ def _insert_node(
 ) -> str:
     """Helper to insert a raw node row directly into DuckDB."""
     nid = node_id or str(uuid4())
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     content_hash = f"hash_{nid[:8]}"
     repo._conn.execute(
         """INSERT INTO nodes
@@ -59,14 +59,14 @@ class TestComputeDecay:
     def test_compute_decay_fresh_node(self, repo: GraphRepository):
         """Decay should be ~1.0 for a node accessed just now."""
         scorer = DecayScoring(repo)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         score = scorer.compute_decay(now, lambda_val=0.05)
         assert score == pytest.approx(1.0, abs=0.01)
 
     def test_compute_decay_old_node(self, repo: GraphRepository):
         """Decay should decrease significantly for a node accessed long ago."""
         scorer = DecayScoring(repo)
-        old = datetime.utcnow() - timedelta(days=30)
+        old = datetime.now(timezone.utc) - timedelta(days=30)
         score = scorer.compute_decay(old, lambda_val=0.05)
         # e^(-0.05 * 30) = e^(-1.5) ~ 0.223
         assert score < 0.3
@@ -79,7 +79,7 @@ class TestBatchUpdateScores:
         scorer = DecayScoring(repo)
 
         # Node accessed 60 days ago -- should get a low score
-        old_time = datetime.utcnow() - timedelta(days=60)
+        old_time = datetime.now(timezone.utc) - timedelta(days=60)
         nid_old = _insert_node(
             repo,
             title="Old Node",
@@ -91,7 +91,7 @@ class TestBatchUpdateScores:
         nid_fresh = _insert_node(
             repo,
             title="Fresh Node",
-            last_accessed=datetime.utcnow(),
+            last_accessed=datetime.now(timezone.utc),
             networks=["PROFESSIONAL"],
         )
 

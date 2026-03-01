@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -117,7 +117,7 @@ class NotificationManager:
                     message,
                     node_ids_json,
                     priority,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
                 ],
             )
             logger.debug("Created notification %s [%s]: %s", nid, type, message[:80])
@@ -223,7 +223,7 @@ class NotificationManager:
 
     def delete_old(self, days: int = 30) -> int:
         """Delete *read* notifications older than *days*. Return count deleted."""
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         try:
             result = self._conn.execute(
                 "DELETE FROM notifications WHERE read = TRUE AND created_at < ? RETURNING id",

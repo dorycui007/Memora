@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from math import exp
 from typing import Any
 
@@ -38,25 +38,32 @@ class DecayScoring:
 
     def compute_decay(self, t_last_access: datetime, lambda_val: float) -> float:
         """Return e^(-lambda * delta_t) where delta_t is days since *t_last_access*."""
-        delta_days = (datetime.utcnow() - t_last_access).total_seconds() / 86400.0
+        now = datetime.now(timezone.utc)
+        # Handle naive datetimes from DuckDB by assuming UTC
+        if t_last_access.tzinfo is None:
+            t_last_access = t_last_access.replace(tzinfo=timezone.utc)
+        delta_days = (now - t_last_access).total_seconds() / 86400.0
         if delta_days < 0:
             delta_days = 0.0
         return exp(-lambda_val * delta_days)
 
     def batch_update_scores(self) -> int:
         """Recompute decay_score for every non-deleted node. Return count updated."""
+        from memora.graph.repository import YOU_NODE_ID
+
         try:
             rows = self._repo._conn.execute(
                 """SELECT id, last_accessed, networks
                    FROM nodes
-                   WHERE deleted = FALSE"""
+                   WHERE deleted = FALSE AND id != ?""",
+                [YOU_NODE_ID],
             ).fetchall()
         except Exception:
             logger.warning("Failed to fetch nodes for decay scoring", exc_info=True)
             return 0
 
         updated = 0
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         for row in rows:
             node_id, last_accessed, networks = row[0], row[1], row[2]
 
@@ -94,13 +101,15 @@ class DecayScoring:
 
         These are candidates for resurfacing to the user.
         """
+        from memora.graph.repository import YOU_NODE_ID
+
         try:
             rows = self._repo._conn.execute(
                 """SELECT id, node_type, title, decay_score, last_accessed, networks
                    FROM nodes
-                   WHERE deleted = FALSE AND decay_score < ?
+                   WHERE deleted = FALSE AND decay_score < ? AND id != ?
                    ORDER BY decay_score ASC""",
-                [threshold],
+                [threshold, YOU_NODE_ID],
             ).fetchall()
         except Exception:
             logger.warning("Failed to query decayed nodes", exc_info=True)

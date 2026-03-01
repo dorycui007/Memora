@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from memora.graph.repository import GraphRepository
@@ -46,6 +46,8 @@ class GapDetector:
 
     def _find_orphaned_nodes(self) -> list[dict[str, Any]]:
         """Find nodes with zero edges (neither source nor target)."""
+        from memora.graph.repository import YOU_NODE_ID
+
         try:
             rows = self._repo._conn.execute(
                 """SELECT n.id, n.node_type, n.title, n.created_at
@@ -55,7 +57,9 @@ class GapDetector:
                    WHERE n.deleted = FALSE
                      AND e_src.id IS NULL
                      AND e_tgt.id IS NULL
-                   ORDER BY n.created_at ASC"""
+                     AND n.id != ?
+                   ORDER BY n.created_at ASC""",
+                [YOU_NODE_ID],
             ).fetchall()
         except Exception:
             logger.warning("Failed to find orphaned nodes", exc_info=True)
@@ -66,7 +70,7 @@ class GapDetector:
 
     def _find_stalled_goals(self, stall_days: int = 14) -> list[dict[str, Any]]:
         """Find GOAL nodes with status=active but no PROGRESS edges recently."""
-        cutoff = (datetime.utcnow() - timedelta(days=stall_days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=stall_days)).isoformat()
         try:
             rows = self._repo._conn.execute(
                 """SELECT n.id, n.title, n.properties, n.updated_at
@@ -101,7 +105,7 @@ class GapDetector:
 
     def _find_dead_end_projects(self, stall_days: int = 14) -> list[dict[str, Any]]:
         """Find PROJECT nodes with status=active but no recent edge activity."""
-        cutoff = (datetime.utcnow() - timedelta(days=stall_days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=stall_days)).isoformat()
         try:
             rows = self._repo._conn.execute(
                 """SELECT n.id, n.title, n.properties, n.updated_at

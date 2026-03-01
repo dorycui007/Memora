@@ -6,7 +6,7 @@ Tracks schema versions and applies incremental migrations with rollback support.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import duckdb
@@ -103,7 +103,7 @@ def apply_migrations(conn: duckdb.DuckDBPyConnection) -> int:
             conn.execute(
                 "INSERT INTO schema_version (version, description, applied_at) "
                 "VALUES (?, ?, ?)",
-                [version, description, datetime.utcnow()],
+                [version, description, datetime.now(timezone.utc)],
             )
             applied += 1
             logger.info("Migration v%d applied successfully", version)

@@ -55,9 +55,7 @@ async def lifespan(app: FastAPI):
 
         scheduler = MemoraScheduler(
             repo=repo,
-            vector_store=app.state.vector_store,
-            embedding_engine=app.state.embedding_engine,
-            truth_layer=app.state.truth_layer,
+            app_state=app.state,
             settings=settings,
         )
         scheduler.start()

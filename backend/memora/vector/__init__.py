@@ -1,1 +1,1 @@
-"""Vector store — LanceDB + BGE-M3 embeddings."""
+"""Vector store — LanceDB + all-mpnet-base-v2 embeddings."""

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -82,7 +82,7 @@ async def stream_council_query(
         await manager.send_json(websocket, {
             "type": "query_received",
             "query": query,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
         # Notify: classification starting
@@ -141,7 +141,7 @@ async def stream_council_query(
         await manager.send_json(websocket, {
             "type": "complete",
             "query_id": query_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
     except Exception as e:
@@ -150,7 +150,7 @@ async def stream_council_query(
             "type": "error",
             "query_id": query_id,
             "message": str(e),
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
 
@@ -219,7 +219,7 @@ class SSEManager:
         event = {
             "event_type": event_type,
             "data": data,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         dead_queues = []
         for queue in self._subscribers:

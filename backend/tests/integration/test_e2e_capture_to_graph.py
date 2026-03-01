@@ -257,6 +257,7 @@ def _make_pipeline(repo, mock_openai_response) -> ExtractionPipeline:
     archivist._model = "gpt-5-nano"
     archivist._vector_store = None
     archivist._embedding_engine = None
+    archivist._you_node_id = repo.get_you_node_id()
     archivist._system_prompt = "You are the archivist."
 
     settings = MagicMock(
@@ -313,7 +314,7 @@ class TestCaptureToGraphE2E:
         nodes_resp = client.get("/api/v1/graph/nodes")
         assert nodes_resp.status_code == 200
         nodes = nodes_resp.json()
-        assert len(nodes) == 3
+        assert len(nodes) == 4  # 3 extracted + You node
 
         titles = {n["title"] for n in nodes}
         assert "Sam Chen" in titles
@@ -341,8 +342,8 @@ class TestCaptureToGraphE2E:
 
         # Verify stats
         stats = client.get("/api/v1/graph/stats").json()
-        assert stats["node_count"] == 3
-        assert stats["edge_count"] == 3
+        assert stats["node_count"] == 4  # 3 extracted + You node
+        assert stats["edge_count"] == 6  # 3 original + 3 You-connectivity edges
 
     async def test_single_node_no_edges(self, client, repo):
         """IDEA capture → single node, zero edges."""
@@ -356,13 +357,14 @@ class TestCaptureToGraphE2E:
         assert state.status == "completed"
 
         nodes = client.get("/api/v1/graph/nodes").json()
-        assert len(nodes) == 1
-        assert nodes[0]["title"] == "AI-powered gardening assistant"
-        assert nodes[0]["node_type"] == "IDEA"
+        assert len(nodes) == 2  # 1 extracted + You node
+        idea_nodes = [n for n in nodes if n["node_type"] == "IDEA"]
+        assert len(idea_nodes) == 1
+        assert idea_nodes[0]["title"] == "AI-powered gardening assistant"
 
         stats = client.get("/api/v1/graph/stats").json()
-        assert stats["node_count"] == 1
-        assert stats["edge_count"] == 0
+        assert stats["node_count"] == 2  # 1 extracted + You node
+        assert stats["edge_count"] == 1  # You-connectivity edge
 
     async def test_financial_node_creation(self, client, repo):
         """FINANCIAL_ITEM nodes are created with correct network."""
@@ -374,9 +376,10 @@ class TestCaptureToGraphE2E:
         await pipeline.run(capture_id, content)
 
         nodes = client.get("/api/v1/graph/nodes").json()
-        assert len(nodes) == 1
-        assert nodes[0]["node_type"] == "FINANCIAL_ITEM"
-        assert nodes[0]["networks"] == ["FINANCIAL"]
+        assert len(nodes) == 2  # 1 extracted + You node
+        fin_nodes = [n for n in nodes if n["node_type"] == "FINANCIAL_ITEM"]
+        assert len(fin_nodes) == 1
+        assert fin_nodes[0]["networks"] == ["FINANCIAL"]
 
     async def test_node_retrievable_by_id(self, client, repo):
         """Individual nodes are accessible via GET /graph/nodes/{id}."""
@@ -388,7 +391,8 @@ class TestCaptureToGraphE2E:
         await pipeline.run(capture_id, content)
 
         nodes = client.get("/api/v1/graph/nodes").json()
-        node_id = nodes[0]["id"]
+        idea_node = next(n for n in nodes if n["node_type"] == "IDEA")
+        node_id = idea_node["id"]
 
         detail = client.get(f"/api/v1/graph/nodes/{node_id}")
         assert detail.status_code == 200
@@ -405,7 +409,7 @@ class TestCaptureToGraphE2E:
         await pipeline.run(capture_id, content)
 
         nodes = client.get("/api/v1/graph/nodes").json()
-        person = next(n for n in nodes if n["node_type"] == "PERSON")
+        person = next(n for n in nodes if n["node_type"] == "PERSON" and n["title"] != "You")
 
         neigh = client.get(
             f"/api/v1/graph/nodes/{person['id']}/neighborhood", params={"hops": 1}
@@ -413,7 +417,7 @@ class TestCaptureToGraphE2E:
         assert neigh.status_code == 200
         subgraph = neigh.json()
 
-        assert len(subgraph["nodes"]) == 3
+        assert len(subgraph["nodes"]) >= 3
         assert len(subgraph["edges"]) >= 2
 
 
@@ -433,7 +437,7 @@ class TestPipelineRouting:
         assert state.status == "completed"
 
         nodes = client.get("/api/v1/graph/nodes").json()
-        assert len(nodes) == 3
+        assert len(nodes) == 4  # 3 extracted + You node
 
         # Proposal marked approved
         proposal = repo._conn.execute(
@@ -456,7 +460,7 @@ class TestPipelineRouting:
 
         # Nodes NOT committed (commit stage is a no-op for non-AUTO routes)
         nodes = client.get("/api/v1/graph/nodes").json()
-        assert len(nodes) == 0
+        assert len(nodes) == 1  # only You node
 
         proposal = repo._conn.execute(
             "SELECT status, route FROM proposals WHERE capture_id = ?",
@@ -481,10 +485,10 @@ class TestClarificationProtocol:
         assert state.clarification_needed is True
 
         nodes = client.get("/api/v1/graph/nodes").json()
-        assert len(nodes) == 0
+        assert len(nodes) == 1  # only You node
 
         stats = client.get("/api/v1/graph/stats").json()
-        assert stats["node_count"] == 0
+        assert stats["node_count"] == 1  # only You node
         assert stats["edge_count"] == 0
 
 
@@ -541,7 +545,7 @@ class TestPreprocessing:
 
         pipeline._archivist.extract = capturing_extract
 
-        content = "Invested 50k in the startup and gave John 20 bucks"
+        content = "Invested $50k in the startup and gave John 20 bucks"
         capture_id = _create_capture(repo, content)
         await pipeline.run(capture_id, content)
 
@@ -591,8 +595,8 @@ class TestMultipleCapturesAccumulate:
         await pipeline1.run(capture_id1, content1)
 
         stats1 = client.get("/api/v1/graph/stats").json()
-        assert stats1["node_count"] == 3
-        assert stats1["edge_count"] == 3
+        assert stats1["node_count"] == 4  # 3 extracted + You node
+        assert stats1["edge_count"] == 6  # 3 original + 3 You-connectivity edges
 
         # Capture 2: new idea
         mock_resp2 = _make_openai_response(_idea_proposal())
@@ -603,12 +607,13 @@ class TestMultipleCapturesAccumulate:
         await pipeline2.run(capture_id2, content2)
 
         stats2 = client.get("/api/v1/graph/stats").json()
-        assert stats2["node_count"] == 4
-        assert stats2["edge_count"] == 3
+        assert stats2["node_count"] == 5  # 4 extracted + You node
+        assert stats2["edge_count"] == 7  # 6 prior + 1 You-connectivity for idea
 
         nodes = client.get("/api/v1/graph/nodes").json()
         titles = {n["title"] for n in nodes}
         assert titles == {
+            "You",
             "Sam Chen",
             "Coffee with Sam",
             "Send pitch deck to Sam",
@@ -631,8 +636,9 @@ class TestNodeFilteringAfterCreation:
         persons = client.get(
             "/api/v1/graph/nodes", params={"node_type": "PERSON"}
         ).json()
-        assert len(persons) == 1
-        assert persons[0]["title"] == "Sam Chen"
+        assert len(persons) == 2  # Sam Chen + You
+        sam = [p for p in persons if p["title"] == "Sam Chen"]
+        assert len(sam) == 1
 
         events = client.get(
             "/api/v1/graph/nodes", params={"node_type": "EVENT"}
@@ -691,7 +697,8 @@ class TestGraphNodeLifecycle:
         await pipeline.run(capture_id, content)
 
         nodes = client.get("/api/v1/graph/nodes").json()
-        node_id = nodes[0]["id"]
+        idea_node = next(n for n in nodes if n["node_type"] == "IDEA")
+        node_id = idea_node["id"]
 
         patch_resp = client.patch(
             f"/api/v1/graph/nodes/{node_id}",
@@ -710,17 +717,18 @@ class TestGraphNodeLifecycle:
         await pipeline.run(capture_id, content)
 
         nodes = client.get("/api/v1/graph/nodes").json()
-        node_id = nodes[0]["id"]
+        idea_node = next(n for n in nodes if n["node_type"] == "IDEA")
+        node_id = idea_node["id"]
 
         del_resp = client.delete(f"/api/v1/graph/nodes/{node_id}")
         assert del_resp.status_code == 200
         assert del_resp.json()["status"] == "deleted"
 
         nodes_after = client.get("/api/v1/graph/nodes").json()
-        assert len(nodes_after) == 0
+        assert len(nodes_after) == 1  # only You node remains
 
         stats = client.get("/api/v1/graph/stats").json()
-        assert stats["node_count"] == 0
+        assert stats["node_count"] == 1  # only You node
 
 
 class TestEdgeIntegrity:
@@ -827,8 +835,9 @@ class TestOpenAIIntegration:
         # Verify input contains the text
         input_text = call_kwargs.kwargs.get("input", "")
         assert "gardening assistant" in input_text.lower()
-        # Verify JSON output format requested
-        assert call_kwargs.kwargs.get("text") == {"format": {"type": "json_object"}}
+        # Verify JSON output format requested (json_schema mode)
+        text_kwarg = call_kwargs.kwargs.get("text", {})
+        assert text_kwarg["format"]["type"] == "json_schema"
 
     async def test_openai_api_error_fails_pipeline(self, repo):
         """OpenAI API error results in pipeline failure (no nodes created)."""
@@ -846,6 +855,7 @@ class TestOpenAIIntegration:
         archivist._model = "gpt-5-nano"
         archivist._vector_store = None
         archivist._embedding_engine = None
+        archivist._you_node_id = repo.get_you_node_id()
         archivist._system_prompt = "You are the archivist."
 
         pipeline = ExtractionPipeline(
@@ -864,11 +874,11 @@ class TestOpenAIIntegration:
         assert state.error is not None
         assert state.status == "failed"
 
-        # No nodes created
+        # Only the You node exists (no extraction happened)
         count = repo._conn.execute(
             "SELECT COUNT(*) FROM nodes WHERE deleted = FALSE"
         ).fetchone()[0]
-        assert count == 0
+        assert count == 1  # You node only
 
     async def test_malformed_json_from_openai(self, repo):
         """Malformed JSON from OpenAI results in pipeline failure."""
@@ -885,6 +895,7 @@ class TestOpenAIIntegration:
         archivist._model = "gpt-5-nano"
         archivist._vector_store = None
         archivist._embedding_engine = None
+        archivist._you_node_id = repo.get_you_node_id()
         archivist._system_prompt = "You are the archivist."
 
         pipeline = ExtractionPipeline(
@@ -904,7 +915,7 @@ class TestOpenAIIntegration:
         count = repo._conn.execute(
             "SELECT COUNT(*) FROM nodes WHERE deleted = FALSE"
         ).fetchone()[0]
-        assert count == 0
+        assert count == 1  # You node only
 
 
 class TestProposalTracking:
