@@ -72,24 +72,18 @@
   - [10.2 Core Endpoints](#102-core-endpoints)
   - [10.3 WebSocket Streaming](#103-websocket-streaming)
   - [10.4 Request/Response Examples](#104-requestresponse-examples)
-- [11. Frontend Architecture](#11-frontend-architecture)
-  - [11.1 Technology Stack](#111-technology-stack)
-  - [11.2 Key Views](#112-key-views)
-  - [11.3 State Management](#113-state-management)
-  - [11.4 Real-Time Communication](#114-real-time-communication)
-- [12. Deployment Architecture](#12-deployment-architecture)
-  - [12.1 Local-First Architecture](#121-local-first-architecture)
-  - [12.2 File System Layout](#122-file-system-layout)
-  - [12.3 Infrastructure Cost](#123-infrastructure-cost)
-- [13. Project Structure](#13-project-structure)
-- [14. Implementation Roadmap](#14-implementation-roadmap)
-  - [14.1 Phase 0–1: Foundation (Weeks 1–5)](#141-phase-01-foundation-weeks-15)
-  - [14.2 Phase 2: Intelligence (Weeks 6–9)](#142-phase-2-intelligence-weeks-69)
-  - [14.3 Phase 3: Frontend (Weeks 10–16)](#143-phase-3-frontend-weeks-1016)
-  - [14.4 Gantt Chart](#144-gantt-chart)
-- [15. Success Metrics](#15-success-metrics)
-- [16. Risk Assessment](#16-risk-assessment)
-- [17. Open Questions & Decisions](#17-open-questions--decisions)
+- [11. Deployment Architecture](#11-deployment-architecture)
+  - [11.1 Local-First Architecture](#111-local-first-architecture)
+  - [11.2 File System Layout](#112-file-system-layout)
+  - [11.3 Infrastructure Cost](#113-infrastructure-cost)
+- [12. Project Structure](#12-project-structure)
+- [13. Implementation Roadmap](#13-implementation-roadmap)
+  - [13.1 Phase 0–1: Foundation (Weeks 1–5)](#131-phase-01-foundation-weeks-15)
+  - [13.2 Phase 2: Intelligence (Weeks 6–9)](#132-phase-2-intelligence-weeks-69)
+  - [13.3 Gantt Chart](#133-gantt-chart)
+- [14. Success Metrics](#14-success-metrics)
+- [15. Risk Assessment](#15-risk-assessment)
+- [16. Open Questions & Decisions](#16-open-questions--decisions)
 - [Appendix A: Complete Node Type Property Reference](#appendix-a-complete-node-type-property-reference)
 - [Appendix B: Complete Edge Type Reference](#appendix-b-complete-edge-type-reference)
 - [Appendix C: Archivist System Prompt Template](#appendix-c-archivist-system-prompt-template)
@@ -116,7 +110,7 @@ graph TB
     User["👤 User"]
 
     subgraph Memora["Memora Platform (Local)"]
-        Frontend["React Frontend<br/>localhost:5173"]
+        CLI["CLI / REST API"]
         API["FastAPI Backend<br/>localhost:8000"]
         Agents["AI Council<br/>(3 Agents + Orchestrator)"]
         Graph["Knowledge Graph<br/>(DuckDB)"]
@@ -127,8 +121,8 @@ graph TB
     OpenAI["OpenAI API<br/>(BYOK)"]
     Internet["Public Internet<br/>(via MCP Servers)"]
 
-    User -->|"text"| Frontend
-    Frontend -->|"REST / WebSocket"| API
+    User -->|"text"| CLI
+    CLI -->|"REST / WebSocket"| API
     API --> Agents
     API --> Graph
     API --> Vector
@@ -141,8 +135,7 @@ graph TB
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  PRESENTATION    Vite + React + TypeScript │ Sigma.js │ TipTap │       │
-│                  Tailwind + Zustand                                     │
+│  INTERFACE       CLI (Rich) + REST API                                 │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  API             FastAPI + Uvicorn │ WebSocket │ Python 3.12+          │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -1341,98 +1334,15 @@ Response streams via WebSocket with agent contributions, citations, and final sy
 
 ---
 
-## 11. Frontend Architecture
+## 11. Deployment Architecture
 
-### 11.1 Technology Stack
-
-| Library | Purpose |
-|---|---|
-| **Vite** | Build tool and dev server |
-| **React 18+** | UI framework |
-| **TypeScript** | Type safety |
-| **Sigma.js** | Graph visualization (WebGL-powered, handles 10K+ nodes) |
-| **TipTap** | Rich text editor for capture input |
-| **Tailwind CSS** | Utility-first styling |
-| **Zustand** | Lightweight state management |
-
-### 11.2 Key Views
-
-| View | Description | Primary Component |
-|---|---|---|
-| **Capture** | Quick-entry text input | TipTap editor + capture bar |
-| **Graph** | Interactive graph visualization (local neighborhood default) | Sigma.js canvas |
-| **Network Dashboard** | 7 networks with health status, momentum, alerts | Cards + sparklines |
-| **Daily Briefing** | Morning intelligence report | Structured sections with collapsibles |
-| **Review Queue** | Pending proposals for approval/rejection | Diff viewer + action buttons |
-| **Council Chat** | Conversational interface to AI Council | Chat UI + streaming |
-| **Node Detail** | Full node view with properties, edges, provenance | Detail panel + related nodes |
-| **Command Palette** | Cmd+K universal navigation and actions | Modal overlay |
-
-### 11.3 State Management
-
-Zustand store with distinct slices:
-
-```typescript
-interface MemoraStore {
-    // Graph state
-    graph: {
-        nodes: Map<string, GraphNode>;
-        edges: Map<string, GraphEdge>;
-        selectedNodeId: string | null;
-        viewMode: 'local' | 'network' | 'global';
-    };
-
-    // Capture state
-    capture: {
-        isCapturing: boolean;
-        currentModality: 'text';
-        pendingCaptures: Capture[];
-    };
-
-    // Agent state
-    council: {
-        isQuerying: boolean;
-        activeAgents: string[];
-        streamTokens: StreamToken[];
-        currentBriefing: Briefing | null;
-    };
-
-    // Notification state
-    notifications: {
-        unread: Notification[];
-        pendingProposals: number;
-        alerts: Alert[];
-    };
-
-    // Network state
-    networks: {
-        health: Record<NetworkType, HealthStatus>;
-        bridges: Bridge[];
-    };
-}
-```
-
-### 11.4 Real-Time Communication
-
-| Channel | Protocol | Use Case |
-|---|---|---|
-| Agent streaming | WebSocket | Token-by-token agent responses during council queries |
-
----
-
-## 12. Deployment Architecture
-
-### 12.1 Local-First Architecture
+### 11.1 Local-First Architecture
 
 Everything runs on the user's machine. The only external dependency is the OpenAI API (BYOK).
 
 ```mermaid
 graph TB
     subgraph Local["User's Machine"]
-        subgraph FE["Frontend (localhost:5173)"]
-            React["Vite + React + TypeScript"]
-        end
-
         subgraph BE["Backend (localhost:8000)"]
             FastAPI["FastAPI + Uvicorn"]
             Scheduler["APScheduler<br/>(Background Jobs)"]
@@ -1451,7 +1361,6 @@ graph TB
             GH["GitHub"]
         end
 
-        React --> FastAPI
         FastAPI --> LG
         FastAPI --> RG
         FastAPI --> LDB
@@ -1464,7 +1373,7 @@ graph TB
     LG --> OpenAI
 ```
 
-### 12.2 File System Layout
+### 11.2 File System Layout
 
 ```
 ~/.memora/
@@ -1482,7 +1391,7 @@ graph TB
 └── logs/                    # Application logs
 ```
 
-### 12.3 Infrastructure Cost
+### 11.3 Infrastructure Cost
 
 | Component | Cost | Notes |
 |---|---|---|
@@ -1496,30 +1405,10 @@ graph TB
 
 ---
 
-## 13. Project Structure
+## 12. Project Structure
 
 ```
 memora/
-├── frontend/                          # Vite + React + TypeScript
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── capture/               # Capture input components
-│   │   │   ├── graph/                 # Sigma.js graph components
-│   │   │   ├── network/               # Network dashboard
-│   │   │   ├── briefing/              # Daily briefing view
-│   │   │   ├── proposals/             # Review queue
-│   │   │   ├── council/               # Chat interface
-│   │   │   └── common/                # Shared UI components
-│   │   ├── views/                     # Page-level components
-│   │   ├── stores/                    # Zustand state slices
-│   │   ├── lib/                       # Utilities, API client, types
-│   │   └── hooks/                     # Custom React hooks
-│   ├── public/
-│   ├── index.html
-│   ├── vite.config.ts
-│   ├── tailwind.config.ts
-│   └── package.json
-│
 ├── backend/
 │   ├── memora/
 │   │   ├── api/                       # FastAPI application
@@ -1612,9 +1501,9 @@ memora/
 
 ---
 
-## 14. Implementation Roadmap
+## 13. Implementation Roadmap
 
-### 14.1 Phase 0–1: Foundation (Weeks 1–5)
+### 13.1 Phase 0–1: Foundation (Weeks 1–5)
 
 **Scope:** Core graph, extraction pipeline, fact verification
 
@@ -1627,7 +1516,7 @@ memora/
 
 **Milestone:** Text capture → Archivist extraction → graph proposal → review → commit working end-to-end.
 
-### 14.2 Phase 2: Intelligence (Weeks 6–9)
+### 13.2 Phase 2: Intelligence (Weeks 6–9)
 
 **Scope:** Cross-network analysis, internet research, briefings
 
@@ -1640,20 +1529,7 @@ memora/
 
 **Milestone:** Full AI Council operational, daily briefing generated, cross-network bridges discovered.
 
-### 14.3 Phase 3: Frontend (Weeks 10–16)
-
-**Scope:** Capture, review, graph viz, network dashboard
-
-| Week | Deliverables |
-|---|---|
-| W10–11 | Capture UI (text), proposal review digest, basic graph visualization (Sigma.js local neighborhood) |
-| W12–13 | Network dashboard (7 networks + health), council chat with streaming (WebSocket), daily briefing view |
-| W14–15 | Command palette (Cmd+K), keyboard-first UX, node detail view, search integration |
-| W16 | Integration testing, performance optimization, gap detection UI, polish |
-
-**Milestone:** Complete web MVP functional.
-
-### 14.4 Gantt Chart
+### 13.3 Gantt Chart
 
 ```mermaid
 gantt
@@ -1673,18 +1549,11 @@ gantt
     Council Pattern + Bridge Discovery      :b3, after b2, 7d
     Health Scoring + Background Jobs        :b4, after b3, 7d
 
-    section Phase 3: Frontend
-    Capture UI + Review Digest + Graph Viz  :c1, after b4, 14d
-    Network Dashboard + Council Chat        :c2, after c1, 14d
-    Command Palette + Polish                :c3, after c2, 14d
-    Integration Testing                     :c4, after c3, 7d
 ```
-
-**Explicitly out of MVP scope:** Mobile app, spatial canvas, timeline view, 3D graph, multi-user, Obsidian import. Full build with these = 40–52 weeks solo.
 
 ---
 
-## 15. Success Metrics
+## 14. Success Metrics
 
 | Metric | Target | Why It Matters |
 |---|---|---|
@@ -1698,7 +1567,7 @@ gantt
 
 ---
 
-## 16. Risk Assessment
+## 15. Risk Assessment
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
@@ -1711,7 +1580,7 @@ gantt
 
 ---
 
-## 17. Open Questions & Decisions
+## 16. Open Questions & Decisions
 
 1. **Auto-approve threshold tuning** — How aggressive should the default 0.85 threshold be? Need to learn from user correction patterns over time. Should the threshold be per-network or global?
 

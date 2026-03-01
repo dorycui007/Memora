@@ -1,1 +1,0 @@
-export { CaptureBar } from "./CaptureBar";

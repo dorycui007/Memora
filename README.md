@@ -112,7 +112,7 @@ Memora proposes, you decide:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  PRESENTATION    React + TypeScript + Sigma.js + TipTap         │
+│  INTERFACE       CLI (Rich) + REST API                          │
 ├─────────────────────────────────────────────────────────────────┤
 │  API             FastAPI + WebSocket streaming                  │
 ├─────────────────────────────────────────────────────────────────┤
@@ -176,7 +176,6 @@ Text input
 
 | Layer | Technologies |
 |---|---|
-| **Frontend** | React 19, TypeScript, Vite, Sigma.js, TipTap, Tailwind CSS, Zustand |
 | **Backend** | Python 3.12+, FastAPI, Uvicorn, Pydantic v2, LangGraph |
 | **AI** | OpenAI Responses API (GPT-5-nano with json_schema mode) |
 | **Storage** | DuckDB (graph + proposals + health snapshots), LanceDB (vector embeddings) |
@@ -190,19 +189,6 @@ Text input
 
 ```
 memora/
-├── frontend/                 # React + TypeScript web app
-│   └── src/
-│       ├── components/
-│       │   ├── capture/      # CaptureBar (TipTap text input)
-│       │   ├── graph/        # GraphCanvas (Sigma.js), NodeDetailPanel, controls
-│       │   ├── network/      # NetworkGrid, NetworkCard, NetworkDetail
-│       │   ├── council/      # CouncilChat, AgentResponse, streaming
-│       │   ├── proposals/    # ReviewQueue, ProposalCard, ProposalDetail
-│       │   ├── briefing/     # BriefingView, AlertCard, BridgeCard
-│       │   └── common/       # CommandPalette, Layout, EmptyState, errors
-│       ├── stores/           # Zustand (graph, capture, council, network, notification)
-│       └── lib/              # API client, utilities
-│
 ├── backend/
 │   ├── memora/
 │   │   ├── agents/           # Archivist, Strategist, Researcher, Orchestrator
@@ -226,7 +212,7 @@ memora/
 │
 ├── architecture.md           # Full system architecture document
 ├── lecture.md                # Architecture lecture (CSC148 context)
-├── docker-compose.yml        # Docker setup (backend + frontend)
+├── docker-compose.yml        # Docker setup (backend)
 ├── Makefile
 └── .env.example              # Environment template
 ```
@@ -238,7 +224,6 @@ memora/
 ### Prerequisites
 
 - Python 3.12+
-- Node.js 18+
 - An OpenAI API key
 
 ### Setup
@@ -252,10 +237,6 @@ cd memora
 cd backend
 pip install -r requirements.txt
 cp ../.env.example ../.env    # Add your OPENAI_API_KEY
-
-# Frontend
-cd ../frontend
-npm install
 ```
 
 ### Run
@@ -265,24 +246,19 @@ npm install
 docker compose up
 ```
 
-**Option 2: Manual**
+**Option 2: Backend API**
 ```bash
-# Terminal 1 — Backend
 cd backend
 uvicorn memora.api.app:app --reload
-
-# Terminal 2 — Frontend
-cd frontend
-npm run dev
 ```
 
-**Option 3: CLI only (no frontend needed)**
+**Option 3: CLI**
 ```bash
 cd backend
 python cli.py
 ```
 
-The web app runs at `http://localhost:5173`, API at `http://localhost:8000`.
+API runs at `http://localhost:8000`.
 
 ### Configuration
 
@@ -325,7 +301,6 @@ Memora auto-creates `~/.memora/` on first run with a default `config.yaml`. Key 
 - Orchestrator: query routing works, multi-agent deliberation incomplete
 - Researcher agent: query anonymization works, MCP tool integrations scaffolded but not yet connected
 - Truth Layer: fact storage and lifecycle tracking work, contradiction detection not yet implemented
-- Frontend: components exist for all views (graph, capture, council, network, proposals, briefing, command palette) but integration is ongoing
 
 ---
 
