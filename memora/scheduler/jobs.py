@@ -19,18 +19,9 @@ def _elapsed(start: float) -> str:
 
 
 def _get_notification_manager(repo):
-    """Build a NotificationManager from the repo's DuckDB connection.
-
-    Attempts to hook up the global SSE manager for real-time push.
-    """
+    """Build a NotificationManager from the repo's DuckDB connection."""
     from memora.core.notifications import NotificationManager
-    sse = None
-    try:
-        from memora.api.websocket import sse_manager
-        sse = sse_manager
-    except Exception:
-        pass
-    return NotificationManager(repo._conn, sse_manager=sse)
+    return NotificationManager(repo.get_truth_layer_conn())
 
 
 # ── Decay Scoring ────────────────────────────────────────────────────
@@ -376,8 +367,8 @@ async def run_daily_briefing(
 ) -> None:
     """Generate a daily briefing summary using the Strategist agent.
 
-    Gathers data from all background systems and invokes the Strategist
-    to produce a structured daily briefing. Falls back to a notification
+    Uses BriefingCollector to gather data from all sources with time-windowing,
+    then invokes the Strategist for synthesis. Falls back to a notification
     summary if the Strategist is not available.
     """
     start = time.time()
@@ -385,24 +376,11 @@ async def run_daily_briefing(
     try:
         nm = _get_notification_manager(repo)
 
-        # Gather briefing input data
-        health_scores = repo.get_latest_health_scores()
+        from memora.core.briefing import BriefingCollector, get_last_briefing_time
 
-        try:
-            from memora.core.commitment_scan import CommitmentScanner
-            commitments = CommitmentScanner(repo).scan()
-        except Exception:
-            commitments = {}
-
-        bridges = repo.get_recent_bridges(limit=10)
-
-        try:
-            from memora.core.spaced_repetition import SpacedRepetition
-            review_items = SpacedRepetition(repo).get_review_queue()
-        except Exception:
-            review_items = []
-
-        alerts = list(commitments.get("overdue", []))
+        since = get_last_briefing_time(repo)
+        collector = BriefingCollector(repo, truth_layer=truth_layer)
+        briefing_data = collector.collect(since=since)
 
         # Try to use the Strategist agent for a rich briefing
         api_key = getattr(settings, "openai_api_key", None) if settings else None
@@ -420,20 +398,22 @@ async def run_daily_briefing(
                     embedding_engine=embedding_engine,
                     truth_layer=truth_layer,
                 )
-                briefing = await strategist.generate_briefing(
-                    health_scores=health_scores,
-                    alerts=alerts,
-                    bridges=bridges,
-                    commitments=commitments,
-                    review_items=review_items,
-                )
+                briefing = await strategist.generate_briefing(briefing_data)
                 summary = briefing.summary or "Daily briefing generated."
-                if briefing.sections:
-                    section_summaries = [
-                        f"- {s.title} ({len(s.items)} items, {s.priority})"
-                        for s in briefing.sections
-                    ]
-                    summary += "\n" + "\n".join(section_summaries)
+
+                section_counts = []
+                for label, items in [
+                    ("urgent", briefing.urgent),
+                    ("upcoming", briefing.upcoming),
+                    ("people", briefing.people_followup),
+                    ("wins", briefing.wins),
+                    ("stalled", briefing.stalled_attention),
+                    ("review", briefing.review_items),
+                ]:
+                    if items:
+                        section_counts.append(f"- {label}: {len(items)} item(s)")
+                if section_counts:
+                    summary += "\n" + "\n".join(section_counts)
 
                 nm.create_notification(
                     type="daily_briefing",
@@ -466,3 +446,78 @@ async def run_daily_briefing(
         logger.info("Job [daily_briefing] completed in %s (fallback)", _elapsed(start))
     except Exception:
         logger.error("Job [daily_briefing] failed after %s", _elapsed(start), exc_info=True)
+
+
+# ── Outcome Review ──────────────────────────────────────────────────
+
+async def run_outcome_review(repo) -> None:
+    """Scan for decisions/goals needing outcome recording and create notifications."""
+    start = time.time()
+    logger.info("Job [outcome_review] started")
+    try:
+        from memora.core.outcomes import OutcomeTracker
+
+        tracker = OutcomeTracker(repo)
+        pending = tracker.get_pending_outcomes(days_threshold=14)
+
+        if pending:
+            nm = _get_notification_manager(repo)
+            prompts = tracker.generate_outcome_prompts(limit=5)
+            prompt_lines = [f"- {p['prompt']}" for p in prompts]
+            message = (
+                f"{len(pending)} decision(s)/goal(s) need outcome recording:\n"
+                + "\n".join(prompt_lines[:5])
+            )
+            nm.create_notification(
+                type="OUTCOME_DUE",
+                message=message,
+                priority="medium",
+                trigger_condition="outcome_review",
+            )
+
+        logger.info(
+            "Job [outcome_review] completed in %s — %d pending outcomes",
+            _elapsed(start),
+            len(pending),
+        )
+    except Exception:
+        logger.error("Job [outcome_review] failed after %s", _elapsed(start), exc_info=True)
+
+
+# ── Pattern Detection ───────────────────────────────────────────────
+
+async def run_pattern_detection(repo) -> None:
+    """Run all pattern detectors and store results."""
+    start = time.time()
+    logger.info("Job [pattern_detection] started")
+    try:
+        from memora.core.patterns import PatternEngine
+
+        engine = PatternEngine(repo)
+        patterns = engine.detect_all()
+
+        if patterns:
+            stored = engine.store_patterns(patterns)
+
+            nm = _get_notification_manager(repo)
+            significant = [p for p in patterns if p.get("confidence", 0) >= 0.6]
+            if significant:
+                descriptions = [p["description"] for p in significant[:3]]
+                nm.create_notification(
+                    type="PATTERN_DETECTED",
+                    message=(
+                        f"Detected {len(patterns)} pattern(s), "
+                        f"{len(significant)} significant:\n"
+                        + "\n".join(f"- {d}" for d in descriptions)
+                    ),
+                    priority="low",
+                    trigger_condition="pattern_detection",
+                )
+
+        logger.info(
+            "Job [pattern_detection] completed in %s — %d patterns detected",
+            _elapsed(start),
+            len(patterns),
+        )
+    except Exception:
+        logger.error("Job [pattern_detection] failed after %s", _elapsed(start), exc_info=True)

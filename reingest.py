@@ -163,6 +163,7 @@ def main():
     print(f"  Types: {stats.get('type_breakdown', {})}")
     print()
 
+    vector_store.close()
     repo.close()
 
 

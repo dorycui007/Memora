@@ -1,24 +1,32 @@
-"""Tests for vector store — LanceDB embedding upsert and search."""
+"""Tests for vector store — Weaviate embedding upsert and search."""
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
-from memora.vector.store import VectorStore, SearchResult
+from memora.vector.store import VectorStore, SearchResult, EMBEDDING_DIM, COLLECTION_NAME
 
 
-@pytest.fixture
-def vector_store(tmp_path: Path) -> VectorStore:
-    return VectorStore(db_path=tmp_path / "test_vectors")
+@pytest.fixture(scope="module")
+def vector_store(tmp_path_factory) -> VectorStore:
+    db_path = tmp_path_factory.mktemp("vectors") / "test_weaviate"
+    vs = VectorStore(db_path=db_path)
+    yield vs
+    vs.close()
+
+
+@pytest.fixture(autouse=True)
+def _clear_collection(vector_store: VectorStore):
+    """Delete and recreate collection between tests to ensure isolation."""
+    yield
+    vector_store._client.collections.delete(COLLECTION_NAME)
+    vector_store._ensure_collection()
 
 
 def _fake_vector(seed: float = 0.0) -> list[float]:
-    """Generate a deterministic 1024-dim vector for testing."""
+    """Generate a deterministic EMBEDDING_DIM vector for testing."""
     import math
-    return [math.sin(seed + i * 0.01) for i in range(1024)]
+    return [math.sin(seed + i * 0.01) for i in range(EMBEDDING_DIM)]
 
 
 class TestVectorStoreUpsert:
@@ -30,8 +38,7 @@ class TestVectorStoreUpsert:
             networks=["SOCIAL"],
             vector=_fake_vector(1.0),
         )
-        # Should have 1 row
-        count = vector_store._table.count_rows()
+        count = vector_store._collection.aggregate.over_all(total_count=True).total_count
         assert count == 1
 
     def test_upsert_replaces_existing(self, vector_store: VectorStore):
@@ -49,7 +56,7 @@ class TestVectorStoreUpsert:
             networks=["SOCIAL", "PROFESSIONAL"],
             vector=_fake_vector(2.0),
         )
-        count = vector_store._table.count_rows()
+        count = vector_store._collection.aggregate.over_all(total_count=True).total_count
         assert count == 1
 
     def test_delete_embedding(self, vector_store: VectorStore):
@@ -61,7 +68,7 @@ class TestVectorStoreUpsert:
             vector=_fake_vector(1.0),
         )
         vector_store.delete_embedding("node-1")
-        count = vector_store._table.count_rows()
+        count = vector_store._collection.aggregate.over_all(total_count=True).total_count
         assert count == 0
 
 
@@ -84,13 +91,11 @@ class TestVectorStoreSearch:
 
     def test_dense_search_similarity_order(self, vector_store: VectorStore):
         self._populate(vector_store)
-        # Query close to person vectors (seed 1.0-1.1)
         results = vector_store.dense_search(
             query_vector=_fake_vector(1.0),
             top_k=4,
         )
         assert len(results) >= 2
-        # Scores should be descending
         scores = [r.score for r in results]
         assert scores == sorted(scores, reverse=True)
 

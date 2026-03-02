@@ -112,9 +112,7 @@ Memora proposes, you decide:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  INTERFACE       CLI (Rich) + REST API                          │
-├─────────────────────────────────────────────────────────────────┤
-│  API             FastAPI + WebSocket streaming                  │
+│  INTERFACE       CLI (Rich)                                     │
 ├─────────────────────────────────────────────────────────────────┤
 │  INTELLIGENCE    Archivist + Strategist + Researcher agents     │
 │                  LangGraph Orchestrator + OpenAI API (BYOK)     │
@@ -176,7 +174,7 @@ Text input
 
 | Layer | Technologies |
 |---|---|
-| **Backend** | Python 3.12+, FastAPI, Uvicorn, Pydantic v2, LangGraph |
+| **Backend** | Python 3.12+, Pydantic v2, LangGraph |
 | **AI** | OpenAI Responses API (GPT-5-nano with json_schema mode) |
 | **Storage** | DuckDB (graph + proposals + health snapshots), LanceDB (vector embeddings) |
 | **Embeddings** | all-mpnet-base-v2 via sentence-transformers (768-dim, runs locally) |
@@ -192,10 +190,6 @@ memora/
 ├── memora/
 │   ├── agents/           # Archivist, Strategist, Researcher, Orchestrator
 │   │   └── prompts/      # System prompt templates (.md files)
-│   ├── api/
-│   │   ├── routes/       # captures, graph, proposals, council, facts, networks
-│   │   ├── schemas/      # Pydantic request/response models
-│   │   └── websocket.py  # WebSocket streaming handler
 │   ├── core/             # Pipeline, entity resolution, decay, bridges,
 │   │                     # health scoring, SM-2, truth layer, gap detection,
 │   │                     # commitment scan, relationship decay, notifications
@@ -238,22 +232,10 @@ cp .env.example .env          # Add your OPENAI_API_KEY
 
 ### Run
 
-**Option 1: Docker**
-```bash
-docker compose up
-```
-
-**Option 2: Backend API**
-```bash
-uvicorn memora.api.app:app --reload
-```
-
-**Option 3: CLI**
+**Option 1: CLI**
 ```bash
 python cli.py
 ```
-
-API runs at `http://localhost:8000`.
 
 ### Configuration
 
@@ -287,8 +269,6 @@ Memora auto-creates `~/.memora/` on first run with a default `config.yaml`. Key 
 - Gap detection (orphaned nodes, stalled goals)
 - Relationship decay tracking
 - Rich CLI with full capture, browse, review, and dashboard flows
-- REST API with 6 route groups (captures, graph, proposals, council, facts, networks)
-- WebSocket streaming for council queries
 - 20 test files (15 unit + 5 integration)
 
 **In progress:**

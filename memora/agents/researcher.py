@@ -135,6 +135,14 @@ class ResearcherAgent:
         # Execute MCP tool searches with anonymized query
         tool_results = self._execute_tool_searches(anonymized)
 
+        if not tool_results:
+            return ResearchResult(
+                answer="No external search results available for this query. "
+                       "This may be better answered using internal graph data.",
+                confidence=0.0,
+                anonymized_query=anonymized,
+            )
+
         context_text = ""
         if graph_context:
             context_text = f"\n\nGraph context (anonymized):\n{json.dumps(self._anonymize_context(graph_context), indent=2, default=str)}"

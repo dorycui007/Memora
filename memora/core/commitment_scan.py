@@ -7,7 +7,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from memora.graph.models import CommitmentStatus, NodeType
 from memora.graph.repository import GraphRepository
 
 logger = logging.getLogger(__name__)
@@ -63,22 +62,13 @@ class CommitmentScanner:
     def _get_open_commitments(self) -> list[dict[str, Any]]:
         """Query all COMMITMENT nodes with status=open."""
         try:
-            rows = self._repo._conn.execute(
-                """SELECT id, title, content, properties, networks, created_at
-                   FROM nodes
-                   WHERE deleted = FALSE
-                     AND node_type = ?
-                     AND json_extract_string(properties, '$.status') = ?""",
-                [NodeType.COMMITMENT.value, CommitmentStatus.OPEN.value],
-            ).fetchall()
+            rows = self._repo.get_open_commitments_detailed()
         except Exception:
             logger.warning("Failed to fetch open commitments", exc_info=True)
             return []
 
-        cols = ["id", "title", "content", "properties", "networks", "created_at"]
         results: list[dict[str, Any]] = []
-        for row in rows:
-            d = dict(zip(cols, row))
+        for d in rows:
             # Parse properties JSON if it's a string
             if isinstance(d["properties"], str):
                 try:

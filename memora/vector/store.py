@@ -1,4 +1,4 @@
-"""LanceDB vector store for semantic search over graph nodes.
+"""Weaviate vector store for semantic search over graph nodes.
 
 Provides upsert, delete, and multi-mode search (dense, hybrid, filtered).
 """
@@ -6,26 +6,24 @@ Provides upsert, delete, and multi-mode search (dense, hybrid, filtered).
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import lancedb
-import pyarrow as pa
+import weaviate
+from weaviate.classes.config import Configure, DataType, Property
+from weaviate.classes.query import Filter, MetadataQuery
+from weaviate.util import generate_uuid5
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_DIM = 768
+# Suppress noisy Weaviate client logs
+logging.getLogger("weaviate").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# PyArrow schema for the embeddings table
-EMBEDDINGS_SCHEMA = pa.schema([
-    pa.field("node_id", pa.string()),
-    pa.field("content", pa.string()),
-    pa.field("node_type", pa.string()),
-    pa.field("networks", pa.list_(pa.string())),
-    pa.field("dense", pa.list_(pa.float32(), EMBEDDING_DIM)),
-    pa.field("created_at", pa.string()),
-])
+EMBEDDING_DIM = 768
+COLLECTION_NAME = "NodeEmbeddings"
 
 
 class SearchResult:
@@ -50,46 +48,51 @@ class SearchResult:
 
 
 class VectorStore:
-    """LanceDB-backed vector store for node embeddings."""
+    """Weaviate-backed vector store for node embeddings."""
 
-    def __init__(self, db_path: str | Path) -> None:
+    def __init__(
+        self,
+        db_path: str | Path,
+        port: int = 8079,
+        grpc_port: int = 50050,
+    ) -> None:
         self._db_path = str(db_path)
-        self._db = lancedb.connect(self._db_path)
-        self._table_name = "node_embeddings"
-        self._table = None
-        self._ensure_table()
+        self._client = weaviate.connect_to_embedded(
+            persistence_data_path=self._db_path,
+            port=port,
+            grpc_port=grpc_port,
+            environment_variables={"LOG_LEVEL": "error"},
+        )
+        self._collection = None
+        self._ensure_collection()
 
-    def _ensure_table(self) -> None:
-        """Create the embeddings table if it doesn't exist."""
-        try:
-            self._table = self._db.open_table(self._table_name)
-            logger.debug("Opened existing embeddings table")
-        except Exception:
-            # Create with empty data matching schema
-            self._table = self._db.create_table(
-                self._table_name,
-                schema=EMBEDDINGS_SCHEMA,
+    def _ensure_collection(self) -> None:
+        """Create the embeddings collection if it doesn't exist."""
+        if self._client.collections.exists(COLLECTION_NAME):
+            self._collection = self._client.collections.get(COLLECTION_NAME)
+            logger.debug("Opened existing embeddings collection")
+        else:
+            self._collection = self._client.collections.create(
+                name=COLLECTION_NAME,
+                vector_config=Configure.Vectors.self_provided(),
+                properties=[
+                    Property(name="node_id", data_type=DataType.TEXT),
+                    Property(name="content", data_type=DataType.TEXT),
+                    Property(name="node_type", data_type=DataType.TEXT),
+                    Property(name="networks", data_type=DataType.TEXT_ARRAY),
+                    Property(name="created_at", data_type=DataType.TEXT),
+                ],
             )
-            logger.info("Created new embeddings table")
+            logger.info("Created new embeddings collection")
+
+    @staticmethod
+    def _node_uuid(node_id: str) -> str:
+        """Deterministic UUID from node_id for O(1) get/delete/replace."""
+        return generate_uuid5(node_id)
 
     def create_index(self) -> None:
-        """Create HNSW index for fast ANN search. Call after bulk inserts."""
-        if self._table is None:
-            return
-        try:
-            row_count = self._table.count_rows()
-            if row_count >= 256:
-                self._table.create_index(
-                    metric="cosine",
-                    num_partitions=4,
-                    num_sub_vectors=16,
-                    index_type="IVF_HNSW_SQ",
-                )
-                logger.info("Created HNSW index on %d rows", row_count)
-            else:
-                logger.debug("Skipping index creation: only %d rows (need 256+)", row_count)
-        except Exception:
-            logger.warning("Index creation failed (may already exist or insufficient data)")
+        """No-op — Weaviate auto-manages HNSW indexes."""
+        pass
 
     def upsert_embedding(
         self,
@@ -100,36 +103,45 @@ class VectorStore:
         vector: list[float],
     ) -> None:
         """Insert or update an embedding for a node."""
-        # Delete existing entry if present
-        self.delete_embedding(node_id)
-
-        record = {
+        uuid = self._node_uuid(node_id)
+        properties = {
             "node_id": node_id,
             "content": content,
             "node_type": node_type,
             "networks": networks,
-            "dense": vector,
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
-        self._table.add([record])
+        try:
+            self._collection.data.replace(
+                uuid=uuid,
+                properties=properties,
+                vector=vector,
+            )
+        except Exception:
+            # Object doesn't exist yet — insert
+            self._collection.data.insert(
+                uuid=uuid,
+                properties=properties,
+                vector=vector,
+            )
 
     def delete_embedding(self, node_id: str) -> None:
         """Delete embedding for a node."""
         try:
-            # Sanitize node_id to prevent SQL injection
-            safe_id = node_id.replace("'", "''")
-            self._table.delete(f"node_id = '{safe_id}'")
+            self._collection.data.delete_by_id(self._node_uuid(node_id))
         except Exception:
             pass  # May not exist
 
     def get_embedding(self, node_id: str) -> list[float] | None:
         """Retrieve the dense vector for a node. Returns None if not found."""
         try:
-            safe_id = node_id.replace("'", "''")
-            df = self._table.search().where(f"node_id = '{safe_id}'").limit(1).to_pandas()
-            if df.empty:
+            obj = self._collection.query.fetch_object_by_id(
+                self._node_uuid(node_id),
+                include_vector=True,
+            )
+            if obj is None:
                 return None
-            return df.iloc[0]["dense"].tolist()
+            return list(obj.vector["default"])
         except Exception:
             return None
 
@@ -140,31 +152,31 @@ class VectorStore:
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
         """Dense vector similarity search."""
-        query = self._table.search(query_vector, vector_column_name="dense").limit(top_k)
-
-        if filters:
-            where_parts = []
-            if "node_type" in filters:
-                safe_type = str(filters['node_type']).replace("'", "''")
-                where_parts.append(f"node_type = '{safe_type}'")
-            if where_parts:
-                query = query.where(" AND ".join(where_parts))
+        wv_filter = None
+        if filters and "node_type" in filters:
+            wv_filter = Filter.by_property("node_type").equal(filters["node_type"])
 
         try:
-            results = query.to_pandas()
+            response = self._collection.query.near_vector(
+                near_vector=query_vector,
+                limit=top_k,
+                filters=wv_filter,
+                return_metadata=MetadataQuery(distance=True),
+            )
         except Exception:
             return []
 
-        search_results = []
-        for _, row in results.iterrows():
-            search_results.append(SearchResult(
-                node_id=row["node_id"],
-                content=row["content"],
-                node_type=row["node_type"],
-                networks=row["networks"] if isinstance(row["networks"], list) else [],
-                score=1.0 - row.get("_distance", 0.0),
+        results = []
+        for obj in response.objects:
+            props = obj.properties
+            results.append(SearchResult(
+                node_id=props["node_id"],
+                content=props["content"],
+                node_type=props["node_type"],
+                networks=props.get("networks", []),
+                score=1.0 - (obj.metadata.distance or 0.0),
             ))
-        return search_results
+        return results
 
     def hybrid_search(
         self,
@@ -173,55 +185,37 @@ class VectorStore:
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
-        """Hybrid search combining dense vector + full-text (reciprocal rank fusion).
+        """Hybrid search combining dense vector + BM25 via Weaviate native fusion.
 
-        Falls back to dense-only if FTS is not available.
+        Falls back to dense-only if hybrid is not available.
         """
-        # Dense results
-        dense_results = self.dense_search(query_vector, top_k=top_k * 2, filters=filters)
+        wv_filter = None
+        if filters and "node_type" in filters:
+            wv_filter = Filter.by_property("node_type").equal(filters["node_type"])
 
-        # FTS results via LanceDB's built-in FTS if available
-        fts_results: list[SearchResult] = []
         try:
-            fts_query = (
-                self._table.search(query_text, query_type="fts")
-                .limit(top_k * 2)
+            response = self._collection.query.hybrid(
+                query=query_text,
+                vector=query_vector,
+                alpha=0.5,
+                limit=top_k,
+                filters=wv_filter,
+                return_metadata=MetadataQuery(score=True),
             )
-            fts_df = fts_query.to_pandas()
-            for _, row in fts_df.iterrows():
-                fts_results.append(SearchResult(
-                    node_id=row["node_id"],
-                    content=row["content"],
-                    node_type=row["node_type"],
-                    networks=row["networks"] if isinstance(row["networks"], list) else [],
-                    score=row.get("score", 0.5),
+            results = []
+            for obj in response.objects:
+                props = obj.properties
+                results.append(SearchResult(
+                    node_id=props["node_id"],
+                    content=props["content"],
+                    node_type=props["node_type"],
+                    networks=props.get("networks", []),
+                    score=obj.metadata.score if obj.metadata.score is not None else 0.0,
                 ))
+            return results
         except Exception:
-            pass  # FTS not available, use dense only
-
-        if not fts_results:
-            return dense_results[:top_k]
-
-        # Reciprocal rank fusion
-        k = 60  # RRF constant
-        scores: dict[str, float] = {}
-        node_map: dict[str, SearchResult] = {}
-
-        for rank, r in enumerate(dense_results):
-            scores[r.node_id] = scores.get(r.node_id, 0) + 1.0 / (k + rank + 1)
-            node_map[r.node_id] = r
-
-        for rank, r in enumerate(fts_results):
-            scores[r.node_id] = scores.get(r.node_id, 0) + 1.0 / (k + rank + 1)
-            node_map[r.node_id] = r
-
-        sorted_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:top_k]
-        results = []
-        for nid in sorted_ids:
-            sr = node_map[nid]
-            sr.score = scores[nid]
-            results.append(sr)
-        return results
+            # Fallback to dense-only
+            return self.dense_search(query_vector, top_k=top_k, filters=filters)
 
     def batch_upsert_embeddings(self, records: list[dict[str, Any]]) -> None:
         """Insert or update embeddings for multiple nodes in one call.
@@ -231,24 +225,23 @@ class VectorStore:
         if not records:
             return
 
-        # Delete existing entries (LanceDB delete() only takes filter strings)
-        for record in records:
-            self.delete_embedding(record["node_id"])
-
-        rows = []
         now = datetime.now(timezone.utc).isoformat()
-        for record in records:
-            rows.append({
-                "node_id": record["node_id"],
-                "content": record["content"],
-                "node_type": record["node_type"],
-                "networks": record["networks"],
-                "dense": record["vector"],
-                "created_at": now,
-            })
 
-        self._table.add(rows)
-        logger.info("Batch upserted %d embeddings", len(rows))
+        with self._collection.batch.dynamic() as batch:
+            for record in records:
+                uuid = self._node_uuid(record["node_id"])
+                batch.add_object(
+                    uuid=uuid,
+                    properties={
+                        "node_id": record["node_id"],
+                        "content": record["content"],
+                        "node_type": record["node_type"],
+                        "networks": record["networks"],
+                        "created_at": now,
+                    },
+                    vector=record["vector"],
+                )
+        logger.info("Batch upserted %d embeddings", len(records))
 
     def get_embeddings_batch(self, node_ids: list[str]) -> dict[str, list[float]]:
         """Retrieve dense vectors for multiple nodes. Returns {node_id: vector}."""
@@ -256,17 +249,11 @@ class VectorStore:
             return {}
 
         try:
-            # Build OR filter
-            conditions = []
-            for nid in node_ids:
-                safe_id = nid.replace("'", "''")
-                conditions.append(f"node_id = '{safe_id}'")
-            where_clause = " OR ".join(conditions)
-
-            df = self._table.search().where(where_clause).limit(len(node_ids)).to_pandas()
             result: dict[str, list[float]] = {}
-            for _, row in df.iterrows():
-                result[row["node_id"]] = row["dense"].tolist()
+            for nid in node_ids:
+                vec = self.get_embedding(nid)
+                if vec is not None:
+                    result[nid] = vec
             return result
         except Exception:
             logger.warning("Batch embedding retrieval failed", exc_info=True)
@@ -284,3 +271,10 @@ class VectorStore:
         if node_type:
             filters["node_type"] = node_type
         return self.dense_search(query_vector, top_k=top_k, filters=filters)
+
+    def close(self) -> None:
+        """Close the Weaviate client and embedded subprocess."""
+        try:
+            self._client.close()
+        except Exception:
+            pass

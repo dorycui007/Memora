@@ -178,6 +178,47 @@ class ProposalRoute(str, Enum):
     EXPLICIT = "explicit"
 
 
+class ActionType(str, Enum):
+    COMPLETE_COMMITMENT = "COMPLETE_COMMITMENT"
+    PROMOTE_IDEA = "PROMOTE_IDEA"
+    ARCHIVE_GOAL = "ARCHIVE_GOAL"
+    ADVANCE_GOAL = "ADVANCE_GOAL"
+    RECORD_OUTCOME = "RECORD_OUTCOME"
+    LINK_ENTITIES = "LINK_ENTITIES"
+
+
+class ActionStatus(str, Enum):
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class OutcomeRating(str, Enum):
+    POSITIVE = "positive"
+    NEUTRAL = "neutral"
+    NEGATIVE = "negative"
+    MIXED = "mixed"
+
+
+class PatternType(str, Enum):
+    COMMITMENT_PATTERN = "commitment_pattern"
+    GOAL_LIFECYCLE = "goal_lifecycle"
+    TEMPORAL_PATTERN = "temporal_pattern"
+    CROSS_NETWORK = "cross_network"
+    RELATIONSHIP_PATTERN = "relationship_pattern"
+    DECISION_QUALITY = "decision_quality"
+    GOAL_ALIGNMENT = "goal_alignment"
+    COMMITMENT_SCOPE = "commitment_scope"
+    IDEA_MATURITY = "idea_maturity"
+    NETWORK_BALANCE = "network_balance"
+    OUTCOME_PATTERN = "outcome_pattern"
+
+
+class PatternSeverity(str, Enum):
+    INFO = "info"
+    WARNING = "warning"
+    CRITICAL = "critical"
+
+
 # ============================================================
 # Node Models
 # ============================================================
@@ -510,3 +551,52 @@ class Subgraph(BaseModel):
 
     nodes: list[BaseNode] = Field(default_factory=list)
     edges: list[Edge] = Field(default_factory=list)
+
+
+# ============================================================
+# Action, Outcome, and Pattern Models
+# ============================================================
+
+
+class ActionRecord(BaseModel):
+    """A recorded graph action (kinetic operation)."""
+
+    id: UUID = Field(default_factory=uuid4)
+    action_type: ActionType
+    status: ActionStatus = ActionStatus.COMPLETED
+    source_node_id: str | None = None
+    target_node_id: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    executed_at: datetime = Field(default_factory=_utcnow)
+
+
+class Outcome(BaseModel):
+    """An outcome recorded for a decision, goal, or commitment."""
+
+    id: UUID = Field(default_factory=uuid4)
+    node_id: str
+    node_type: str
+    outcome_text: str
+    rating: OutcomeRating
+    evidence: list[str] = Field(default_factory=list)
+    recorded_at: datetime = Field(default_factory=_utcnow)
+
+
+class Pattern(BaseModel):
+    """A detected behavioral pattern."""
+
+    id: UUID = Field(default_factory=uuid4)
+    pattern_type: PatternType
+    description: str
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    severity: PatternSeverity = PatternSeverity.INFO
+    suggested_action: str = ""
+    networks: list[str] = Field(default_factory=list)
+    first_detected: datetime = Field(default_factory=_utcnow)
+    last_confirmed: datetime = Field(default_factory=_utcnow)
+    status: str = "active"
+    previous_value: float | None = None
+    current_value: float | None = None
+    created_at: datetime = Field(default_factory=_utcnow)

@@ -56,15 +56,24 @@ CREATE TABLE IF NOT EXISTS fact_checks (
     checked_by      VARCHAR,
     checked_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX IF NOT EXISTS idx_facts_node ON verified_facts(node_id);
+CREATE INDEX IF NOT EXISTS idx_facts_status ON verified_facts(status);
 """
 
 
 class TruthLayer:
     """Manages verified facts with lifecycle tracking and contradiction detection."""
 
-    def __init__(self, conn) -> None:
-        """Initialize with a DuckDB connection (from GraphRepository._conn)."""
+    def __init__(self, conn, embedding_engine=None) -> None:
+        """Initialize with a DuckDB connection (from GraphRepository._conn).
+
+        Args:
+            conn: DuckDB connection.
+            embedding_engine: Optional EmbeddingEngine for semantic contradiction detection.
+        """
         self._conn = conn
+        self._embedding_engine = embedding_engine
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -173,6 +182,9 @@ class TruthLayer:
         ).fetchall()
         return [self._row_to_fact(row) for row in rows]
 
+    # Semantic similarity above this threshold flags a potential contradiction
+    CONTRADICTION_SIMILARITY_THRESHOLD = 0.75
+
     def check_contradiction(
         self,
         statement: str,
@@ -180,22 +192,74 @@ class TruthLayer:
     ) -> list[dict[str, Any]]:
         """Find existing active facts for the same node that might contradict.
 
-        Uses keyword overlap heuristic. LLM-powered contradiction detection
-        is planned for Phase 4.
+        Uses embedding cosine similarity when an embedding engine is available,
+        falling back to keyword overlap heuristic.
         """
         existing = self.query_facts(node_id=node_id, status=FactStatus.ACTIVE.value)
         if not existing:
             return []
 
-        # Tokenize the new statement
+        # Identical statement is not a contradiction
+        existing = [f for f in existing if f["statement"].lower() != statement.lower()]
+        if not existing:
+            return []
+
+        # Try semantic similarity first
+        if self._embedding_engine:
+            return self._check_contradiction_semantic(statement, existing)
+
+        # Fallback: keyword overlap heuristic
+        return self._check_contradiction_keyword(statement, existing)
+
+    def _check_contradiction_semantic(
+        self,
+        statement: str,
+        existing: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Use embedding cosine similarity to detect potential contradictions.
+
+        High semantic similarity + different statement text suggests the new
+        fact is about the same topic but says something different.
+        """
+        try:
+            from memora.vector.embeddings import cosine_similarity
+
+            texts = [statement] + [f["statement"] for f in existing]
+            embeddings = self._embedding_engine.embed_batch(texts)
+
+            new_vec = embeddings[0]["dense"]
+            contradictions = []
+
+            for i, fact in enumerate(existing):
+                fact_vec = embeddings[i + 1]["dense"]
+                sim = cosine_similarity(new_vec, fact_vec)
+
+                if sim >= self.CONTRADICTION_SIMILARITY_THRESHOLD:
+                    contradictions.append(fact)
+
+            return contradictions
+        except Exception:
+            logger.warning("Semantic contradiction check failed, falling back to keyword", exc_info=True)
+            return self._check_contradiction_keyword(statement, existing)
+
+    def _check_contradiction_keyword(
+        self,
+        statement: str,
+        existing: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Keyword overlap heuristic for contradiction detection."""
         new_words = set(statement.lower().split())
+        # Filter out very common words to reduce false positives
+        stopwords = {"i", "the", "a", "an", "is", "was", "to", "and", "of", "in", "my", "for", "it", "on", "at"}
+        new_words -= stopwords
         contradictions = []
 
         for fact in existing:
-            existing_words = set(fact["statement"].lower().split())
+            existing_words = set(fact["statement"].lower().split()) - stopwords
             overlap = new_words & existing_words
-            # High word overlap but different statement suggests potential contradiction
-            if len(overlap) >= 3 and fact["statement"].lower() != statement.lower():
+            # Require significant overlap relative to the shorter statement
+            min_len = min(len(new_words), len(existing_words))
+            if min_len > 0 and len(overlap) >= max(3, min_len * 0.5):
                 contradictions.append(fact)
 
         return contradictions

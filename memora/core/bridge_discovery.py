@@ -83,17 +83,25 @@ class BridgeDiscovery:
             target_network = sorted(target_networks)[0]
 
             # Check if bridge already exists
-            if self._bridge_exists(str(node.id), result.node_id):
+            try:
+                if self._repo.bridge_exists(str(node.id), result.node_id):
+                    continue
+            except Exception:
                 continue
 
             bridge = {
+                "id": str(uuid4()),
                 "source_node_id": str(node.id),
                 "target_node_id": result.node_id,
                 "source_network": source_network,
                 "target_network": target_network,
                 "similarity": result.score,
+                "discovered_at": datetime.now(timezone.utc).isoformat(),
             }
-            self._store_bridge(bridge)
+            try:
+                self._repo.store_bridge(bridge)
+            except Exception:
+                logger.warning("Failed to store bridge", exc_info=True)
             bridges.append(bridge)
 
         if bridges:
@@ -103,44 +111,6 @@ class BridgeDiscovery:
 
         return bridges
 
-    def _bridge_exists(self, source_id: str, target_id: str) -> bool:
-        """Check if a bridge between these two nodes already exists."""
-        try:
-            count = self._repo._conn.execute(
-                """SELECT COUNT(*) FROM bridges
-                   WHERE (source_node_id = ? AND target_node_id = ?)
-                   OR (source_node_id = ? AND target_node_id = ?)""",
-                [source_id, target_id, target_id, source_id],
-            ).fetchone()[0]
-            return count > 0
-        except Exception:
-            return False
-
-    def _store_bridge(self, bridge: dict[str, Any]) -> None:
-        """Store a discovered bridge in the bridges table."""
-        try:
-            self._repo._conn.execute(
-                """INSERT INTO bridges
-                   (id, source_node_id, target_node_id, source_network,
-                    target_network, similarity, llm_validated, meaningful,
-                    description, discovered_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    str(uuid4()),
-                    bridge["source_node_id"],
-                    bridge["target_node_id"],
-                    bridge["source_network"],
-                    bridge["target_network"],
-                    bridge["similarity"],
-                    False,
-                    None,
-                    None,
-                    datetime.now(timezone.utc).isoformat(),
-                ],
-            )
-        except Exception:
-            logger.warning("Failed to store bridge", exc_info=True)
-
     def get_bridges(
         self,
         network: str | None = None,
@@ -148,29 +118,8 @@ class BridgeDiscovery:
         limit: int = 50,
     ) -> list[dict[str, Any]]:
         """Query discovered bridges."""
-        conditions = []
-        params: list[Any] = []
-
-        if network:
-            conditions.append("(source_network = ? OR target_network = ?)")
-            params.extend([network, network])
-
-        if validated_only:
-            conditions.append("llm_validated = TRUE AND meaningful = TRUE")
-
-        where = " AND ".join(conditions) if conditions else "1=1"
-        rows = self._repo._conn.execute(
-            f"""SELECT id, source_node_id, target_node_id, source_network,
-                       target_network, similarity, llm_validated, meaningful,
-                       description, discovered_at
-                FROM bridges WHERE {where}
-                ORDER BY similarity DESC LIMIT ?""",
-            params + [limit],
-        ).fetchall()
-
-        cols = [
-            "id", "source_node_id", "target_node_id", "source_network",
-            "target_network", "similarity", "llm_validated", "meaningful",
-            "description", "discovered_at",
-        ]
-        return [dict(zip(cols, row)) for row in rows]
+        return self._repo.query_bridges(
+            network=network,
+            validated_only=validated_only,
+            limit=limit,
+        )

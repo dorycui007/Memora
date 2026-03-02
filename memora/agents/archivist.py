@@ -173,12 +173,19 @@ class ArchivistAgent:
         prompt = prompt.replace("{{YOU_NODE_ID}}", self._you_node_id or "")
         return prompt
 
-    async def extract(self, text: str, capture_id: str) -> ArchivistResult:
+    async def extract(
+        self,
+        text: str,
+        capture_id: str,
+        metadata: dict | None = None,
+    ) -> ArchivistResult:
         """Run extraction: RAG context -> LLM call -> parse -> validate.
 
         Args:
-            text: The preprocessed capture text.
+            text: The raw capture text (not mutated by preprocessing).
             capture_id: The capture's UUID string.
+            metadata: Optional preprocessing metadata (resolved dates, currencies)
+                      to provide alongside the raw text.
 
         Returns:
             ArchivistResult with the proposal or clarification request.
@@ -200,6 +207,25 @@ class ArchivistAgent:
         system_prompt = self._get_static_system_prompt()
         dynamic_context = self._build_dynamic_context(context, capture_id)
 
+        # Build metadata hint for the LLM
+        metadata_hint = ""
+        if metadata:
+            parts = []
+            if metadata.get("resolved_dates"):
+                date_info = ", ".join(
+                    f'"{d["phrase"]}" = {d["resolved"]}'
+                    for d in metadata["resolved_dates"]
+                )
+                parts.append(f"Date references: {date_info}")
+            if metadata.get("resolved_currencies"):
+                curr_info = ", ".join(
+                    f'"{c["phrase"]}" = {c["resolved"]}'
+                    for c in metadata["resolved_currencies"]
+                )
+                parts.append(f"Currency references: {curr_info}")
+            if parts:
+                metadata_hint = "\n\nPreprocessing context:\n" + "\n".join(parts)
+
         # 4. Call OpenAI Responses API with json_schema format
         t1 = _time.perf_counter()
         try:
@@ -211,7 +237,7 @@ class ArchivistAgent:
                     f"{dynamic_context}\n\n---\n\n"
                     f"Extract knowledge graph data from this text. "
                     f"Respond with a single JSON object matching the GraphProposal schema. "
-                    f"Use capture ID: {capture_id}\n\n"
+                    f"Use capture ID: {capture_id}{metadata_hint}\n\n"
                     f"Text:\n{text}"
                 ),
                 text=_RESPONSE_FORMAT,

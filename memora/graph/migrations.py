@@ -16,11 +16,80 @@ logger = logging.getLogger(__name__)
 # Each migration is a tuple of (version, description, up_statements, down_statements)
 MIGRATIONS: list[tuple[int, str, list[str], list[str]]] = [
     # Version 1 is the initial schema (applied by repository._init_schema)
-    # Future migrations go here:
-    # (2, "Add full-text search index",
-    #  ["CREATE INDEX ..."],            # up
-    #  ["DROP INDEX ..."],              # down
-    # ),
+    (2, "Add indexes for dossier performance",
+     [
+         "CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id)",
+         "CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id)",
+     ],
+     [
+         "DROP INDEX IF EXISTS idx_edges_source",
+         "DROP INDEX IF EXISTS idx_edges_target",
+     ]),
+    (3, "Create actions table for kinetic operations",
+     [
+         """CREATE TABLE IF NOT EXISTS actions (
+                id              VARCHAR PRIMARY KEY,
+                action_type     VARCHAR NOT NULL,
+                status          VARCHAR DEFAULT 'completed',
+                source_node_id  VARCHAR,
+                target_node_id  VARCHAR,
+                params          JSON,
+                result          JSON,
+                executed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""",
+     ],
+     [
+         "DROP TABLE IF EXISTS actions",
+     ]),
+    (4, "Create outcomes table for feedback loop",
+     [
+         """CREATE TABLE IF NOT EXISTS outcomes (
+                id           VARCHAR PRIMARY KEY,
+                node_id      VARCHAR NOT NULL,
+                node_type    VARCHAR NOT NULL,
+                outcome_text TEXT NOT NULL,
+                rating       VARCHAR NOT NULL,
+                evidence     JSON,
+                recorded_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""",
+         "CREATE INDEX IF NOT EXISTS idx_outcomes_node ON outcomes(node_id)",
+     ],
+     [
+         "DROP INDEX IF EXISTS idx_outcomes_node",
+         "DROP TABLE IF EXISTS outcomes",
+     ]),
+    (5, "Create detected_patterns table for pattern detection",
+     [
+         """CREATE TABLE IF NOT EXISTS detected_patterns (
+                id              VARCHAR PRIMARY KEY,
+                pattern_type    VARCHAR NOT NULL,
+                description     TEXT NOT NULL,
+                evidence        JSON,
+                confidence      DOUBLE,
+                suggested_action VARCHAR,
+                networks        JSON,
+                first_detected  TIMESTAMP,
+                last_confirmed  TIMESTAMP,
+                status          VARCHAR DEFAULT 'active',
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""",
+     ],
+     [
+         "DROP TABLE IF EXISTS detected_patterns",
+     ]),
+    (6, "Add severity and trend fields to detected_patterns",
+     [
+         "ALTER TABLE detected_patterns ADD COLUMN IF NOT EXISTS severity VARCHAR DEFAULT 'info'",
+         "ALTER TABLE detected_patterns ADD COLUMN IF NOT EXISTS previous_value DOUBLE",
+         "ALTER TABLE detected_patterns ADD COLUMN IF NOT EXISTS current_value DOUBLE",
+         "CREATE INDEX IF NOT EXISTS idx_patterns_type_status ON detected_patterns(pattern_type, status)",
+     ],
+     [
+         "DROP INDEX IF EXISTS idx_patterns_type_status",
+         "ALTER TABLE detected_patterns DROP COLUMN IF EXISTS current_value",
+         "ALTER TABLE detected_patterns DROP COLUMN IF EXISTS previous_value",
+         "ALTER TABLE detected_patterns DROP COLUMN IF EXISTS severity",
+     ]),
 ]
 
 

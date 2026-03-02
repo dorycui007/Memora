@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -21,6 +20,14 @@ ALL_NETWORKS = [
     "SOCIAL",
     "VENTURES",
 ]
+
+# Status determination thresholds
+FALLING_BEHIND_COMPLETION = 0.4
+NEEDS_ATTENTION_COMPLETION = 0.7
+FALLING_BEHIND_ALERT_RATIO = 0.3
+NEEDS_ATTENTION_ALERT_RATIO = 0.1
+FALLING_BEHIND_STALENESS = 2
+STALENESS_DECAY_THRESHOLD = 0.3
 
 
 class HealthScoring:
@@ -86,9 +93,12 @@ class HealthScoring:
         alert_ratio: float,
         staleness_flags: int,
     ) -> str:
-        if completion_rate < 0.4 or alert_ratio > 0.3 or staleness_flags >= 2:
+        if (completion_rate < FALLING_BEHIND_COMPLETION
+                or alert_ratio > FALLING_BEHIND_ALERT_RATIO
+                or staleness_flags >= FALLING_BEHIND_STALENESS):
             return "falling_behind"
-        if (0.4 <= completion_rate < 0.7) or (0.1 <= alert_ratio <= 0.3):
+        if (FALLING_BEHIND_COMPLETION <= completion_rate < NEEDS_ATTENTION_COMPLETION
+                or NEEDS_ATTENTION_ALERT_RATIO <= alert_ratio <= FALLING_BEHIND_ALERT_RATIO):
             return "needs_attention"
         return "on_track"
 
@@ -110,26 +120,16 @@ class HealthScoring:
         return "stable"
 
     # ------------------------------------------------------------------
-    # Metric helpers (DuckDB queries)
+    # Metric helpers (via repository)
     # ------------------------------------------------------------------
 
     def _commitment_completion_rate(self, network: str) -> float:
         """Fraction of commitments in *network* that are completed."""
         try:
-            row = self._repo._conn.execute(
-                """SELECT
-                       COUNT(*) FILTER (WHERE json_extract_string(properties, '$.status') = 'completed') AS done,
-                       COUNT(*) AS total
-                   FROM nodes
-                   WHERE deleted = FALSE
-                     AND node_type = 'COMMITMENT'
-                     AND list_contains(networks, ?)""",
-                [network],
-            ).fetchone()
-            total = row[1] if row else 0
+            done, total = self._repo.get_commitment_completion_rate(network)
             if total == 0:
                 return 1.0  # No commitments counts as healthy
-            return row[0] / total
+            return done / total
         except Exception:
             logger.warning("Failed to compute completion rate for %s", network)
             return 1.0
@@ -137,41 +137,19 @@ class HealthScoring:
     def _alert_ratio(self, network: str) -> float:
         """Fraction of open commitments that are overdue."""
         try:
-            row = self._repo._conn.execute(
-                """SELECT
-                       COUNT(*) FILTER (
-                           WHERE json_extract_string(properties, '$.status') = 'open'
-                             AND json_extract_string(properties, '$.due_date') < ?
-                       ) AS overdue,
-                       COUNT(*) FILTER (
-                           WHERE json_extract_string(properties, '$.status') = 'open'
-                       ) AS open_total
-                   FROM nodes
-                   WHERE deleted = FALSE
-                     AND node_type = 'COMMITMENT'
-                     AND list_contains(networks, ?)""",
-                [datetime.now(timezone.utc).isoformat(), network],
-            ).fetchone()
-            open_total = row[1] if row else 0
+            now_iso = datetime.now(timezone.utc).isoformat()
+            overdue, open_total = self._repo.get_commitment_alert_counts(network, now_iso)
             if open_total == 0:
                 return 0.0
-            return row[0] / open_total
+            return overdue / open_total
         except Exception:
             logger.warning("Failed to compute alert ratio for %s", network)
             return 0.0
 
     def _staleness_flags(self, network: str) -> int:
-        """Count of nodes in *network* whose decay_score < 0.3."""
+        """Count of nodes in *network* whose decay_score < STALENESS_DECAY_THRESHOLD."""
         try:
-            row = self._repo._conn.execute(
-                """SELECT COUNT(*)
-                   FROM nodes
-                   WHERE deleted = FALSE
-                     AND decay_score < 0.3
-                     AND list_contains(networks, ?)""",
-                [network],
-            ).fetchone()
-            return row[0] if row else 0
+            return self._repo.get_staleness_count(network, STALENESS_DECAY_THRESHOLD)
         except Exception:
             logger.warning("Failed to compute staleness flags for %s", network)
             return 0
@@ -183,44 +161,17 @@ class HealthScoring:
     def _store_snapshot(self, health: dict[str, Any]) -> None:
         """Persist a health snapshot into the network_health table."""
         try:
-            self._repo._conn.execute(
-                """INSERT INTO network_health
-                   (id, network, status, momentum, commitment_completion_rate,
-                    alert_ratio, staleness_flags, computed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    str(uuid4()),
-                    health["network"],
-                    health["status"],
-                    health["momentum"],
-                    health["commitment_completion_rate"],
-                    health["alert_ratio"],
-                    health["staleness_flags"],
-                    health["computed_at"],
-                ],
-            )
+            self._repo.store_health_snapshot({
+                "id": str(uuid4()),
+                **health,
+            })
         except Exception:
             logger.warning("Failed to store health snapshot", exc_info=True)
 
     def _get_previous_snapshot(self, network: str) -> dict[str, Any] | None:
         """Retrieve the most recent stored snapshot for *network* (for momentum)."""
         try:
-            row = self._repo._conn.execute(
-                """SELECT status, momentum, commitment_completion_rate,
-                          alert_ratio, staleness_flags, computed_at
-                   FROM network_health
-                   WHERE network = ?
-                   ORDER BY computed_at DESC
-                   LIMIT 1""",
-                [network],
-            ).fetchone()
-            if not row:
-                return None
-            cols = [
-                "status", "momentum", "commitment_completion_rate",
-                "alert_ratio", "staleness_flags", "computed_at",
-            ]
-            return dict(zip(cols, row))
+            return self._repo.get_latest_network_health(network)
         except Exception:
             logger.warning("Failed to get previous snapshot for %s", network)
             return None

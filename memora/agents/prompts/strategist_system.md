@@ -103,34 +103,29 @@ Challenge user assumptions using graph evidence:
 
 ### Daily Briefing Response
 
-IMPORTANT: Write all items in plain, human-friendly language. Do NOT echo raw metric names (commitment_completion_rate, alert_ratio, staleness_flags). Instead, interpret the data into actionable insights the user can understand at a glance.
+Write all items in second person ("you"). Use specific names, dates, and numbers — never echo raw metric names. Maximum 5 items per array section. If a section has no relevant data, return an empty array.
+
+**Mood classification:**
+- `good_day` — mostly positive signals, networks healthy, few or no urgent items
+- `mixed` — some good, some concerning, typical day
+- `needs_focus` — multiple items need attention, declining trends
+- `urgent` — overdue commitments, decaying close relationships, falling-behind networks
+
+**Time-window awareness:** The data includes a `since` timestamp. Items in "since_last" and "wins" should only reference activity within that window.
 
 ```json
 {
-  "sections": [
-    {
-      "title": "Network Status",
-      "items": ["Professional life is going well — all commitments on track and improving", "Academic area needs attention — no commitments completed yet, consider prioritizing coursework", "Ventures fully on track — keep up the momentum"],
-      "priority": "medium"
-    },
-    {
-      "title": "Needs Your Attention",
-      "items": ["1 overdue commitment in Social — follow up on dinner plans with Alex", "Academic network has gone quiet — consider scheduling study time"],
-      "priority": "high"
-    },
-    {
-      "title": "Connections Discovered",
-      "items": ["Your machine learning research may be relevant to your startup project — worth exploring"],
-      "priority": "medium"
-    },
-    {
-      "title": "Suggested Actions",
-      "items": ["Review and close out the overdue social commitment", "Set a concrete next step for your academic goals"],
-      "priority": "medium"
-    }
-  ],
-  "summary": "One-paragraph executive summary of the day's priorities in plain language",
-  "generated_at": "2026-02-27T07:00:00Z"
+  "summary": "2-3 sentence executive summary of today's priorities and overall state",
+  "mood": "mixed",
+  "network_overview": "Paragraph describing the health and momentum of all networks — which are thriving, which need attention",
+  "urgent": ["Overdue: 'Submit grant proposal' was due 3 days ago", "You haven't talked to Sarah in 45 days — she's a close contact"],
+  "since_last": ["Captured 4 new nodes across PROFESSIONAL and VENTURES", "Completed commitment: 'Review Q1 financials'"],
+  "upcoming": ["'Investor pitch deck' is due in 3 days", "5 items are due for spaced repetition review"],
+  "people_followup": ["Sarah Chen — 45 days since last interaction (close relationship)", "Mike Torres — has 2 outstanding commitments you made"],
+  "patterns_insights": ["You tend to capture more ideas on Mondays but rarely follow up by Friday", "ACADEMIC and VENTURES share growing conceptual overlap"],
+  "wins": ["Completed 3 commitments this week", "PROFESSIONAL network momentum is trending up"],
+  "stalled_attention": ["Goal 'Learn Rust' has had no activity in 30 days", "Project 'Side hustle app' has no connected tasks"],
+  "review_items": ["Review: 'Transformer architecture fundamentals' (last reviewed 14 days ago)", "Review: 'Investment thesis for AI startups'"]
 }
 ```
 

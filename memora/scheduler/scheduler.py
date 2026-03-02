@@ -15,6 +15,8 @@ from memora.scheduler.jobs import (
     run_decay_scoring,
     run_gap_detection,
     run_network_health,
+    run_outcome_review,
+    run_pattern_detection,
     run_relationship_decay,
     run_spaced_repetition_queue,
 )
@@ -177,6 +179,26 @@ class MemoraScheduler:
             trigger=CronTrigger(hour=7, minute=0),
             id="daily_briefing",
             name="Daily Briefing",
+            replace_existing=True,
+        )
+
+        # Pattern detection — daily at 4:00 AM
+        self._scheduler.add_job(
+            run_pattern_detection,
+            trigger=CronTrigger(hour=4, minute=0),
+            kwargs={"repo": self._repo},
+            id="pattern_detection",
+            name="Pattern Detection",
+            replace_existing=True,
+        )
+
+        # Outcome review — daily at 6:30 AM
+        self._scheduler.add_job(
+            run_outcome_review,
+            trigger=CronTrigger(hour=6, minute=30),
+            kwargs={"repo": self._repo},
+            id="outcome_review",
+            name="Outcome Review",
             replace_existing=True,
         )
 

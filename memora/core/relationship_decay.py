@@ -75,19 +75,13 @@ class RelationshipDecayDetector:
     def _get_person_nodes(self) -> list[dict[str, Any]]:
         """Query all PERSON nodes from the graph."""
         try:
-            rows = self._repo._conn.execute(
-                """SELECT id, title, properties, last_accessed, networks
-                   FROM nodes
-                   WHERE deleted = FALSE AND node_type = 'PERSON'"""
-            ).fetchall()
+            rows = self._repo.get_person_nodes()
         except Exception:
             logger.warning("Failed to fetch person nodes", exc_info=True)
             return []
 
-        cols = ["id", "title", "properties", "last_accessed", "networks"]
         results: list[dict[str, Any]] = []
-        for row in rows:
-            d = dict(zip(cols, row))
+        for d in rows:
             if isinstance(d["properties"], str):
                 try:
                     d["properties"] = json.loads(d["properties"])
@@ -121,18 +115,7 @@ class RelationshipDecayDetector:
     def _get_outstanding_commitments(self, person_node_id: str) -> list[dict[str, Any]]:
         """Return open commitments connected to the given person node."""
         try:
-            rows = self._repo._conn.execute(
-                """SELECT n.id, n.title, n.properties
-                   FROM nodes n
-                   JOIN edges e ON (
-                       (e.source_id = ? AND e.target_id = n.id)
-                       OR (e.target_id = ? AND e.source_id = n.id)
-                   )
-                   WHERE n.deleted = FALSE
-                     AND n.node_type = 'COMMITMENT'
-                     AND json_extract_string(n.properties, '$.status') = 'open'""",
-                [person_node_id, person_node_id],
-            ).fetchall()
+            rows = self._repo.get_person_commitments(person_node_id)
         except Exception:
             logger.warning(
                 "Failed to fetch commitments for person %s", person_node_id
@@ -141,15 +124,15 @@ class RelationshipDecayDetector:
 
         results: list[dict[str, Any]] = []
         for row in rows:
-            props = row[2]
+            props = row["properties"]
             if isinstance(props, str):
                 try:
                     props = json.loads(props)
                 except (json.JSONDecodeError, TypeError):
                     props = {}
             results.append({
-                "node_id": row[0],
-                "title": row[1],
+                "node_id": row["id"],
+                "title": row["title"],
                 "due_date": props.get("due_date"),
             })
         return results

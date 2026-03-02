@@ -40,6 +40,7 @@ class ResolutionCandidate:
     existing_title: str
     existing_node_type: str
     existing_networks: list[str] = field(default_factory=list)
+    existing_aliases: list[str] = field(default_factory=list)
     signals: dict[str, float] = field(default_factory=dict)
     combined_score: float = 0.0
     outcome: ResolutionOutcome = ResolutionOutcome.CREATE
@@ -72,7 +73,9 @@ class EntityResolver:
 
     EMBEDDING_THRESHOLD = 0.92
     MERGE_THRESHOLD = 0.85
-    CREATE_THRESHOLD = 0.60
+    CREATE_THRESHOLD = 0.40
+    # Use a wider range for LLM adjudication to catch more ambiguous cases
+    LLM_ADJUDICATION_THRESHOLD = 0.90
     TEMPORAL_WINDOW_DAYS = 7
 
     def __init__(
@@ -174,11 +177,22 @@ class EntityResolver:
 
         for match in exact_matches:
             nid = match["id"]
+            # Extract aliases from properties if available
+            aliases = []
+            props = match.get("properties")
+            if props:
+                if isinstance(props, str):
+                    try:
+                        props = json.loads(props)
+                    except (json.JSONDecodeError, TypeError):
+                        props = {}
+                aliases = props.get("aliases", []) if isinstance(props, dict) else []
             candidates_map[nid] = ResolutionCandidate(
                 existing_node_id=nid,
                 existing_title=match["title"],
                 existing_node_type=match["node_type"],
                 existing_networks=match.get("networks", []),
+                existing_aliases=aliases,
             )
 
         for sim in similar_nodes:
@@ -235,9 +249,11 @@ class EntityResolver:
                 return result
 
         # 5. LLM adjudication for ambiguous cases — run in parallel
+        #    Any candidate above CREATE_THRESHOLD but below LLM_ADJUDICATION_THRESHOLD
+        #    is worth asking the LLM about when available.
         ambiguous_pairs: list[tuple[NodeProposal, ResolutionCandidate]] = []
         for candidate in candidates:
-            if self.CREATE_THRESHOLD <= candidate.combined_score < self.MERGE_THRESHOLD:
+            if self.CREATE_THRESHOLD <= candidate.combined_score < self.LLM_ADJUDICATION_THRESHOLD:
                 if self._llm_client:
                     ambiguous_pairs.append((node, candidate))
 
@@ -346,40 +362,60 @@ class EntityResolver:
             logger.warning("Batch embedding similarity search failed", exc_info=True)
             return {n.temp_id: [] for n in nodes}
 
+    @staticmethod
+    def _name_similarity(a: str, b: str) -> float:
+        """Compute name similarity between two strings. Returns 0.0–1.0."""
+        a = a.lower().strip()
+        b = b.lower().strip()
+
+        if not a or not b:
+            return 0.0
+
+        # Exact match
+        if a == b:
+            return 1.0
+
+        # First-name match: one name is a single token matching the first
+        # token of the other (e.g., "Eddy" → "Eddy Paez")
+        a_tokens = a.split()
+        b_tokens = b.split()
+        if len(a_tokens) == 1 and len(b_tokens) > 1 and a_tokens[0] == b_tokens[0]:
+            return 0.85
+        if len(b_tokens) == 1 and len(a_tokens) > 1 and b_tokens[0] == a_tokens[0]:
+            return 0.85
+
+        # One name is a substring of the other (e.g., "Aisha" in "Aisha Nakamura")
+        if a in b or b in a:
+            shorter = min(len(a), len(b))
+            longer = max(len(a), len(b))
+            return max(0.7, shorter / longer)
+
+        # Token overlap (e.g., "Carlos Rivera" vs "Carlos" shares "carlos")
+        a_set = set(a_tokens)
+        b_set = set(b_tokens)
+        if a_set and b_set:
+            overlap = a_set & b_set
+            if overlap:
+                union = a_set | b_set
+                return 0.6 * len(overlap) / len(union)
+
+        return 0.0
+
     def _score_exact_name(
         self,
         candidate: ResolutionCandidate,
         node: NodeProposal,
     ) -> None:
-        """Score based on name match — exact, substring, or token overlap."""
-        proposed = node.title.lower().strip()
-        existing = candidate.existing_title.lower().strip()
+        """Score based on name match — exact, substring, or token overlap.
 
-        # Exact match
-        if proposed == existing:
-            candidate.signals["exact_name"] = 1.0
-            return
-
-        # One name is a substring of the other (e.g., "Aisha" in "Aisha Nakamura")
-        if proposed in existing or existing in proposed:
-            # Score by ratio of shorter to longer — "Aisha" (5) / "Aisha Nakamura" (14) = 0.36
-            # But we want this to score high enough to matter, so use a floor
-            shorter = min(len(proposed), len(existing))
-            longer = max(len(proposed), len(existing))
-            candidate.signals["exact_name"] = max(0.7, shorter / longer)
-            return
-
-        # Token overlap (e.g., "Carlos Rivera" vs "Carlos" shares "carlos")
-        proposed_tokens = set(proposed.split())
-        existing_tokens = set(existing.split())
-        if proposed_tokens and existing_tokens:
-            overlap = proposed_tokens & existing_tokens
-            if overlap:
-                union = proposed_tokens | existing_tokens
-                candidate.signals["exact_name"] = 0.6 * len(overlap) / len(union)
-                return
-
-        candidate.signals["exact_name"] = 0.0
+        Computes similarity against the candidate's title and all aliases,
+        taking the best score.
+        """
+        proposed = node.title
+        # Score against title and all aliases, keep the best
+        names_to_check = [candidate.existing_title] + candidate.existing_aliases
+        best = max(self._name_similarity(proposed, name) for name in names_to_check)
+        candidate.signals["exact_name"] = best
 
     def _score_embedding(
         self,
@@ -615,6 +651,19 @@ class EntityResolver:
                         update_data["properties"] = original.properties
                     if original.networks:
                         update_data["networks"] = [n.value for n in original.networks]
+
+                    # When merged title differs from existing, add as alias
+                    existing_title = resolution.chosen.existing_title
+                    if original.title.lower().strip() != existing_title.lower().strip():
+                        # Fetch current aliases from the candidate
+                        existing_aliases = list(resolution.chosen.existing_aliases)
+                        alt_name = original.title.strip()
+                        if alt_name.lower() not in {a.lower() for a in existing_aliases}:
+                            existing_aliases.append(alt_name)
+                        # Merge into properties
+                        props = dict(update_data.get("properties", {}))
+                        props["aliases"] = existing_aliases
+                        update_data["properties"] = props
 
                     if update_data:
                         new_updates.append(NodeUpdate(

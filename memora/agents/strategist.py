@@ -38,20 +38,42 @@ class StrategistResult:
 
 
 @dataclass
-class BriefingSection:
-    """A section of the daily briefing."""
+class CounterEvidence:
+    """A single piece of counter-evidence from a critique."""
 
-    title: str = ""
-    items: list[str] = field(default_factory=list)
-    priority: str = "medium"
+    point: str = ""
+    evidence_nodes: list[str] = field(default_factory=list)
+    strength: str = "moderate"  # strong, moderate, weak
+
+
+@dataclass
+class CritiqueResult:
+    """Result from a Strategist critique."""
+
+    analysis: str = ""
+    counter_evidence: list[CounterEvidence] = field(default_factory=list)
+    blind_spots: list[str] = field(default_factory=list)
+    confidence: float = 0.75
+    citations: list[str] = field(default_factory=list)
+    token_usage: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
 class DailyBriefing:
-    """Complete daily briefing."""
+    """Complete daily briefing with typed sections."""
 
-    sections: list[BriefingSection] = field(default_factory=list)
     summary: str = ""
+    mood: str = "mixed"  # good_day, mixed, needs_focus, urgent
+    network_overview: str = ""
+    urgent: list[str] = field(default_factory=list)
+    since_last: list[str] = field(default_factory=list)
+    upcoming: list[str] = field(default_factory=list)
+    people_followup: list[str] = field(default_factory=list)
+    patterns_insights: list[str] = field(default_factory=list)
+    wins: list[str] = field(default_factory=list)
+    stalled_attention: list[str] = field(default_factory=list)
+    review_items: list[str] = field(default_factory=list)
+    data_sources_used: list[str] = field(default_factory=list)
     generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -107,7 +129,7 @@ class StrategistAgent:
                     f"Graph Context:\n{context_text}"
                 ),
                 text={"format": {"type": "json_object"}},
-                reasoning={"effort": "low"},
+                reasoning={"effort": "medium"},
                 max_output_tokens=16384,
             )
         except openai.APIError as e:
@@ -121,20 +143,17 @@ class StrategistAgent:
 
     async def generate_briefing(
         self,
-        health_scores: list[dict[str, Any]] | None = None,
-        alerts: list[dict[str, Any]] | None = None,
-        bridges: list[dict[str, Any]] | None = None,
-        commitments: dict[str, Any] | None = None,
-        review_items: list[dict[str, Any]] | None = None,
+        briefing_data: dict[str, Any],
     ) -> DailyBriefing:
-        """Generate the daily briefing from all background job results."""
-        briefing_input = self._format_briefing_input(
-            health_scores or [],
-            alerts or [],
-            bridges or [],
-            commitments or {},
-            review_items or [],
-        )
+        """Generate the daily briefing from collected data.
+
+        Args:
+            briefing_data: Dict from BriefingCollector.collect() with all source data.
+
+        Returns:
+            DailyBriefing with typed sections.
+        """
+        formatted = self._format_briefing_data(briefing_data)
 
         try:
             response = await async_call_with_retry(
@@ -142,34 +161,37 @@ class StrategistAgent:
                 model=self._model,
                 instructions=self._system_prompt,
                 input=(
-                    f"Generate today's daily briefing using this data. "
-                    f"Respond with a JSON object matching the Daily Briefing schema.\n\n"
-                    f"IMPORTANT: Write section items in plain, actionable language a human would understand. "
-                    f"Do NOT echo raw metric names like 'commitment_completion_rate' or 'alert_ratio'. "
-                    f"Instead, interpret the data — e.g. 'You have no completed commitments in ACADEMIC yet' "
-                    f"or 'VENTURES is on track — all commitments done'. "
-                    f"Focus on what the user should know and what they can do about it.\n\n"
-                    f"{briefing_input}"
+                    "Generate today's daily briefing using the data below. "
+                    "Respond with a JSON object matching the Daily Briefing schema.\n\n"
+                    "IMPORTANT: Write in second person ('you'). Use specific names, dates, "
+                    "and numbers. Maximum 5 items per section. Empty sections = empty arrays. "
+                    "Do NOT echo raw metric names.\n\n"
+                    f"{formatted}"
                 ),
                 text={"format": {"type": "json_object"}},
-                reasoning={"effort": "low"},
+                reasoning={"effort": "medium"},
                 max_output_tokens=16384,
             )
         except openai.APIError as e:
             logger.error("OpenAI API error generating briefing: %s", e)
             return DailyBriefing(
                 summary=f"Briefing generation failed: {e}",
+                data_sources_used=briefing_data.get("data_sources_used", []),
             )
 
         raw_text = response.output_text
         if not raw_text:
-            # Log output items to diagnose why there's no text (e.g., refusal, tool calls only)
             output_types = [item.type for item in response.output] if response.output else []
             logger.warning("Empty briefing response from LLM, output types: %s, status: %s", output_types, response.status)
-            return DailyBriefing(summary="Briefing generation returned empty response.")
-        return self._parse_briefing_response(raw_text)
+            return DailyBriefing(
+                summary="Briefing generation returned empty response.",
+                data_sources_used=briefing_data.get("data_sources_used", []),
+            )
+        briefing = self._parse_briefing_response(raw_text)
+        briefing.data_sources_used = briefing_data.get("data_sources_used", [])
+        return briefing
 
-    async def critique(self, statement: str, graph_context: dict[str, Any] | None = None) -> StrategistResult:
+    async def critique(self, statement: str, graph_context: dict[str, Any] | None = None) -> CritiqueResult:
         """Invoke critic mode: challenge a statement using graph evidence.
 
         Args:
@@ -177,7 +199,7 @@ class StrategistAgent:
             graph_context: Pre-gathered graph context.
 
         Returns:
-            StrategistResult with critique analysis.
+            CritiqueResult with counter-evidence and blind spots.
         """
         if graph_context is None:
             graph_context = self._build_graph_context(statement)
@@ -192,28 +214,32 @@ class StrategistAgent:
                 input=(
                     f"CRITIC MODE: Challenge the following statement/decision "
                     f"using graph evidence. Identify counter-evidence, blind spots, "
-                    f"and overlooked risks. Respond with a JSON object containing analysis, "
-                    f"recommendations, confidence, and citations.\n\n"
+                    f"and overlooked risks. Respond with a JSON object matching the "
+                    f"Critique Response schema: analysis, counter_evidence (list of "
+                    f"objects with point/evidence_nodes/strength), blind_spots (list "
+                    f"of strings), confidence, and citations.\n\n"
                     f"Statement: {statement}\n\n"
                     f"Graph Context:\n{context_text}"
                 ),
                 text={"format": {"type": "json_object"}},
-                reasoning={"effort": "low"},
+                reasoning={"effort": "medium"},
                 max_output_tokens=16384,
             )
         except openai.APIError as e:
             logger.error("OpenAI API error in Strategist critique: %s", e)
-            return StrategistResult(analysis=f"Critique failed: {e}")
+            return CritiqueResult(analysis=f"Critique failed: {e}")
 
         raw_text = response.output_text
         token_usage = self._extract_token_usage(response)
 
-        return self._parse_analysis_response(raw_text, token_usage)
+        return self._parse_critique_response(raw_text, token_usage)
 
     def _build_graph_context(self, query: str) -> dict[str, Any]:
         """Gather graph context relevant to the query."""
         context: dict[str, Any] = {
             "nodes": [],
+            "expanded_nodes": [],
+            "edges": [],
             "health": [],
             "bridges": [],
             "facts": [],
@@ -229,16 +255,26 @@ class StrategistAgent:
         except Exception:
             logger.warning("Failed to get graph stats", exc_info=True)
 
-        # Search for relevant nodes via vector similarity
+        # Search for relevant nodes via hybrid search (dense + FTS with RRF)
         if self._vector_store and self._embedding_engine:
             try:
                 embedding = self._embedding_engine.embed_text(query)
-                results = self._vector_store.dense_search(
-                    embedding["dense"], top_k=15
+                results = self._vector_store.hybrid_search(
+                    query_vector=embedding["dense"],
+                    query_text=query,
+                    top_k=15,
                 )
                 context["nodes"] = [r.to_dict() for r in results]
             except Exception:
-                logger.warning("Vector search failed in strategist context", exc_info=True)
+                logger.warning("Hybrid search failed in strategist context, falling back to dense", exc_info=True)
+                try:
+                    embedding = self._embedding_engine.embed_text(query)
+                    results = self._vector_store.dense_search(
+                        embedding["dense"], top_k=15
+                    )
+                    context["nodes"] = [r.to_dict() for r in results]
+                except Exception:
+                    logger.warning("Dense search also failed in strategist context", exc_info=True)
 
         # Get network health
         try:
@@ -261,7 +297,110 @@ class StrategistAgent:
             except Exception:
                 logger.debug("No truth layer facts available")
 
+        # Entity-aware graph lookup
+        self._enrich_context_with_entity_lookup(query, context)
+
         return context
+
+    def _enrich_context_with_entity_lookup(
+        self, query: str, context: dict[str, Any],
+    ) -> None:
+        """Search the graph for named entities mentioned in the query.
+
+        Extracts capitalized words (likely proper nouns) from the query,
+        searches for matching nodes by title, and expands their 1-hop
+        neighborhoods so the strategist has concrete data about the people,
+        projects, and goals mentioned.
+        """
+        if not self._repo:
+            return
+
+        # Extract candidate entity names: capitalized words that aren't
+        # common English words at the start of a sentence.
+        _skip = {
+            "What", "How", "Who", "Where", "When", "Why", "Which",
+            "Is", "Are", "Was", "Were", "Do", "Does", "Did", "Can",
+            "Could", "Should", "Would", "Will", "The", "A", "An",
+            "My", "His", "Her", "Their", "Our", "Its", "That", "This",
+            "Tell", "Show", "Give", "Get", "Has", "Have", "Had",
+        }
+        words = query.split()
+        entity_candidates: list[str] = []
+        for word in words:
+            # Strip trailing punctuation and possessive 's
+            clean = word.rstrip(".,;:!?'\"")
+            if clean.endswith("'s") or clean.endswith("\u2019s"):
+                clean = clean[:-2]
+            if clean and clean[0].isupper() and clean not in _skip and len(clean) > 1:
+                entity_candidates.append(clean)
+
+        if not entity_candidates:
+            return
+
+        existing_ids = {n.get("node_id") for n in context.get("nodes", [])}
+        existing_ids |= {n.get("node_id") for n in context.get("expanded_nodes", [])}
+
+        for candidate in entity_candidates:
+            try:
+                matches = self._repo.search_by_title(candidate, limit=5)
+            except Exception:
+                logger.debug("Entity lookup failed for %r", candidate)
+                continue
+
+            for node in matches:
+                nid = str(node.id)
+                if nid in existing_ids:
+                    continue
+                existing_ids.add(nid)
+
+                # Add the matched node as a primary context node
+                context["nodes"].append({
+                    "node_id": nid,
+                    "node_type": node.node_type.value
+                        if hasattr(node.node_type, "value") else str(node.node_type),
+                    "title": node.title,
+                    "content": node.content or node.title,
+                    "networks": [
+                        net.value if hasattr(net, "value") else str(net)
+                        for net in node.networks
+                    ],
+                    "confidence": node.confidence,
+                    "properties": node.properties,
+                })
+
+                # Expand 1-hop neighborhood for the entity
+                try:
+                    subgraph = self._repo.get_neighborhood(node.id, hops=1)
+                    for neighbor in subgraph.nodes:
+                        neighbor_id = str(neighbor.id)
+                        if neighbor_id in existing_ids:
+                            continue
+                        existing_ids.add(neighbor_id)
+                        context["expanded_nodes"].append({
+                            "node_id": neighbor_id,
+                            "title": neighbor.title,
+                            "content": neighbor.content or neighbor.title,
+                            "node_type": neighbor.node_type.value
+                                if hasattr(neighbor.node_type, "value")
+                                else str(neighbor.node_type),
+                            "networks": [
+                                net.value if hasattr(net, "value") else str(net)
+                                for net in neighbor.networks
+                            ],
+                            "properties": neighbor.properties,
+                        })
+                    # Include edges for relationship context
+                    for edge in subgraph.edges:
+                        context["edges"].append({
+                            "source_id": str(edge.source_id),
+                            "target_id": str(edge.target_id),
+                            "edge_type": edge.edge_type.value
+                                if hasattr(edge.edge_type, "value")
+                                else str(edge.edge_type),
+                            "properties": edge.properties,
+                        })
+                except Exception:
+                    logger.debug("Neighborhood expansion failed for entity %s", nid)
 
     def _format_context(self, context: dict[str, Any]) -> str:
         """Format graph context for injection into the prompt."""
@@ -273,11 +412,39 @@ class StrategistAgent:
         if context.get("nodes"):
             node_lines = []
             for node in context["nodes"]:
+                title = node.get("title", "")
+                content = node.get("content", "")
+                display = content or title
+                props = node.get("properties", {})
+                props_str = f", properties: {json.dumps(props)}" if props else ""
                 node_lines.append(
-                    f"  - [{node.get('node_type', '?')}] \"{node.get('content', '')}\" "
-                    f"(id: {node.get('node_id', '?')}, networks: {node.get('networks', [])})"
+                    f"  - [{node.get('node_type', '?')}] \"{display}\" "
+                    f"(id: {node.get('node_id', '?')}, networks: {node.get('networks', [])}{props_str})"
                 )
             parts.append("Relevant Nodes:\n" + "\n".join(node_lines))
+
+        if context.get("expanded_nodes"):
+            exp_lines = []
+            for node in context["expanded_nodes"]:
+                title = node.get("title", "")
+                content = node.get("content", "")
+                display = content or title
+                props = node.get("properties", {})
+                props_str = f", properties: {json.dumps(props)}" if props else ""
+                exp_lines.append(
+                    f"  - [{node.get('node_type', '?')}] \"{display}\" "
+                    f"(id: {node.get('node_id', '?')}, networks: {node.get('networks', [])}{props_str})"
+                )
+            parts.append("Connected Nodes (1-hop neighborhood):\n" + "\n".join(exp_lines))
+
+        if context.get("edges"):
+            edge_lines = []
+            for edge in context["edges"]:
+                edge_lines.append(
+                    f"  - {edge.get('source_id', '?')} --[{edge.get('edge_type', '?')}]--> "
+                    f"{edge.get('target_id', '?')}"
+                )
+            parts.append("Relationships:\n" + "\n".join(edge_lines))
 
         if context.get("health"):
             health_lines = []
@@ -308,31 +475,86 @@ class StrategistAgent:
 
         return "\n\n".join(parts) if parts else "No graph context available."
 
-    def _format_briefing_input(
-        self,
-        health_scores: list[dict[str, Any]],
-        alerts: list[dict[str, Any]],
-        bridges: list[dict[str, Any]],
-        commitments: dict[str, Any],
-        review_items: list[dict[str, Any]],
-    ) -> str:
-        """Format all background job data for the briefing prompt."""
-        parts = [f"Date: {datetime.now(UTC).date().isoformat()}"]
+    def _format_briefing_data(self, data: dict[str, Any]) -> str:
+        """Format collected briefing data as labeled sections for the LLM prompt."""
+        parts = [f"Date: {data.get('date', datetime.now(UTC).date().isoformat())}"]
+        parts.append(f"Data window since: {data.get('since', 'N/A')}")
 
-        if health_scores:
-            parts.append(f"Network Health Scores:\n{json.dumps(health_scores, indent=2, default=str)}")
+        health = data.get("health", [])
+        if health:
+            parts.append(f"=== NETWORK HEALTH ===\n{json.dumps(health, indent=2, default=str)}")
 
-        if alerts:
-            parts.append(f"Active Alerts:\n{json.dumps(alerts, indent=2, default=str)}")
+        urgent = data.get("urgent", {})
+        if any(urgent.get(k) for k in ("overdue_commitments", "decaying_close", "stale_facts")):
+            parts.append(f"=== URGENT ===\n{json.dumps(urgent, indent=2, default=str)}")
 
-        if bridges:
-            parts.append(f"Recent Bridge Discoveries:\n{json.dumps(bridges, indent=2, default=str)}")
+        since_last = data.get("since_last", {})
+        if any(since_last.get(k) for k in ("new_nodes", "actions", "bridges")):
+            summary = {
+                "new_nodes_count": len(since_last.get("new_nodes", [])),
+                "new_nodes": [
+                    {"type": n.get("node_type"), "title": n.get("title"), "networks": n.get("networks")}
+                    for n in since_last.get("new_nodes", [])[:20]
+                ],
+                "actions_count": len(since_last.get("actions", [])),
+                "actions": [
+                    {"type": a.get("action_type"), "executed_at": a.get("executed_at")}
+                    for a in since_last.get("actions", [])[:10]
+                ],
+                "bridges": since_last.get("bridges", []),
+            }
+            parts.append(f"=== SINCE LAST CHECK ===\n{json.dumps(summary, indent=2, default=str)}")
 
-        if commitments:
-            parts.append(f"Commitment Scan:\n{json.dumps(commitments, indent=2, default=str)}")
+        upcoming = data.get("upcoming", {})
+        if any(upcoming.get(k) for k in ("approaching", "pending_outcomes", "review_count")):
+            parts.append(f"=== COMING UP ===\n{json.dumps(upcoming, indent=2, default=str)}")
 
-        if review_items:
-            parts.append(f"Review Queue ({len(review_items)} items):\n{json.dumps(review_items[:20], indent=2, default=str)}")
+        people = data.get("people", {})
+        if people.get("decaying_all") or people.get("stats"):
+            summary = {}
+            if people.get("decaying_all"):
+                summary["decaying_relationships"] = people["decaying_all"][:10]
+            stats = people.get("stats", {})
+            if stats:
+                summary["people_stats"] = {
+                    "total": stats.get("total_people", 0),
+                    "relationship_health": stats.get("relationship_health", {}),
+                }
+            parts.append(f"=== PEOPLE ===\n{json.dumps(summary, indent=2, default=str)}")
+
+        patterns = data.get("patterns", [])
+        if patterns:
+            pattern_summary = [
+                {"type": p.get("pattern_type"), "description": p.get("description"),
+                 "confidence": p.get("confidence"), "action": p.get("suggested_action")}
+                for p in patterns[:10]
+            ]
+            parts.append(f"=== PATTERNS & INSIGHTS ===\n{json.dumps(pattern_summary, indent=2, default=str)}")
+
+        wins = data.get("wins", {})
+        if wins.get("completed") or wins.get("momentum_up"):
+            parts.append(f"=== WINS ===\n{json.dumps(wins, indent=2, default=str)}")
+
+        stalled = data.get("stalled", {})
+        if any(v for v in stalled.values() if v):
+            summary = {k: v[:5] for k, v in stalled.items() if v}
+            parts.append(f"=== STALLED ===\n{json.dumps(summary, indent=2, default=str)}")
+
+        review = data.get("review_queue", [])
+        if review:
+            review_summary = [
+                {"title": r.get("title"), "type": r.get("node_type")}
+                for r in review[:10]
+            ]
+            parts.append(f"=== REVIEW QUEUE ({len(review)} items) ===\n{json.dumps(review_summary, indent=2, default=str)}")
+
+        truth = data.get("truth_alerts", [])
+        if truth:
+            truth_summary = [
+                {"statement": f.get("statement"), "confidence": f.get("confidence")}
+                for f in truth[:5]
+            ]
+            parts.append(f"=== TRUTH ALERTS ===\n{json.dumps(truth_summary, indent=2, default=str)}")
 
         return "\n\n".join(parts)
 
@@ -356,29 +578,66 @@ class StrategistAgent:
                 token_usage=token_usage,
             )
 
+    def _parse_critique_response(
+        self, raw_text: str, token_usage: dict[str, int]
+    ) -> CritiqueResult:
+        """Parse the LLM critique response into a CritiqueResult."""
+        try:
+            data = self._extract_json(raw_text)
+            counter_evidence = []
+            for ce in data.get("counter_evidence", []):
+                if isinstance(ce, dict):
+                    counter_evidence.append(CounterEvidence(
+                        point=ce.get("point", ""),
+                        evidence_nodes=ce.get("evidence_nodes", []),
+                        strength=ce.get("strength", "moderate"),
+                    ))
+                elif isinstance(ce, str):
+                    counter_evidence.append(CounterEvidence(point=ce))
+            return CritiqueResult(
+                analysis=data.get("analysis", raw_text),
+                counter_evidence=counter_evidence,
+                blind_spots=data.get("blind_spots", []),
+                confidence=data.get("confidence", 0.75),
+                citations=data.get("citations", []),
+                token_usage=token_usage,
+            )
+        except ValueError:
+            return CritiqueResult(
+                analysis=raw_text,
+                token_usage=token_usage,
+            )
+
     def _parse_briefing_response(self, raw_text: str) -> DailyBriefing:
         """Parse the LLM briefing response into a DailyBriefing."""
+        def _str_list(val: Any) -> list[str]:
+            if not isinstance(val, list):
+                return []
+            return [str(item) for item in val]
+
         try:
             data = self._extract_json(raw_text)
             logger.debug("Parsed briefing JSON keys: %s", list(data.keys()))
-            sections = []
-            for s in data.get("sections", []):
-                raw_items = s.get("items", [])
-                items = [
-                    str(item) if not isinstance(item, str) else item
-                    for item in raw_items
-                ]
-                sections.append(BriefingSection(
-                    title=s.get("title", ""),
-                    items=items,
-                    priority=s.get("priority", "medium"),
-                ))
+
+            mood = data.get("mood", "mixed")
+            if mood not in ("good_day", "mixed", "needs_focus", "urgent"):
+                mood = "mixed"
+
             return DailyBriefing(
-                sections=sections,
                 summary=data.get("summary", ""),
+                mood=mood,
+                network_overview=data.get("network_overview", ""),
+                urgent=_str_list(data.get("urgent")),
+                since_last=_str_list(data.get("since_last")),
+                upcoming=_str_list(data.get("upcoming")),
+                people_followup=_str_list(data.get("people_followup")),
+                patterns_insights=_str_list(data.get("patterns_insights")),
+                wins=_str_list(data.get("wins")),
+                stalled_attention=_str_list(data.get("stalled_attention")),
+                review_items=_str_list(data.get("review_items")),
             )
         except ValueError:
-            logger.warning("Failed to parse briefing JSON, using truncated raw text. Raw response (first 300 chars): %s", raw_text[:300])
+            logger.warning("Failed to parse briefing JSON, raw (first 300 chars): %s", raw_text[:300])
             truncated = raw_text[:500] + ("..." if len(raw_text) > 500 else "")
             return DailyBriefing(summary=truncated)
 

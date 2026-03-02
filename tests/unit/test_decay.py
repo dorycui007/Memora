@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from math import exp, log
 from uuid import uuid4
 
 import pytest
@@ -22,10 +23,13 @@ def _insert_node(
     last_accessed: datetime | None = None,
     decay_score: float = 1.0,
     deleted: bool = False,
+    properties: dict | None = None,
+    access_count: int = 0,
+    created_at: datetime | None = None,
 ) -> str:
     """Helper to insert a raw node row directly into DuckDB."""
     nid = node_id or str(uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    now_str = (created_at or datetime.now(timezone.utc)).isoformat()
     content_hash = f"hash_{nid[:8]}"
     repo._conn.execute(
         """INSERT INTO nodes
@@ -39,15 +43,15 @@ def _insert_node(
             title,
             content,
             content_hash,
-            json.dumps({}),
+            json.dumps(properties or {}),
             1.0,
             networks or [],
             False,
-            0,
+            access_count,
             decay_score,
             [],
-            now,
-            now,
+            now_str,
+            now_str,
             last_accessed.isoformat() if last_accessed else None,
             deleted,
         ],
@@ -72,6 +76,23 @@ class TestComputeDecay:
         assert score < 0.3
         assert score > 0.1
 
+    def test_compute_decay_with_access_count(self, repo: GraphRepository):
+        """Access count should reduce the effective lambda, producing a higher score."""
+        scorer = DecayScoring(repo)
+        old = datetime.now(timezone.utc) - timedelta(days=30)
+        lam = 0.05
+
+        score_no_access = scorer.compute_decay(old, lam, access_count=0)
+        score_with_access = scorer.compute_decay(old, lam, access_count=10)
+
+        # With access_count=10, effective_lambda = 0.05 / (1 + log(11)) ≈ 0.015
+        # Score should be higher (slower decay)
+        assert score_with_access > score_no_access
+
+        # Verify the formula: e^(-lam/(1+log(1+count)) * days)
+        expected = exp(-lam / (1 + log(11)) * 30)
+        assert score_with_access == pytest.approx(expected, abs=0.01)
+
 
 class TestBatchUpdateScores:
     def test_batch_update_scores(self, repo: GraphRepository):
@@ -84,6 +105,7 @@ class TestBatchUpdateScores:
             repo,
             title="Old Node",
             last_accessed=old_time,
+            created_at=old_time,
             networks=["SOCIAL"],
         )
 
@@ -109,6 +131,174 @@ class TestBatchUpdateScores:
             "SELECT decay_score FROM nodes WHERE id = ?", [nid_fresh]
         ).fetchone()
         assert row_fresh[0] > 0.9
+
+    def test_never_accessed_node_decays_from_created_at(self, repo: GraphRepository):
+        """A node with last_accessed=None should decay from created_at, not stay at 1.0."""
+        scorer = DecayScoring(repo)
+        old_created = datetime.now(timezone.utc) - timedelta(days=30)
+
+        nid = _insert_node(
+            repo,
+            title="Never Accessed",
+            last_accessed=None,
+            created_at=old_created,
+            networks=["SOCIAL"],
+        )
+
+        scorer.batch_update_scores()
+
+        row = repo._conn.execute(
+            "SELECT decay_score FROM nodes WHERE id = ?", [nid]
+        ).fetchone()
+        assert row[0] < 1.0
+        # SOCIAL lambda=0.07, 30 days → e^(-0.07*30) ≈ 0.12
+        assert row[0] < 0.2
+
+    def test_event_decays_from_event_date(self, repo: GraphRepository):
+        """EVENT node should use event_date as anchor when it's more recent than created_at."""
+        scorer = DecayScoring(repo)
+
+        created = datetime.now(timezone.utc) - timedelta(days=60)
+        event_date = datetime.now(timezone.utc) - timedelta(days=28)
+
+        nid = _insert_node(
+            repo,
+            title="Past Conference",
+            node_type="EVENT",
+            created_at=created,
+            last_accessed=None,
+            properties={"event_date": event_date.isoformat()},
+            networks=["PROFESSIONAL"],
+        )
+
+        scorer.batch_update_scores()
+
+        row = repo._conn.execute(
+            "SELECT decay_score FROM nodes WHERE id = ?", [nid]
+        ).fetchone()
+        # PROFESSIONAL lambda=0.03, 28 days from event_date → e^(-0.03*28) ≈ 0.43
+        # If it used created_at (60 days) it would be e^(-0.03*60) ≈ 0.17
+        assert row[0] > 0.3, "Should decay from event_date, not created_at"
+        assert row[0] < 0.6
+
+    def test_future_event_no_decay(self, repo: GraphRepository):
+        """EVENT node with a future event_date should be pinned at 1.0."""
+        scorer = DecayScoring(repo)
+
+        future = datetime.now(timezone.utc) + timedelta(days=7)
+
+        nid = _insert_node(
+            repo,
+            title="Upcoming Conference",
+            node_type="EVENT",
+            created_at=datetime.now(timezone.utc) - timedelta(days=30),
+            last_accessed=None,
+            properties={"event_date": future.isoformat()},
+            networks=["PROFESSIONAL"],
+        )
+
+        scorer.batch_update_scores()
+
+        row = repo._conn.execute(
+            "SELECT decay_score FROM nodes WHERE id = ?", [nid]
+        ).fetchone()
+        assert row[0] == pytest.approx(1.0, abs=0.001)
+
+    def test_open_commitment_no_decay(self, repo: GraphRepository):
+        """COMMITMENT with status='open' should stay at 1.0 regardless of age."""
+        scorer = DecayScoring(repo)
+
+        nid = _insert_node(
+            repo,
+            title="Buy groceries",
+            node_type="COMMITMENT",
+            created_at=datetime.now(timezone.utc) - timedelta(days=90),
+            last_accessed=None,
+            properties={"status": "open"},
+            networks=["PERSONAL_GROWTH"],
+        )
+
+        scorer.batch_update_scores()
+
+        row = repo._conn.execute(
+            "SELECT decay_score FROM nodes WHERE id = ?", [nid]
+        ).fetchone()
+        assert row[0] == pytest.approx(1.0, abs=0.001)
+
+    def test_active_goal_no_decay(self, repo: GraphRepository):
+        """GOAL with status='active' should stay at 1.0."""
+        scorer = DecayScoring(repo)
+
+        nid = _insert_node(
+            repo,
+            title="Learn Rust",
+            node_type="GOAL",
+            created_at=datetime.now(timezone.utc) - timedelta(days=60),
+            last_accessed=None,
+            properties={"status": "active"},
+        )
+
+        scorer.batch_update_scores()
+
+        row = repo._conn.execute(
+            "SELECT decay_score FROM nodes WHERE id = ?", [nid]
+        ).fetchone()
+        assert row[0] == pytest.approx(1.0, abs=0.001)
+
+    def test_completed_commitment_decays(self, repo: GraphRepository):
+        """COMMITMENT with status='completed' should decay normally."""
+        scorer = DecayScoring(repo)
+
+        nid = _insert_node(
+            repo,
+            title="Submit report",
+            node_type="COMMITMENT",
+            created_at=datetime.now(timezone.utc) - timedelta(days=60),
+            last_accessed=None,
+            properties={"status": "completed"},
+            networks=["PROFESSIONAL"],
+        )
+
+        scorer.batch_update_scores()
+
+        row = repo._conn.execute(
+            "SELECT decay_score FROM nodes WHERE id = ?", [nid]
+        ).fetchone()
+        assert row[0] < 1.0
+        # PROFESSIONAL lambda=0.03, 60 days → e^(-0.03*60) ≈ 0.17
+        assert row[0] < 0.3
+
+    def test_access_count_slows_decay(self, repo: GraphRepository):
+        """A frequently accessed node should decay slower than a never-accessed one."""
+        scorer = DecayScoring(repo)
+        old = datetime.now(timezone.utc) - timedelta(days=30)
+
+        nid_zero = _insert_node(
+            repo,
+            title="Rarely Seen",
+            last_accessed=old,
+            access_count=0,
+            networks=["SOCIAL"],
+        )
+
+        nid_many = _insert_node(
+            repo,
+            title="Frequently Seen",
+            last_accessed=old,
+            access_count=10,
+            networks=["SOCIAL"],
+        )
+
+        scorer.batch_update_scores()
+
+        row_zero = repo._conn.execute(
+            "SELECT decay_score FROM nodes WHERE id = ?", [nid_zero]
+        ).fetchone()
+        row_many = repo._conn.execute(
+            "SELECT decay_score FROM nodes WHERE id = ?", [nid_many]
+        ).fetchone()
+
+        assert row_many[0] > row_zero[0], "Higher access_count should slow decay"
 
 
 class TestGetDecayedNodes:

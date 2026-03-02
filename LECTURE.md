@@ -1,2134 +1,1883 @@
-# Memora System Architecture — Full Lecture
+# Memora: Building a Personal Knowledge Graph Engine
 
-> **Course Context:** CSC148 — Introduction to Computer Science, UTM
-> **Prerequisites assumed:** Python, basic OOP (classes, inheritance, composition), abstract data types (stacks, queues, linked lists, trees), recursion, Big-O notation
-> **New concepts introduced:** Knowledge graphs, AI agents, databases, APIs, web architecture, vector search, retrieval-augmented generation
+## A Complete Technical Lecture for CSC148 Students
+
+**Course:** CSC148 — Introduction to Computer Science, University of Toronto Mississauga
+**Duration:** 60-75 minutes of reading
+**Prerequisites:** Familiarity with Python, basic OOP, elementary data structures
+
+---
+
+## Table of Contents
+
+1. [Part 1: What Are We Building and Why?](#part-1-what-are-we-building-and-why)
+2. [Part 2: System Architecture — The Big Picture](#part-2-system-architecture--the-big-picture)
+3. [Part 3: The Knowledge Graph — Core Data Structure](#part-3-the-knowledge-graph--core-data-structure)
+4. [Part 4: Network Classification](#part-4-network-classification)
+5. [Part 5: The 9-Stage Extraction Pipeline](#part-5-the-9-stage-extraction-pipeline)
+6. [Part 6: Entity Resolution](#part-6-entity-resolution)
+7. [Part 7: The AI Council](#part-7-the-ai-council)
+8. [Part 8: The Living Graph Engine](#part-8-the-living-graph-engine)
+9. [Part 9: Truth Layer and Verified Facts](#part-9-truth-layer-and-verified-facts)
+10. [Part 10: Adaptive RAG Pipeline](#part-10-adaptive-rag-pipeline)
+11. [Part 11: Action Engine, Outcomes, and Patterns](#part-11-action-engine-outcomes-and-patterns)
+12. [Part 12: Investigation, Timeline, and People Intel](#part-12-investigation-timeline-and-people-intel)
+13. [Part 13: The CLI Interface](#part-13-the-cli-interface)
+14. [Part 14: Putting It All Together — Full Walkthrough](#part-14-putting-it-all-together--full-walkthrough)
 
 ---
 
 ## Part 1: What Are We Building and Why?
 
-### 1.1 The Problem We're Solving
+### The Problem: Life Fragmentation
 
-Think about your life right now as a UTM student. You have:
+You are a second-year UTM student. Think about everything that happened in the last month:
 
-- Lecture notes in Google Docs
-- Assignments tracked in Quercus
-- A calendar in Google Calendar
-- Texts and group chats on iMessage and Discord
-- Financial stuff in your bank app
-- Health goals in some fitness app
-- Side project ideas scattered in Apple Notes
+- You attended 12 CSC148 lectures and 4 labs
+- You had coffee with three different friends, each time discussing different side projects
+- You promised your study group partner Sam you would review their A2 code by Friday
+- You read four articles about graph databases for your independent study
+- You decided to skip the campus hackathon to focus on midterms
+- Your manager at your part-time job mentioned a Python project you might contribute to
 
-Here is the problem: **none of these tools talk to each other.**
+Where does all of this live? Some is in your head, some in scattered notes, some in text messages. The **connections** between these fragments — the fact that your manager's Python project uses graph algorithms you just learned in CSC148, or that your friend Sarah is also interested in the hackathon you decided to skip — are invisible.
 
-When you're stressed about a midterm, your calendar doesn't know that you also promised your friend you'd help them move this weekend, that you have a CSC148 assignment due Monday, and that you've been skipping the gym for two weeks. No single tool sees the full picture of your life.
+**Memora** is a personal knowledge graph engine that captures these fragments, extracts their structure, discovers hidden connections, and helps you navigate your life as an interconnected system rather than isolated pieces.
 
-Research backs this up:
+### The Palantir Analogy
 
-- **67% of saved notes are never revisited** — your notes app is a graveyard
-- **No tool models life holistically** — calendar, CRM, task manager, journal, none of them talk
-- **Cross-domain connections are invisible** — stress correlates with overcommitment correlates with declining grades, but no tool sees this
+Palantir Technologies builds intelligence analysis platforms that help analysts connect disparate data sources. Their Gotham platform ingests intelligence reports, financial records, communication metadata, and geospatial data, then builds a unified knowledge graph where analysts can discover non-obvious connections.
 
-### 1.2 What Memora Actually Does
+Memora is the same idea, but for your personal life. Instead of intelligence reports, we ingest your notes, conversations, and thoughts. Instead of tracking threat networks, we track your academic, social, professional, and personal networks. Instead of intelligence analysts querying Gotham, you query Memora through a terminal interface to understand your own life.
 
-Memora is a **decision intelligence platform**. You tell it things — by typing, speaking, or taking screenshots — and it builds a structured **knowledge graph** of your life. Then three AI agents continuously reason over that graph to:
+### CSC148 Connection Map
 
-1. Surface hidden connections ("Your stress mentions correlate with your 4 overdue commitments")
-2. Flag things you've forgotten ("You promised Sam an intro to your VC contact 14 days ago — still open")
-3. Give you a morning briefing ("Here's what needs your attention today, ranked by urgency")
-4. Help you make decisions ("Should I take this job offer?" → it considers your commitments, finances, goals, relationships, and current market data)
+Every major component in Memora maps directly to concepts you study in CSC148:
 
-**This is not a note-taking app.** The input is context capture. The output is **better decisions**.
-
-### 1.3 The Palantir Analogy
-
-To understand what Memora is architecturally, you need to know about Palantir Technologies.
-
-Palantir is a $250B+ company that builds software for governments and large enterprises. Their core product does one thing: **take siloed, disconnected data from dozens of sources and weave it into a unified knowledge graph** where entities (people, places, events, organizations) are linked by typed relationships. Then AI agents reason over that graph to surface hidden connections, predict outcomes, and recommend actions.
-
-For example, in intelligence work:
-- A phone number appears in two unrelated cases → Palantir links them
-- A financial transaction connects to a known suspect → flagged automatically
-- An analyst asks "Who are the key players in this network?" → Palantir traverses the graph
-
-**Memora is that same architecture applied to a single human life.** Instead of government databases, the inputs are your voice memos, text captures, and screenshots. Instead of intelligence analysts, the consumer is you. The entity resolution, the graph construction, the agent-driven reasoning — it's all structurally identical to what Palantir does at nation-state scale.
-
-### 1.4 Connecting to CSC148
-
-If you've taken CSC148, you already know the foundational concepts Memora is built on:
-
-| CSC148 Concept | How Memora Uses It |
-|---|---|
-| **Trees** | The graph ontology is a hierarchical type system (NodeType → specific properties) |
-| **Graphs** | The entire knowledge graph is a directed, labeled, weighted graph — nodes and edges with typed attributes |
-| **Abstract Data Types** | Every node type (PERSON, EVENT, COMMITMENT) is an ADT with defined operations |
-| **Classes and Inheritance** | Pydantic models use inheritance — `NodeProposal` extends `BaseModel`, all node types share a base schema |
-| **Composition** | Agents are composed of tools, context sources, and an LLM backbone |
-| **Recursion** | Graph traversal (BFS/DFS) is used in bridge discovery, neighborhood expansion, and gap detection |
-| **Big-O** | Vector search is O(log N) via HNSW index. Bridge discovery per-capture is O(log N). Decay scoring is O(N) daily |
-| **Queues** | The proposal review system is a priority queue ranked by confidence |
-| **Hash tables** | Content deduplication uses SHA-256 hashing. Entity resolution uses hash-based exact matching |
-
-The point: you are not starting from zero. This lecture will connect every architectural concept back to things you already understand.
+| Memora Component | CSC148 Topic | Why It Matters |
+|---|---|---|
+| Knowledge Graph | Trees & Graphs | Nodes and edges form a directed multigraph |
+| Node Type Hierarchy | Inheritance & Polymorphism | `BaseNode` with 12 specialized subclasses |
+| Edge Constraints | ADT Invariants | Ontology rules enforce valid relationships |
+| 9-Stage Pipeline | Stacks & Queues / Pipelines | Sequential processing with state passing |
+| Entity Resolution | Hash Tables & Scoring | Multi-signal weighted matching |
+| BFS Path Finding | BFS / Graph Traversal | Shortest path between any two nodes |
+| Causal Chain Tracing | BFS along Typed Edges | Temporal graph traversal |
+| Decay Scoring | Recursion & Math Functions | Exponential decay with logarithmic damping |
+| Network Classification | ADTs / Enum Types | 7 context networks with keyword heuristics |
+| Pattern Detection | Graph Analysis / Iteration | 11 behavioral detectors scanning the whole graph |
+| SM-2 Spaced Repetition | State Machines | Repetition scheduling algorithm |
+| CLI Command Routing | Dispatch Tables / REPL | Read-Eval-Print Loop with command registry |
+| Big-O Analysis | Complexity Analysis | Every operation has measurable cost |
 
 ---
 
 ## Part 2: System Architecture — The Big Picture
 
-### 2.1 What is "System Architecture"?
+### The 5-Layer Architecture
 
-In CSC148, you learned to design individual classes and data structures. **System architecture** is the next level up — it's how you organize an entire application into components, decide how those components communicate, and choose what technologies each component uses.
-
-Think of it like this:
-- **CSC148**: You designed a `LinkedList` class with `insert`, `remove`, `search` methods
-- **System architecture**: You decide that your application has a **frontend** (what the user sees), a **backend** (the logic), a **database** (where data lives), and **AI agents** (that reason over the data) — and you define exactly how these pieces interact
-
-### 2.2 The Five Layers
-
-Memora is organized into five horizontal layers. Each layer has a specific responsibility and only talks to the layers directly adjacent to it. This is called **layered architecture** — a fundamental pattern in software engineering.
+Memora is organized into five layers, each with clear responsibilities:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  PRESENTATION    What the user sees and interacts with                 │
-│                  (React web app, graph visualization, capture input)    │
-├─────────────────────────────────────────────────────────────────────────┤
-│  API             The communication layer between frontend and backend  │
-│                  (REST endpoints, WebSocket for streaming)              │
-├─────────────────────────────────────────────────────────────────────────┤
-│  INTELLIGENCE    AI agents that reason over the data                   │
-│                  (Archivist, Strategist, Researcher, Orchestrator)      │
-├─────────────────────────────────────────────────────────────────────────┤
-│  CORE ENGINE     Deterministic algorithms that run on schedule         │
-│                  (Decay, bridge discovery, health scoring, SM-2)        │
-├─────────────────────────────────────────────────────────────────────────┤
-│  INFRASTRUCTURE  Where data actually lives                             │
-│                  (Graph database, vector database, embedding model)     │
-└─────────────────────────────────────────────────────────────────────────┘
++------------------------------------------------------------+
+|                     Layer 5: CLI Interface                   |
+|  MemoraApp REPL, ANSI rendering, 20 subcommands, tracker   |
++------------------------------------------------------------+
+|                     Layer 4: AI Council                      |
+|  Archivist | Strategist | Researcher | Orchestrator         |
+|  (LLM extraction, analysis, external research, routing)     |
++------------------------------------------------------------+
+|                     Layer 3: Core Engines                    |
+|  Pipeline | Entity Resolution | Actions | Outcomes          |
+|  Investigation | Timeline | People Intel | Patterns         |
+|  Briefing | Decay | Health | Bridges | Truth Layer          |
++------------------------------------------------------------+
+|                     Layer 2: Graph + Vector Storage          |
+|  DuckDB (nodes, edges, proposals) | Weaviate (embeddings)  |
++------------------------------------------------------------+
+|                     Layer 1: Models & Ontology               |
+|  Pydantic models | Edge constraints | Network keywords      |
++------------------------------------------------------------+
 ```
 
-**Why layers matter:**
+### Technology Stack
 
-Imagine you want to swap the AI model from GPT-5-nano to a different provider. With layers, you only change the Intelligence layer. The Core Engine doesn't care — it runs deterministic algorithms that never touch the LLM. The database doesn't care — it just stores nodes and edges. The frontend doesn't care — it just displays whatever the API returns.
-
-This is the **separation of concerns** principle you learned in CSC148, but applied to an entire system instead of a single class.
-
-### 2.3 Why "Local-First"?
-
-Memora runs entirely on your computer. There's no cloud server, no account to create, no monthly subscription to the platform itself. The databases are **embedded** — they run inside the application process, storing files on your disk.
-
-Why does this matter?
-
-1. **Privacy**: Your life data never leaves your machine. The only external call is to the OpenAI API when AI agents need to think, and even then, the Researcher agent anonymizes queries before searching the web.
-
-2. **Cost**: Infrastructure cost is literally $0. The only cost is the LLM API usage ($10–15/month).
-
-3. **Ownership**: You own your data files. If Memora the company disappeared tomorrow, your graph database files are still on your disk, queryable with standard tools.
-
-4. **Lesson from history**: When Meta acquired Limitless/Rewind in December 2025, users lost their data permanently. When Mem.ai failed (called a "$40M failure"), users had no proprietary data structures to export. Memora avoids this by keeping everything local.
-
-### 2.4 Technology Choices Explained
-
-Here's every technology in the stack, and why it was chosen. Since you're in CSC148, I'll explain the ones you may not have encountered:
-
-**Frontend (what the user sees):**
-
-| Technology | What It Is | Why It's Used |
+| Layer | Technology | Purpose |
 |---|---|---|
-| **React** | A JavaScript library for building user interfaces. You define components (like classes) that render HTML. | Industry standard. Component model maps cleanly to Memora's views |
-| **TypeScript** | JavaScript with type annotations. Like adding type hints to Python. | Catches bugs at compile time, essential for large codebases |
-| **Vite** | A build tool that bundles your frontend code for the browser. Like compiling, but for web code. | Extremely fast hot-reload during development |
-| **Sigma.js** | A library for rendering graphs (nodes + edges) in the browser using WebGL (GPU acceleration). | Can handle 10,000+ nodes smoothly. The graph is the core UI |
-| **TipTap** | A rich text editor component. Think Google Docs, but embeddable in your app. | Users need a good text input for captures |
-| **Tailwind CSS** | A utility-first CSS framework. Instead of writing custom CSS, you compose utility classes. | Fast styling without writing custom CSS files |
-| **Zustand** | A lightweight state management library. Like a global dictionary that all components can read/write. | Simpler than Redux. Manages graph state, agent state, notifications |
+| Runtime | Python 3.12+ | Core language |
+| Models | Pydantic v2 | Data validation, serialization, schema generation |
+| Graph Storage | DuckDB | Embedded analytical database for nodes, edges, proposals |
+| Vector Storage | Weaviate (embedded) | Semantic search with HNSW indexes |
+| Embeddings | sentence-transformers, all-mpnet-base-v2 | 768-dimensional dense vectors |
+| LLM | OpenAI API (gpt-5-nano), Responses API | Structured extraction, analysis, synthesis |
+| Orchestration | LangGraph | Multi-agent state machine coordination |
+| Scheduling | APScheduler | 10 background maintenance jobs |
+| Configuration | pydantic-settings, YAML | Env vars + config file merging |
+| Interface | ANSI terminal (raw Python) | Palantir-inspired CLI with boxes, sparklines, colors |
 
-**Backend (the logic):**
+> **CSC148 Connection:** Notice that this is a **composition-heavy** architecture. The `MemoraApp` class does not inherit from anything special — it *composes* a `GraphRepository`, a `VectorStore`, an `ExtractionPipeline`, an `Orchestrator`, and various engines. This is the "has-a" pattern from CSC148: the app *has a* pipeline, the pipeline *has a* repository. Composition over inheritance is a core design principle.
 
-| Technology | What It Is | Why It's Used |
-|---|---|---|
-| **Python 3.12+** | The language you already know from CSC148 | AI/ML ecosystem, Pydantic, FastAPI all Python-native |
-| **FastAPI** | A Python web framework for building APIs. You define functions that handle HTTP requests. | Auto-generates docs, built-in validation, async support |
-| **Uvicorn** | An ASGI server — the actual process that listens for HTTP requests and routes them to FastAPI. Like a receptionist at a hotel desk. | Production-grade, handles concurrent connections |
-| **Pydantic** | A Python library for data validation using type annotations. Like dataclasses, but with automatic validation. | The Archivist's output is validated against Pydantic schemas |
-| **LangGraph** | A framework for building multi-agent AI systems with state machines. | Orchestrates the three agents with defined state transitions |
+### Local-First Design
 
-**AI / Intelligence:**
+Everything runs on your machine. The DuckDB database is a single file at `~/.memora/graph/memora.duckdb`. The Weaviate vector store runs as an embedded process with data at `~/.memora/vectors/`. The sentence-transformers model downloads once and caches locally at `~/.memora/models/`. The only network call is to OpenAI's API for LLM inference.
 
-| Technology | What It Is | Why It's Used |
-|---|---|---|
-| **OpenAI API** | OpenAI's large language model API, accessed via Responses API. You send text, it sends back text. | Powers the three AI agents (Archivist, Strategist, Researcher) |
-| **GPT-5-nano** | A fast, cheap OpenAI model with structured output (JSON schema mode). | Used for all three agents — constrained by Pydantic schemas for reliable extraction |
-| **MCP (Model Context Protocol)** | A standard protocol for connecting AI agents to external tools (like web search). | The Researcher uses 6 MCP servers to access the internet |
-
-**Data / Infrastructure:**
-
-| Technology | What It Is | Why It's Used |
-|---|---|---|
-| **DuckDB** | An embedded analytical SQL database (like SQLite but much faster for analytics). Stores the knowledge graph as relational tables. | Zero infrastructure cost, runs in-process, proven technology |
-| **LanceDB** | An embedded vector database. Stores numerical vectors and enables similarity search. | Enables semantic search — "find nodes similar to this query" |
-| **all-mpnet-base-v2** | A local embedding model (sentence-transformers) that converts text into 768-dimensional numerical vectors. | Runs locally (no API cost), high quality English embeddings |
-| **APScheduler** | A Python library for scheduling recurring jobs. Like cron, but in Python. | Runs background mechanics (decay, bridges, health) on schedule |
+This means:
+- Your data never leaves your machine (except for LLM queries, which are ephemeral)
+- No server to deploy or maintain
+- No accounts to create
+- Works offline for everything except LLM-powered features
 
 ---
 
 ## Part 3: The Knowledge Graph — Core Data Structure
 
-### 3.1 What Is a Knowledge Graph?
+### What Is a Knowledge Graph?
 
-In CSC148, you studied graphs: nodes connected by edges. A **knowledge graph** is a specific kind of graph where:
+In CSC148, you learn about graphs: vertices connected by edges. A knowledge graph is a graph where:
+- **Nodes** represent real-world entities (people, events, ideas, decisions)
+- **Edges** represent typed relationships between entities
+- Both nodes and edges carry **properties** (metadata)
 
-1. **Nodes represent real-world entities** (people, events, ideas) — not just abstract values
-2. **Edges represent typed relationships** between entities (not just "connected to")
-3. **Both nodes and edges carry properties** (metadata, timestamps, confidence scores)
+Memora's knowledge graph is a **directed labeled multigraph**: edges have direction (source to target), edges have types (labels), and multiple edges can connect the same pair of nodes.
 
-Here's the CSC148 version of a graph:
+### The BaseNode Class
 
-```python
-# CSC148-style graph
-class Graph:
-    """A simple graph with nodes and edges."""
-    def __init__(self):
-        self._nodes = {}       # {node_id: node_data}
-        self._edges = {}       # {(source, target): edge_data}
-```
-
-Here's what Memora's knowledge graph adds:
+Every node in Memora inherits from `BaseNode`, defined using Pydantic's `BaseModel`:
 
 ```python
-# Memora-style knowledge graph (conceptual)
-class KnowledgeGraph:
-    """A typed, attributed knowledge graph."""
-    def __init__(self):
-        self._nodes = {}       # {UUID: TypedNode}
-        self._edges = {}       # {UUID: TypedEdge}
-        self._networks = {}    # {NetworkType: set[UUID]}  subgraph membership
-        self._index = None     # HNSW vector index for semantic search
-```
+from pydantic import BaseModel, Field
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any
 
-The key differences:
-- Every node has a **type** (PERSON, EVENT, COMMITMENT, etc.)
-- Every edge has a **category** and **subtype** (SOCIAL.KNOWS, TEMPORAL.TRIGGERED, etc.)
-- Nodes carry **embeddings** (numerical vectors for similarity search)
-- Nodes belong to **networks** (subgraphs representing life domains)
-- Everything has **confidence scores** and **provenance** (where it came from)
+class NodeType(str, Enum):
+    EVENT = "EVENT"
+    PERSON = "PERSON"
+    COMMITMENT = "COMMITMENT"
+    DECISION = "DECISION"
+    GOAL = "GOAL"
+    FINANCIAL_ITEM = "FINANCIAL_ITEM"
+    NOTE = "NOTE"
+    IDEA = "IDEA"
+    PROJECT = "PROJECT"
+    CONCEPT = "CONCEPT"
+    REFERENCE = "REFERENCE"
+    INSIGHT = "INSIGHT"
 
-### 3.2 Nodes: The Entities
-
-Memora has **12 node types** organized into two clusters:
-
-**Life Context Nodes** — things that *happen* in your life:
-
-| Type | What It Represents | Example |
-|---|---|---|
-| `EVENT` | Something that happened or will happen | "Coffee meeting with Sam on Feb 25" |
-| `PERSON` | A person in your life | "Sam Chen — investor contact" |
-| `COMMITMENT` | A promise made (by you or to you) | "Sam will intro me to his investor by Friday" |
-| `DECISION` | A choice you made or need to make | "Decided to focus on graph differentiation" |
-| `GOAL` | Something you're working toward | "Launch Memora MVP by March 31" |
-| `FINANCIAL_ITEM` | A monetary event | "$5.40 Starbucks receipt on Feb 20" |
-
-**Knowledge Nodes** — things you *know* or *think*:
-
-| Type | What It Represents | Example |
-|---|---|---|
-| `NOTE` | An observation or reflection | "Sam thinks we should emphasize graph differentiation" |
-| `IDEA` | A concept you're developing | "What if we added Obsidian vault import?" |
-| `PROJECT` | An organized effort with deliverables | "Memora — decision intelligence platform" |
-| `CONCEPT` | An abstract concept you're learning | "Entity resolution — deduplicating graph nodes" |
-| `REFERENCE` | An external source | "Palantir Foundry documentation" |
-| `INSIGHT` | A cross-domain realization | "My stress correlates with open commitment count" |
-
-**Why two clusters?** The highest-value connections are the ones that **cross clusters**. When a CONCEPT you're studying in CSC148 (knowledge) connects to a PROJECT you're building (life context), that's where the magic happens. These cross-cluster edges are the ones Memora's bridge discovery algorithm specifically looks for.
-
-### 3.3 Understanding Node Properties with Python
-
-Every node, regardless of type, carries a set of shared properties. Let's look at this as a Python class hierarchy — something you're very familiar with from CSC148:
-
-```python
-from __future__ import annotations
-from dataclasses import dataclass, field
-from datetime import datetime
-from uuid import uuid4
-import hashlib
-
-
-@dataclass
-class BaseNode:
-    """
-    The base class for all nodes in Memora's knowledge graph.
-
-    CSC148 connection: This is the abstract base class pattern.
-    All 12 node types inherit from this class.
-    """
-    # Identity
-    id: str = field(default_factory=lambda: str(uuid4()))
-    content_hash: str = ""                # SHA-256 for deduplication
-
-    # Timestamps
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-
-    # Content
-    title: str = ""
+class BaseNode(BaseModel):
+    """Shared properties for all graph nodes."""
+    id: UUID = Field(default_factory=uuid4)
+    node_type: NodeType
+    title: str
     content: str = ""
-
-    # Embeddings (for semantic search — explained in Part 6)
-    embedding: list[float] = field(default_factory=list)  # 768 dimensions
-    # sparse_embedding stored separately
-
-    # Confidence & Trust
-    confidence: float = 0.0      # 0.0 to 1.0 — how sure is the Archivist?
-    human_approved: bool = False  # has a human verified this?
-    proposed_by: str = ""         # which AI agent created this?
-
-    # Context
-    networks: list[str] = field(default_factory=list)  # which life domains
-    source_capture_id: str = ""   # link back to raw input
-    tags: list[str] = field(default_factory=list)
-
-    # Decay & Memory (explained in Part 8)
+    content_hash: str = ""
+    properties: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    networks: list[NetworkType] = Field(default_factory=list)
+    human_approved: bool = False
+    proposed_by: str = ""
+    source_capture_id: UUID | None = None
     access_count: int = 0
     last_accessed: datetime | None = None
-    decay_score: float = 1.0     # 1.0 = fresh, 0.0 = forgotten
-    review_date: datetime | None = None  # SM-2 spaced repetition
+    decay_score: float = 1.0
+    review_date: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def compute_content_hash(self) -> str:
-        """
-        SHA-256 hash of content for deduplication.
+        """Compute SHA-256 hash of title + content for dedup."""
+        import hashlib
+        raw = f"{self.title}|{self.content}"
+        self.content_hash = hashlib.sha256(raw.encode()).hexdigest()
+        return self.content_hash
+```
 
-        CSC148 connection: This is just a hash function.
-        If two nodes have identical content, they get the same hash.
-        Used for O(1) duplicate detection.
-        """
-        return hashlib.sha256(self.content.encode()).hexdigest()
+> **CSC148 Connection:** This is a textbook example of **inheritance with shared interface**. `BaseNode` defines the contract that every node type must satisfy. The `content_hash` method demonstrates **hashing** — the same concept behind Python dictionaries. The `Field(ge=0.0, le=1.0)` on `confidence` is a **class invariant** enforced at construction time, just like ADT preconditions.
 
+### Specialized Node Types (Inheritance)
 
-@dataclass
+Each of the 12 node types extends `BaseNode` with type-specific fields:
+
+```python
+class EventNode(BaseNode):
+    """An event that occurred or is planned."""
+    node_type: NodeType = NodeType.EVENT
+    event_date: datetime | None = None
+    location: str = ""
+    participants: list[str] = Field(default_factory=list)
+    event_type: str = ""
+    duration: str = ""
+    sentiment: str = ""
+    recurring: bool = False
+
 class PersonNode(BaseNode):
-    """
-    A person in the user's life.
-
-    CSC148 connection: This is inheritance.
-    PersonNode IS-A BaseNode with additional person-specific attributes.
-    """
+    """A person in the user's life."""
+    node_type: NodeType = NodeType.PERSON
     name: str = ""
-    aliases: list[str] = field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
     role: str = ""
     relationship_to_user: str = ""
+    contact_info: dict[str, str] = Field(default_factory=dict)
     organization: str = ""
     last_interaction: datetime | None = None
 
-
-@dataclass
 class CommitmentNode(BaseNode):
-    """
-    A promise made by or to the user.
-
-    CSC148 connection: Uses an enum for status — like the
-    state pattern you may have seen.
-    """
+    """A promise or obligation."""
+    node_type: NodeType = NodeType.COMMITMENT
     due_date: datetime | None = None
-    status: str = "open"        # open, completed, overdue, cancelled
-    committed_by: str = ""       # who made the promise
-    committed_to: str = ""       # who it was made to
-    priority: str = "medium"     # low, medium, high, critical
+    status: CommitmentStatus = CommitmentStatus.OPEN
+    committed_by: str = ""
+    committed_to: str = ""
+    priority: Priority = Priority.MEDIUM
+    description: str = ""
 
-
-@dataclass
 class GoalNode(BaseNode):
-    """A goal the user is working toward."""
+    """A goal being pursued."""
+    node_type: NodeType = NodeType.GOAL
     target_date: datetime | None = None
-    progress: float = 0.0        # 0.0 to 1.0
-    milestones: list[dict] = field(default_factory=list)
-    status: str = "active"       # active, paused, achieved, abandoned
+    progress: float = Field(default=0.0, ge=0.0, le=1.0)
+    milestones: list[dict[str, Any]] = Field(default_factory=list)
+    status: GoalStatus = GoalStatus.ACTIVE
+    priority: Priority = Priority.MEDIUM
+    success_criteria: str = ""
+
+class IdeaNode(BaseNode):
+    """An idea at some stage of development."""
+    node_type: NodeType = NodeType.IDEA
+    maturity: IdeaMaturity = IdeaMaturity.SEED
+    domain: str = ""
+    potential_impact: str = ""
 ```
 
-**Key insight for CSC148 students:** Look at the inheritance hierarchy. `PersonNode`, `CommitmentNode`, `GoalNode` all inherit from `BaseNode`. They all get `id`, `content_hash`, `embedding`, `confidence`, `decay_score`, etc. for free. The type-specific properties (like `due_date` for commitments or `name` for people) are added by the subclass. This is exactly the inheritance pattern you practice in CSC148 — the only difference is that in production, we use Pydantic instead of dataclasses (Pydantic adds automatic validation).
+There are also `DecisionNode`, `FinancialItemNode`, `NoteNode`, `ProjectNode`, `ConceptNode`, `ReferenceNode`, and `InsightNode` — twelve specialized types in total.
 
-### 3.4 Edges: The Relationships
-
-In CSC148, an edge in a graph is typically just a connection between two nodes, maybe with a weight:
+> **CSC148 Connection:** This is **polymorphism** in action. You can write a function that accepts `BaseNode` and it works on any of the 12 types. The `NODE_TYPE_MODEL_MAP` dictionary maps `NodeType` enum values to their corresponding Python classes — this is the **factory pattern** you see in CSC148 when you dispatch on a type tag.
 
 ```python
-# CSC148-style edge
-edge = (source_id, target_id, weight)
+NODE_TYPE_MODEL_MAP: dict[NodeType, type[BaseNode]] = {
+    NodeType.EVENT: EventNode,
+    NodeType.PERSON: PersonNode,
+    NodeType.COMMITMENT: CommitmentNode,
+    # ... all 12 types
+}
 ```
 
-In Memora, edges are **first-class objects** with their own types, categories, and properties:
+### Student Examples
+
+Here is what real nodes look like for a UTM student:
+
+| Node Type | Example Title | Example Content | Networks |
+|---|---|---|---|
+| EVENT | "Coffee with Sam at Tim Hortons" | "Discussed A2 approach for CSC148, Sam suggested using BFS" | ACADEMIC, SOCIAL |
+| PERSON | "Sam Chen" | "Study group partner, CSC148 lab section 102" | ACADEMIC, SOCIAL |
+| COMMITMENT | "Review Sam's A2 code" | "Promised to review by Friday 3pm" | ACADEMIC |
+| DECISION | "Skip campus hackathon" | "Chose to focus on midterms instead" | ACADEMIC, SOCIAL |
+| GOAL | "Get 85+ in CSC148" | "Target: A- or higher, focus on graph algorithms" | ACADEMIC |
+| IDEA | "Graph visualization tool for study notes" | "Use networkx to visualize course concept maps" | ACADEMIC, VENTURES |
+| CONCEPT | "Breadth-First Search" | "Level-by-level graph traversal, O(V+E)" | ACADEMIC |
+
+### The Edge Model
+
+Edges connect nodes with typed, weighted relationships:
 
 ```python
-@dataclass
-class Edge:
-    """
-    A typed, attributed edge in the knowledge graph.
-
-    CSC148 connection: This is like a weighted, directed edge in a graph,
-    but with a type label and additional metadata.
-    """
-    id: str = field(default_factory=lambda: str(uuid4()))
-    source_id: str = ""          # UUID of source node
-    target_id: str = ""          # UUID of target node
-    edge_type: str = ""          # e.g., "KNOWS", "TRIGGERED", "PART_OF"
-    edge_category: str = ""      # e.g., "SOCIAL", "TEMPORAL", "STRUCTURAL"
-    confidence: float = 0.0
+class Edge(BaseModel):
+    """A typed relationship between two nodes."""
+    id: UUID = Field(default_factory=uuid4)
+    source_id: UUID
+    target_id: UUID
+    edge_type: EdgeType
+    edge_category: EdgeCategory
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     weight: float = 1.0
     bidirectional: bool = False
-    properties: dict = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.now)
+    properties: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 ```
 
-There are **7 edge categories** with **28 subtypes**. Here's what each category captures, with examples a student would relate to:
+### 29 Edge Types in 7 Categories
 
-**1. STRUCTURAL** — hierarchy and composition
+Memora defines 29 edge types organized into 7 categories:
+
+**Structural** (hierarchy):
+- `PART_OF`, `CONTAINS`, `SUBTASK_OF`
+
+**Associative** (semantic):
+- `RELATED_TO`, `INSPIRED_BY`, `CONTRADICTS`, `SIMILAR_TO`, `COMPLEMENTS`
+
+**Provenance** (origin tracking):
+- `DERIVED_FROM`, `VERIFIED_BY`, `SOURCE_OF`, `EXTRACTED_FROM`
+
+**Temporal** (time relationships):
+- `PRECEDED_BY`, `EVOLVED_INTO`, `TRIGGERED`, `CONCURRENT_WITH`
+
+**Personal** (user-centric):
+- `COMMITTED_TO`, `DECIDED`, `FELT_ABOUT`, `RESPONSIBLE_FOR`
+
+**Social** (person-to-person):
+- `KNOWS`, `INTRODUCED_BY`, `OWES_FAVOR`, `COLLABORATES_WITH`, `REPORTS_TO`
+
+**Network** (cross-network):
+- `BRIDGES`, `MEMBER_OF`, `IMPACTS`, `CORRELATES_WITH`
+
+> **CSC148 Connection:** The edge type system is an **ADT with invariants**. Each edge type has constraints on what node types can be its source and target. For example, `KNOWS` can only connect `PERSON` to `PERSON`, while `COMMITTED_TO` can only go from `PERSON` to `COMMITMENT`. These constraints are enforced by the ontology validation layer.
+
+### Ontology Constraints
+
+The `EDGE_CONSTRAINTS` dictionary enforces what connections are valid:
+
+```python
+EDGE_CONSTRAINTS: dict[EdgeType, tuple[set[NodeType] | None, set[NodeType] | None]] = {
+    # Social edges: PERSON -> PERSON only
+    EdgeType.KNOWS: ({NodeType.PERSON}, {NodeType.PERSON}),
+    EdgeType.COLLABORATES_WITH: ({NodeType.PERSON}, {NodeType.PERSON}),
+    EdgeType.REPORTS_TO: ({NodeType.PERSON}, {NodeType.PERSON}),
+
+    # Personal edges: PERSON -> specific types
+    EdgeType.COMMITTED_TO: ({NodeType.PERSON}, {NodeType.COMMITMENT}),
+    EdgeType.DECIDED: ({NodeType.PERSON}, {NodeType.DECISION}),
+
+    # Structural: limited to actionable types
+    EdgeType.SUBTASK_OF: (
+        {NodeType.COMMITMENT, NodeType.GOAL, NodeType.PROJECT},
+        {NodeType.COMMITMENT, NodeType.GOAL, NodeType.PROJECT},
+    ),
+
+    # Associative: anything can relate to anything
+    EdgeType.RELATED_TO: (None, None),  # None means "any node type"
+    EdgeType.SIMILAR_TO: (None, None),
+    # ... and so on for all 29 types
+}
+
+def validate_edge(source_type: NodeType, target_type: NodeType, edge_type: EdgeType) -> bool:
+    """Check if an edge type is valid between the given node types."""
+    constraints = EDGE_CONSTRAINTS.get(edge_type)
+    if constraints is None:
+        return False
+    allowed_sources, allowed_targets = constraints
+    if allowed_sources is not None and source_type not in allowed_sources:
+        return False
+    if allowed_targets is not None and target_type not in allowed_targets:
+        return False
+    return True
 ```
-PROJECT("Memora") --[CONTAINS]--> COMMITMENT("Build graph DB")
-GOAL("Graduate") --[CONTAINS]--> COMMITMENT("Pass CSC148")
-COMMITMENT("Pass CSC148") --[SUBTASK_OF]--> GOAL("Graduate")
-```
-This is like a **tree structure** from CSC148. Projects contain commitments, goals contain sub-goals.
 
-**2. ASSOCIATIVE** — semantic relationships
-```
-IDEA("Obsidian import") --[RELATED_TO]--> PROJECT("Memora")
-CONCEPT("Knowledge graphs") --[INSPIRED_BY]--> REFERENCE("Palantir docs")
-NOTE("Sam disagrees") --[CONTRADICTS]--> NOTE("Sam agrees")
-```
-These are the "soft" connections — things that are related but not in a hierarchical way.
+> **CSC148 Connection:** The `validate_edge` function is a **precondition check** — the same concept as checking `is_empty()` before calling `dequeue()` on a queue. It ensures the graph maintains its structural invariants. The `None` sentinel for "any type allowed" is a common pattern in ADT design.
 
-**3. PROVENANCE** — where information came from
-```
-INSIGHT("Stress correlates with overcommitment") --[DERIVED_FROM]--> NOTE("Felt stressed this week")
-FACT("Company X revenue: $50M") --[VERIFIED_BY]--> REFERENCE("SEC filing 2025")
-```
-**CSC148 connection:** This is like keeping track of your sources in an essay. Every piece of information knows where it came from.
+### The Central "You" Node
 
-**4. TEMPORAL** — time-ordered causation
-```
-DECISION("Took the job") --[PRECEDED_BY]--> EVENT("Interview with Company X")
-IDEA("V1 of Memora") --[EVOLVED_INTO]--> IDEA("V2 with Truth Layer")
-EVENT("Missed deadline") --[TRIGGERED]--> COMMITMENT("Apologize to prof")
-```
-These edges create a **timeline** of how things developed. The `EVOLVED_INTO` edge is especially powerful — it tracks how your ideas change over time.
+Every graph has exactly one special node — the "You" node — with a fixed UUID:
 
-**5. PERSONAL** — your stakes and emotions
-```
-PERSON("You") --[COMMITTED_TO]--> COMMITMENT("Submit CSC148 A3")
-PERSON("You") --[DECIDED]--> DECISION("Switch to CS major")
-PERSON("You") --[FELT_ABOUT]--> EVENT("Failed midterm")  # sentiment: negative
+```python
+YOU_NODE_ID = "00000000-0000-0000-0000-000000000001"
 ```
 
-**6. SOCIAL** — people dynamics
-```
-PERSON("Sam") --[KNOWS]--> PERSON("VC Investor")
-PERSON("Prof. Singh") --[INTRODUCED_BY]--> PERSON("Academic advisor")
-PERSON("You") --[OWES_FAVOR]--> PERSON("Sam")  # he helped you move
-```
-
-**7. NETWORK** — cross-domain connections (the gold)
-```
-NODE_IN_HEALTH --[BRIDGES]--> NODE_IN_PROFESSIONAL
-NODE_IN_ACADEMIC --[CORRELATES_WITH]--> NODE_IN_VENTURES
-```
-These are the **highest-value edges** in the entire system. They represent connections that no single-domain tool could ever see. A stress mention in your Health network correlating with overdue commitments in your Professional network — that's a BRIDGES edge.
-
-### 3.5 Context Networks: Subgraphs of Your Life
-
-In CSC148, you learned about graphs. A **subgraph** is a subset of a graph's nodes and edges. Memora organizes the knowledge graph into **7 subgraphs called context networks**, each representing a domain of your life:
-
-| Network | What It Tracks | Student Example |
-|---|---|---|
-| **Academic** | Courses, grades, research, study commitments | CSC148 assignments, lecture notes, study groups |
-| **Professional** | Work, clients, career goals | Part-time job, internship applications |
-| **Financial** | Money in, money out, budgets | Tuition, rent, part-time job income |
-| **Health** | Exercise, sleep, stress, medical | Gym routine, stress levels, doctor visits |
-| **Personal Growth** | Learning, skills, habits | Books you're reading, skills you're developing |
-| **Social** | Friends, family, social events | Friendships, family calls, social gatherings |
-| **Ventures** | Side projects, entrepreneurial ideas | Startup ideas, hackathon projects |
-
-**Critical design point:** A node can belong to **multiple networks**. Your friend "Sam" might be in both Social (he's your friend) and Ventures (he's your co-founder). A commitment to "finish the pitch deck" might be in both Academic (it's for a course project) and Ventures (it's for your startup). These multi-membership nodes are where cross-domain intelligence naturally emerges.
-
-**Network Health:**
-
-Each network has a computed health status:
-
-- 🟢 **On Track** — commitments met, recent engagement
-- 🟡 **Needs Attention** — some open alerts, stale commitments
-- 🔴 **Falling Behind** — multiple overdue items, no recent input
-
-As a student, imagine getting a notification: "Your Academic network is Falling Behind — 3 overdue commitments, no study input in 5 days." That's actionable intelligence no calendar app gives you.
-
-### 3.6 Graph Operations and Complexity
-
-Let's analyze the time complexity of common graph operations — exactly the kind of analysis you do in CSC148:
-
-| Operation | Algorithm | Time Complexity | Notes |
-|---|---|---|---|
-| **Add node** | Insert into DB + vector index | O(log N) | HNSW insertion |
-| **Add edge** | Insert into DB with FK lookup | O(1) amortized | Index-backed |
-| **Find node by ID** | Hash lookup | O(1) | UUID primary key |
-| **Find neighbors** | Index scan on edges | O(degree) | Where degree = number of edges from node |
-| **Semantic search** | HNSW approximate nearest neighbor | O(log N) | Not exact, but ~95% recall |
-| **BFS/DFS traversal** | Standard BFS/DFS | O(V + E) | Same as CSC148! |
-| **Bridge discovery** | Embedding comparison across networks | O(log N) per node | HNSW index per network |
-| **Decay scoring** | Iterate all nodes, apply formula | O(N) | Run once daily |
-
-**CSC148 connection:** The graph traversal algorithms (BFS, DFS) you learned are exactly what Memora uses for things like "find all nodes within 2 hops of this node" (neighborhood expansion) or "find all GOAL nodes with no recent PROGRESS edges" (gap detection).
+This is the ego node. Every other node in the graph is connected to You either directly or through a chain of edges. The pipeline enforces this connectivity: after every commit, orphan nodes are automatically linked to the You node via similarity-based bridges or direct fallback edges. This makes the graph a **connected component** centered on you — like a hub-and-spoke topology in a network.
 
 ---
 
-## Part 4: The Input-to-Graph Pipeline — How Data Gets In
+## Part 4: Network Classification
 
-### 4.1 Pipeline Architecture
+### 7 Context Networks
 
-When you capture something in Memora (type a note, record a voice memo, take a screenshot), it doesn't just get stored — it goes through a **9-stage pipeline** that transforms raw text into structured graph nodes and edges.
-
-This pipeline is the core data flow of the entire system. Every single piece of information traverses all 9 stages.
-
-```
-[You type/speak/photograph something]
-        │
-        ▼
-  Stage 1: Raw Input Capture
-        │   (accept text, voice, or image)
-        ▼
-  Stage 2: Preprocessing
-        │   (transcribe, OCR, normalize — NO AI involved)
-        ▼
-  Stage 3: Archivist Extraction
-        │   (AI reads your text and proposes graph changes)
-        ▼
-  Stage 4: Entity Resolution
-        │   (is "Sam" the same Sam from yesterday?)
-        ▼
-  Stage 5: Graph Proposal Assembly
-        │   (package all changes into one atomic proposal)
-        ▼
-  Stage 6: Validation Gate
-        │   (how confident are we? route accordingly)
-        ├──────────────────┬─────────────────┐
-        ▼                  ▼                 ▼
-  Auto-Approve      Daily Digest      Explicit Confirm
-  (≥ 85% conf.)    (batch review)    (high-impact)
-        │                  │                 │
-        └──────────────────┴─────────────────┘
-        │
-        ▼
-  Stage 8: Graph Commit
-        │   (atomic transaction — all or nothing)
-        ▼
-  Stage 9: Post-Commit Processing
-        │   (generate embeddings, discover bridges, check notifications)
-        ▼
-  [Knowledge graph updated]
-```
-
-Let's walk through each stage in detail with a concrete example.
-
-### 4.2 Running Example
-
-You open Memora and type:
-
-> "Had coffee with Sam Chen today. He promised to introduce me to his investor by next Friday. We discussed the Memora pitch deck — he thinks we should emphasize the graph differentiation more."
-
-Let's trace this through all 9 stages.
-
-### 4.3 Stage 1: Raw Input Capture
-
-**What happens:** The system accepts your text and creates a `Capture` record.
+Every node in Memora belongs to one or more **context networks** — domains of your life:
 
 ```python
-capture = {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "modality": "text",
-    "raw_content": "Had coffee with Sam Chen today. He promised to introduce me to his investor by next Friday. We discussed the Memora pitch deck — he thinks we should emphasize the graph differentiation more.",
-    "content_hash": "a1b2c3d4...",   # SHA-256 of the content
-    "created_at": "2026-02-27T10:30:00Z"
+class NetworkType(str, Enum):
+    ACADEMIC = "ACADEMIC"
+    PROFESSIONAL = "PROFESSIONAL"
+    FINANCIAL = "FINANCIAL"
+    HEALTH = "HEALTH"
+    PERSONAL_GROWTH = "PERSONAL_GROWTH"
+    SOCIAL = "SOCIAL"
+    VENTURES = "VENTURES"
+```
+
+Student examples:
+
+| Network | What It Contains | Student Example |
+|---|---|---|
+| ACADEMIC | Courses, professors, assignments, grades | "CSC148 A2 submission", "Prof. Liu's office hours" |
+| PROFESSIONAL | Job, internship, career | "Part-time dev job at startup", "Resume update" |
+| FINANCIAL | Money, expenses, budget | "Textbook purchase $85", "Part-time paycheck" |
+| HEALTH | Exercise, sleep, mental health | "Gym session", "Midterm stress management" |
+| PERSONAL_GROWTH | Skills, learning, habits | "Learning React tutorial", "Daily journaling" |
+| SOCIAL | Friends, family, gatherings | "Birthday party for Alex", "Study group hangout" |
+| VENTURES | Side projects, startups, ideas | "Study tool MVP", "Hackathon app idea" |
+
+### Keyword-Based Network Suggestion
+
+The `suggest_networks()` function uses keyword matching to automatically classify text into networks:
+
+```python
+NETWORK_KEYWORDS: dict[str, list[str]] = {
+    "ACADEMIC": [
+        "course", "class", "professor", "grade", "exam", "study", "research",
+        "paper", "thesis", "lecture", "assignment", "university", "college",
+        "semester", "GPA", "curriculum", "syllabus", "academic",
+    ],
+    "PROFESSIONAL": [
+        "work", "job", "client", "meeting", "project", "deadline", "colleague",
+        "manager", "deliverable", "sprint", "standup", "promotion", "salary",
+        "office", "career", "resume", "interview", "company",
+    ],
+    "SOCIAL": [
+        "friend", "family", "party", "dinner", "birthday", "relationship",
+        "hangout", "call", "catch up", "wedding", "reunion", "favor",
+        "gift", "social", "gathering",
+    ],
+    # ... FINANCIAL, HEALTH, PERSONAL_GROWTH, VENTURES similarly defined
 }
+
+def suggest_networks(text: str) -> list[tuple[str, float]]:
+    """Suggest networks based on keyword matching in text."""
+    text_lower = text.lower()
+    scores: list[tuple[str, float]] = []
+
+    for network, keywords in NETWORK_KEYWORDS.items():
+        matches = sum(1 for kw in keywords if kw.lower() in text_lower)
+        if matches > 0:
+            confidence = min(0.95, 0.3 + (matches * 0.15))
+            scores.append((network, confidence))
+
+    scores.sort(key=lambda x: x[1], reverse=True)
+    return scores
 ```
 
-**The SHA-256 hash** is used for **deduplication**. If you accidentally submit the same text twice, the system detects that the hash already exists and skips processing.
+> **CSC148 Connection:** This is a scoring algorithm with **linear scan** — O(K * W) where K is the number of keywords and W is proportional to text length. The `min(0.95, 0.3 + matches * 0.15)` formula is a **clamped linear function** that maps match count to confidence. With 1 match: 0.45 confidence. With 4 matches: 0.90. Never exceeds 0.95, because keyword matching alone should not yield absolute certainty.
 
-**CSC148 connection:** This is a hash table lookup — O(1) to check if we've seen this content before.
+---
 
-**Design constraint:** This stage must complete in **< 2 seconds**. If capture is slow, users won't use it. Zero friction is the design goal.
+## Part 5: The 9-Stage Extraction Pipeline
 
-### 4.4 Stage 2: Preprocessing
+### Overview
 
-**What happens:** Deterministic normalization. No AI involved — this ensures reproducibility.
+When you type "Had coffee with Sam, discussed BFS for A2, promised to review his code by Friday" into Memora, it passes through a 9-stage async pipeline that transforms raw text into structured graph data:
 
-For our text example:
-1. ~~Transcription~~ (not needed — it's already text)
-2. ~~OCR~~ (not needed — no image)
-3. **Text normalization**:
-   - "today" → `2026-02-27` (resolved to actual date)
-   - "next Friday" → `2026-03-06` (resolved to actual date)
-   - "Sam Chen" → normalized form
-4. **Language detection**: English
-5. **Dedup check**: Content hash is new → proceed
-
-After preprocessing:
-```python
-processed = {
-    "content": "Had coffee with Sam Chen on 2026-02-27. He promised to introduce me to his investor by 2026-03-06. We discussed the Memora pitch deck — he thinks we should emphasize the graph differentiation more.",
-    "detected_dates": ["2026-02-27", "2026-03-06"],
-    "detected_names": ["Sam Chen"],
-    "language": "en"
-}
+```
+Stage 1: Raw Input Capture
+    |
+Stage 2: Preprocessing (normalize dates, currency, detect language, compute hash)
+    |
+Stage 3: Archivist Extraction (LLM -> GraphProposal)
+    |
+Stage 4: Entity Resolution (match against existing nodes)
+    |
+Stage 5: Proposal Assembly (apply merge decisions)
+    |
+Stage 6: Validation Gate (route: auto/digest/explicit)
+    |
+Stage 7: Review (store proposal, auto-approve if qualified)
+    |
+Stage 8: Graph Commit (atomic DuckDB transaction)
+    |
+Stage 9: Post-Commit (embeddings, edge weights, bridges, health, truth layer)
 ```
 
-**Why is this stage deterministic (no AI)?** Two reasons:
-1. **Reproducibility**: Given the same input, you always get the same output. This is important for debugging.
-2. **Cost**: This stage runs on every capture. Making it deterministic means it costs $0.
+### Pipeline State
 
-### 4.5 Stage 3: Archivist Extraction — The Key Stage
-
-**What happens:** The Archivist AI agent reads the processed text and proposes structured graph changes.
-
-This is where the **LLM (Large Language Model)** comes in for the first time. The Archivist is given:
-
-1. **The graph schema** (all 12 node types, 7 edge categories, their properties)
-2. **Existing relevant nodes** (fetched via semantic search — "do we already know about Sam Chen?")
-3. **The processed text** (from Stage 2)
-
-And it produces a `GraphProposal` — a structured JSON object describing exactly what nodes and edges to create or update.
-
-For our example, the Archivist would produce something like:
-
-```python
-proposal = GraphProposal(
-    source_capture_id="550e8400...",
-    timestamp="2026-02-27T10:30:00Z",
-    confidence=0.88,
-
-    nodes_to_create=[
-        NodeProposal(
-            temp_id="temp_1",
-            node_type="EVENT",
-            title="Coffee meeting with Sam Chen",
-            content="Had coffee with Sam Chen to discuss Memora pitch deck",
-            properties={"event_date": "2026-02-27", "location": None,
-                        "participants": ["Sam Chen"], "event_type": "meeting"},
-            confidence=0.95,
-            networks=["PROFESSIONAL", "VENTURES"],
-            temporal=TemporalAnchor(occurred_at="2026-02-27", temporal_type="past")
-        ),
-        NodeProposal(
-            temp_id="temp_2",
-            node_type="COMMITMENT",
-            title="Sam intro to investor",
-            content="Sam Chen promised to introduce me to his investor",
-            properties={"due_date": "2026-03-06", "status": "open",
-                        "committed_by": "Sam Chen", "committed_to": "user",
-                        "priority": "high"},
-            confidence=0.92,
-            networks=["VENTURES"],
-            temporal=TemporalAnchor(due_at="2026-03-06", temporal_type="future")
-        ),
-        NodeProposal(
-            temp_id="temp_3",
-            node_type="NOTE",
-            title="Sam's feedback on pitch deck",
-            content="Sam thinks we should emphasize the graph differentiation more",
-            properties={"source_context": "coffee meeting 2026-02-27",
-                        "note_type": "observation"},
-            confidence=0.90,
-            networks=["VENTURES"],
-            temporal=None
-        )
-    ],
-
-    nodes_to_update=[
-        # If "Sam Chen" already exists in the graph, update last_interaction
-        NodeUpdate(
-            node_id="existing-sam-chen-uuid",
-            updates={"last_interaction": "2026-02-27"},
-            confidence=0.95,
-            reason="Met with user today"
-        )
-    ],
-
-    edges_to_create=[
-        # Sam Chen was at the coffee meeting
-        EdgeProposal(source_id="existing-sam-chen-uuid", target_id="temp_1",
-                     edge_type="PARTICIPATED_IN", edge_category="SOCIAL",
-                     confidence=0.95, bidirectional=False, properties={}),
-
-        # The commitment came from the meeting
-        EdgeProposal(source_id="temp_1", target_id="temp_2",
-                     edge_type="TRIGGERED", edge_category="TEMPORAL",
-                     confidence=0.90, bidirectional=False, properties={}),
-
-        # Sam committed to the intro
-        EdgeProposal(source_id="existing-sam-chen-uuid", target_id="temp_2",
-                     edge_type="COMMITTED_TO", edge_category="PERSONAL",
-                     confidence=0.92, bidirectional=False, properties={}),
-
-        # The note relates to the Memora project
-        EdgeProposal(source_id="temp_3", target_id="existing-memora-project-uuid",
-                     edge_type="RELATED_TO", edge_category="ASSOCIATIVE",
-                     confidence=0.88, bidirectional=False, properties={}),
-
-        # The note came from the meeting
-        EdgeProposal(source_id="temp_3", target_id="temp_1",
-                     edge_type="DERIVED_FROM", edge_category="PROVENANCE",
-                     confidence=0.95, bidirectional=False, properties={})
-    ],
-
-    edges_to_update=[],
-
-    network_assignments=[
-        NetworkAssignment(node_id="temp_1", network="PROFESSIONAL", confidence=0.85),
-        NetworkAssignment(node_id="temp_1", network="VENTURES", confidence=0.90),
-        NetworkAssignment(node_id="temp_2", network="VENTURES", confidence=0.95),
-        NetworkAssignment(node_id="temp_3", network="VENTURES", confidence=0.90),
-    ]
-)
-```
-
-**CSC148 students — notice what just happened:**
-
-From a single paragraph of natural language, the Archivist extracted:
-- **3 new nodes** (an EVENT, a COMMITMENT, and a NOTE)
-- **1 node update** (Sam Chen's last interaction date)
-- **5 new edges** (connecting everything together with typed relationships)
-- **4 network assignments** (placing nodes in the right life domains)
-
-All of this is validated against the Pydantic schema. If the Archivist tries to create an edge type that doesn't exist, or assigns a node to a network that's not one of the 7 defined networks, the validation fails and the proposal is rejected. This is how the system prevents hallucinated graph structure.
-
-**Why Pydantic and not just raw JSON?**
+State flows through the pipeline via a `PipelineState` dataclass:
 
 ```python
-# Without Pydantic — anything goes:
-{"node_type": "BLORP", "confidence": 999, "networks": ["IMAGINARY"]}
-# This would silently corrupt the graph
+from dataclasses import dataclass
+from enum import IntEnum
 
-# With Pydantic — validated at creation time:
-NodeProposal(node_type="BLORP", ...)
-# Raises: ValidationError - "BLORP" is not a valid NodeType
+class PipelineStage(IntEnum):
+    RAW_INPUT = 1
+    PREPROCESSING = 2
+    EXTRACTION = 3
+    ENTITY_RESOLUTION = 4
+    PROPOSAL_ASSEMBLY = 5
+    VALIDATION_GATE = 6
+    REVIEW = 7
+    GRAPH_COMMIT = 8
+    POST_COMMIT = 9
+
+@dataclass
+class PipelineState:
+    """Mutable state carried through the pipeline."""
+    capture_id: str
+    raw_content: str
+    processed_content: str = ""
+    content_hash: str = ""
+    language: str = "en"
+    is_duplicate: bool = False
+    proposal: GraphProposal | None = None
+    resolutions: list[ResolutionResult] | None = None
+    proposal_id: str | None = None
+    route: ProposalRoute = ProposalRoute.AUTO
+    stage: PipelineStage = PipelineStage.RAW_INPUT
+    status: str = "processing"
+    error: str | None = None
+    clarification_needed: bool = False
+    clarification_message: str = ""
 ```
 
-**CSC148 connection:** This is the precondition/representation invariant concept. Pydantic enforces that every object in the system satisfies its representation invariant — a node's confidence must be between 0 and 1, its type must be one of the 12 defined types, etc.
+> **CSC148 Connection:** This is a **state machine**. Each stage is a state, and the pipeline transitions from one state to the next. The `PipelineState` object is carried through like a token being processed. If any stage sets `error`, the pipeline halts — just like an exception unwinding a call stack. If `clarification_needed` is set, the pipeline pauses for human input, similar to how a generator yields.
 
-### 4.6 Stage 4: Entity Resolution — The Hardest Problem
+### The Pipeline Runner
 
-**The problem:** The user typed "Sam Chen." But is this the same "Sam" they mentioned yesterday? Last week? Or is it a different Sam?
+The `ExtractionPipeline.run()` method orchestrates all 9 stages:
 
-This is called **entity resolution** — determining whether a newly extracted entity refers to an existing node in the graph or is genuinely new.
+```python
+class ExtractionPipeline:
+    """9-stage async pipeline from raw text to graph commit."""
 
-**Why it's hard:** People are sloppy. You might say "Sam," "Sam Chen," "Samuel," "Chen," or even just "he" in different captures. The system needs to figure out these all refer to the same person.
+    async def run(self, capture_id: str, raw_content: str,
+                  on_stage: Callable | None = None) -> PipelineState:
+        state = PipelineState(capture_id=capture_id, raw_content=raw_content)
 
-Memora uses a **multi-signal approach** — it considers 6 different signals and combines them:
+        stages = [
+            (PipelineStage.PREPROCESSING, self._preprocess),
+            (PipelineStage.EXTRACTION, self._extract),
+            (PipelineStage.ENTITY_RESOLUTION, self._resolve_entities),
+            (PipelineStage.PROPOSAL_ASSEMBLY, self._assemble_proposal),
+            (PipelineStage.VALIDATION_GATE, self._validation_gate),
+            (PipelineStage.REVIEW, self._review),
+            (PipelineStage.GRAPH_COMMIT, self._commit),
+            (PipelineStage.POST_COMMIT, self._post_commit),
+        ]
+
+        for stage_enum, handler in stages:
+            state.stage = stage_enum
+            if on_stage:
+                on_stage(stage_enum, "running")
+            try:
+                state = await handler(state)
+                if state.error:
+                    break
+                if state.clarification_needed:
+                    break
+                if on_stage:
+                    on_stage(stage_enum, "done")
+            except Exception as e:
+                state.error = f"Stage {stage_enum.name} failed: {str(e)}"
+                break
+
+        return state
+```
+
+> **CSC148 Connection:** The pipeline runner is essentially a **for-loop over a list of (stage, handler) tuples** — a dispatch table. Each handler takes state in and produces state out. This is the **pipe-and-filter** pattern: each stage is a filter that transforms the data. The `on_stage` callback is the **observer pattern**, allowing the CLI tracker to display real-time progress.
+
+### Stage-by-Stage Walkthrough: Coffee with Sam
+
+Let us trace our running example through all 9 stages.
+
+**Input:** "Had coffee with Sam, discussed BFS for A2, promised to review his code by Friday"
+
+#### Stage 2: Preprocessing
+
+```python
+async def _preprocess(self, state: PipelineState) -> PipelineState:
+    text = state.raw_content.strip()
+    text = self._normalize_dates(text)    # "Friday" -> "2026-03-06"
+    text = self._normalize_currency(text)  # "$50k" -> "$50,000.00"
+    state.language = self._detect_language(text)  # "en"
+    state.content_hash = hashlib.sha256(state.raw_content.encode()).hexdigest()
+    state.processed_content = text
+    return state
+```
+
+The date normalizer converts "Friday" to the next Friday's ISO date. The currency normalizer converts "$50k" to "$50,000.00". Language detection uses ASCII ratio heuristics (>90% ASCII = English).
+
+**After Stage 2:** `processed_content` = "Had coffee with Sam, discussed BFS for A2, promised to review his code by 2026-03-06"
+
+#### Stage 3: Archivist Extraction
+
+The Archivist agent (LLM-powered) receives the preprocessed text plus RAG context from existing nodes, and produces a `GraphProposal`:
+
+```python
+async def _extract(self, state: PipelineState) -> PipelineState:
+    result = await self._archivist.extract(state.processed_content, state.capture_id)
+    if result.clarification_needed:
+        state.clarification_needed = True
+        return state
+    state.proposal = result.proposal
+    return state
+```
+
+The Archivist uses the OpenAI Responses API with `json_schema` structured output to guarantee a valid JSON response matching the `GraphProposal` schema. The proposal might contain:
+
+- **Nodes to create:** EventNode("Coffee with Sam"), PersonNode("Sam"), CommitmentNode("Review Sam's A2 code"), ConceptNode("BFS")
+- **Edges to create:** You --KNOWS--> Sam, You --COMMITTED_TO--> "Review code", Event --RELATED_TO--> "BFS"
+- **Network assignments:** Event -> [ACADEMIC, SOCIAL], Commitment -> [ACADEMIC]
+
+#### Stage 4: Entity Resolution
+
+Each proposed node is compared against existing graph nodes to avoid duplicates. This is covered in detail in Part 6.
+
+#### Stage 5: Proposal Assembly
+
+Merge decisions from entity resolution are applied: if "Sam" already exists in the graph, the new PersonNode proposal is converted to an update on the existing Sam node, and all edge references are rewritten.
+
+#### Stage 6: Validation Gate
+
+The gate routes the proposal based on confidence and merge decisions:
+
+```python
+async def _validation_gate(self, state: PipelineState) -> PipelineState:
+    confidence = state.proposal.confidence
+    threshold = self._settings.auto_approve_threshold  # default 0.85
+
+    has_merges = any(r.outcome == ResolutionOutcome.MERGE for r in (state.resolutions or []))
+    has_deferred = any(r.outcome == ResolutionOutcome.DEFER for r in (state.resolutions or []))
+
+    if has_merges or has_deferred:
+        state.route = ProposalRoute.EXPLICIT  # human review required
+    elif confidence >= threshold:
+        state.route = ProposalRoute.AUTO       # auto-approve
+    else:
+        state.route = ProposalRoute.DIGEST     # batch review later
+    return state
+```
+
+#### Stage 7: Review
+
+The proposal is stored in DuckDB. If routed AUTO, it proceeds to commit immediately.
+
+#### Stage 8: Graph Commit
+
+An atomic DuckDB transaction creates all nodes and edges in a single commit:
+
+```python
+async def _commit(self, state: PipelineState) -> PipelineState:
+    if state.route != ProposalRoute.AUTO:
+        return state  # skip commit for non-auto proposals
+    success = self._repo.commit_proposal(UUID(state.proposal_id))
+    if not success:
+        state.error = "Graph commit failed"
+    return state
+```
+
+#### Stage 9: Post-Commit Processing
+
+This is where the graph comes alive. Five substages run, some sequentially, some in parallel:
+
+```python
+async def _post_commit(self, state: PipelineState) -> PipelineState:
+    # Sequential: embeddings must complete before edge weights
+    await self._generate_embeddings(state)
+    await self._compute_edge_weights(state)
+
+    # Ensure every node connects to the central You node
+    await self._ensure_graph_connectivity(state)
+
+    # Parallel: independent substages
+    await asyncio.gather(
+        self._detect_bridges(state),
+        self._recalculate_health(state),
+        self._check_notification_triggers(state),
+        self._cross_reference_truth_layer(state),
+        return_exceptions=True,
+    )
+    return state
+```
+
+The embedding generation uses the `all-mpnet-base-v2` model to create 768-dimensional vectors for each new node, which are stored in Weaviate for future semantic search. Edge weights are computed from cosine similarity between source and target node embeddings. Bridge discovery finds cross-network connections. Health scoring updates affected network scores. The truth layer cross-references new claims against verified facts.
+
+> **CSC148 Connection:** The post-commit stage demonstrates **parallelism** — `asyncio.gather()` runs four independent tasks concurrently, just like how you might parallelize independent operations in a divide-and-conquer algorithm. The sequential embedding -> edge weight dependency is like a **topological sort** constraint: you cannot compute edge weights until embeddings exist.
+
+---
+
+## Part 6: Entity Resolution
+
+### The Deduplication Problem
+
+When you say "Met with Sam today," does "Sam" refer to Sam Chen from your study group who already exists in the graph? Or is this a new Sam? Entity resolution answers this question using 6 weighted signals.
+
+### The EntityResolver Class
 
 ```python
 class EntityResolver:
-    """
-    Resolves whether a proposed entity matches an existing node.
+    """Multi-signal entity resolution engine."""
 
-    CSC148 connection: This is essentially a weighted scoring algorithm.
-    Each signal contributes a score, and we combine them.
-    """
-
-    # Signal weights
     WEIGHTS = {
-        "exact_name_match": 0.95,
+        "exact_name": 0.95,
         "embedding_similarity": 0.80,
-        "same_context_network": 0.15,
+        "same_network": 0.15,
         "temporal_proximity": 0.10,
         "shared_relationships": 0.20,
         "llm_adjudication": 0.90,
     }
 
-    def resolve(self, proposed_node: NodeProposal,
-                candidates: list[BaseNode]) -> ResolutionResult:
-        """
-        Compare proposed node against candidate existing nodes.
+    EMBEDDING_THRESHOLD = 0.92
+    MERGE_THRESHOLD = 0.85
+    CREATE_THRESHOLD = 0.40
+    TEMPORAL_WINDOW_DAYS = 7
+```
 
-        Returns the best match (if any) with a confidence score.
-        """
-        best_match = None
-        best_score = 0.0
+### The 6 Signals
 
-        for candidate in candidates:
-            score = 0.0
-            signals_used = 0
+**Signal 1: Exact Name Match (weight: 0.95)**
 
-            # Signal 1: Exact name match (O(1) — string comparison)
-            if self._names_match(proposed_node, candidate):
-                score += self.WEIGHTS["exact_name_match"]
-                signals_used += 1
+The strongest non-LLM signal. Exact match scores 1.0. Substring match (e.g., "Sam" in "Sam Chen") scores 0.7+. Token overlap ("Carlos Rivera" vs "Carlos") uses Jaccard similarity.
 
-            # Signal 2: Embedding similarity (O(1) — cosine of pre-computed vectors)
-            similarity = self._cosine_similarity(
-                proposed_node.embedding, candidate.embedding
-            )
-            if similarity > 0.92:
-                score += self.WEIGHTS["embedding_similarity"] * similarity
-                signals_used += 1
+```python
+def _score_exact_name(self, candidate, node):
+    proposed = node.title.lower().strip()
+    existing = candidate.existing_title.lower().strip()
 
-            # Signal 3: Same context network (O(1) — set intersection)
-            if set(proposed_node.networks) & set(candidate.networks):
-                score += self.WEIGHTS["same_context_network"]
-                signals_used += 1
-
-            # Signal 4: Temporal proximity (within 7-day window)
-            if self._within_temporal_window(proposed_node, candidate, days=7):
-                score += self.WEIGHTS["temporal_proximity"]
-                signals_used += 1
-
-            # Signal 5: Shared relationships (check if connected to same nodes)
-            shared = self._count_shared_relationships(proposed_node, candidate)
-            if shared > 0:
-                score += self.WEIGHTS["shared_relationships"] * min(shared / 3, 1.0)
-                signals_used += 1
-
-            # Normalize by signals used
-            if signals_used > 0:
-                score = score / signals_used
-
-            if score > best_score:
-                best_score = score
-                best_match = candidate
-
-        # Determine outcome
-        if best_score >= 0.85:
-            return ResolutionResult("merge", best_match, best_score)
-        elif best_score >= 0.60:
-            return ResolutionResult("defer", best_match, best_score)  # human review
+    if proposed == existing:
+        candidate.signals["exact_name"] = 1.0
+    elif proposed in existing or existing in proposed:
+        shorter = min(len(proposed), len(existing))
+        longer = max(len(proposed), len(existing))
+        candidate.signals["exact_name"] = max(0.7, shorter / longer)
+    else:
+        # Token overlap
+        proposed_tokens = set(proposed.split())
+        existing_tokens = set(existing.split())
+        overlap = proposed_tokens & existing_tokens
+        if overlap:
+            union = proposed_tokens | existing_tokens
+            candidate.signals["exact_name"] = 0.6 * len(overlap) / len(union)
         else:
-            return ResolutionResult("create", None, best_score)  # new node
-
-    def _cosine_similarity(self, vec_a: list[float], vec_b: list[float]) -> float:
-        """
-        Cosine similarity between two vectors.
-
-        CSC148 connection: This is just the dot product divided by
-        the product of magnitudes. O(d) where d is vector dimension (768).
-
-        cos(θ) = (A · B) / (||A|| × ||B||)
-        """
-        dot_product = sum(a * b for a, b in zip(vec_a, vec_b))
-        magnitude_a = sum(a ** 2 for a in vec_a) ** 0.5
-        magnitude_b = sum(b ** 2 for b in vec_b) ** 0.5
-        if magnitude_a == 0 or magnitude_b == 0:
-            return 0.0
-        return dot_product / (magnitude_a * magnitude_b)
+            candidate.signals["exact_name"] = 0.0
 ```
 
-**Four possible outcomes:**
+**Signal 2: Embedding Similarity (weight: 0.80)**
 
-| Outcome | When | What Happens |
-|---|---|---|
-| **Merge** | Score ≥ 0.85 | Two nodes confirmed as same entity. Merge properties, keep all edges |
-| **Create** | Score < 0.60 | No match found. Create a new node |
-| **Link** | Entities related but distinct | Create an edge between them (e.g., "Sam the investor" and "Sam the friend" might be different people) |
-| **Defer** | Score 0.60–0.85 | Ambiguous. Flag for human review with both candidates shown |
+Semantic similarity in 768-dimensional vector space. Searches Weaviate for the 5 most similar existing nodes of the same type.
 
-**CSC148 connection:** This is fundamentally a **searching and scoring** problem. You're searching a collection of candidates and scoring each one, then selecting the best match — like finding the closest item in a collection. The twist is that the "distance metric" combines multiple signals with different weights.
+**Signal 3: Same Network (weight: 0.15)**
 
-### 4.7 Stages 5-6: Proposal Assembly and Validation Gate
+Do the proposed and existing nodes share context networks? If both are in ACADEMIC, that is evidence they refer to the same entity.
 
-**Stage 5** packages everything from Stages 3–4 into a single `GraphProposal` — an atomic, reviewable, reversible set of changes. Think of it as a **git commit for your knowledge graph**. You can see exactly what changed, why, and undo it if needed.
+**Signal 4: Temporal Proximity (weight: 0.10)**
 
-**Stage 6** routes the proposal based on confidence:
+Were both nodes created within a 7-day window? Recent mentions of similar entities are more likely to refer to the same real-world entity.
 
 ```python
-def route_proposal(proposal: GraphProposal) -> str:
-    """
-    Route a proposal to the appropriate review path.
-
-    CSC148 connection: This is a simple decision tree / conditional routing.
-    """
-    # High-impact changes always need explicit review
-    if proposal.has_deletions() or proposal.has_merges():
-        return "explicit_confirm"
-
-    # High confidence → auto-approve
-    if proposal.confidence >= 0.85:
-        return "auto_approve"
-
-    # Medium confidence → batch into daily digest
-    if proposal.confidence >= 0.60:
-        return "daily_digest"
-
-    # Low confidence → explicit review
-    return "explicit_confirm"
+def _score_temporal(self, candidate, node, created_at=None):
+    delta = abs((proposed_time - existing_time).days)
+    if delta <= self.TEMPORAL_WINDOW_DAYS:
+        candidate.signals["temporal_proximity"] = 1.0 - (delta / self.TEMPORAL_WINDOW_DAYS)
 ```
 
-**Why auto-approve at 0.85?** Research by Baumeister et al. shows that decision quality degrades after ~35 micro-decisions per day ("decision fatigue"). If every capture required manual approval, you'd burn out and stop using the system. Auto-approve at ≥85% confidence means most routine captures flow through silently, while the daily review digest catches the ~5% of errors.
+**Signal 5: Shared Relationships (weight: 0.20)**
 
-### 4.8 Stages 7-9: Commit and Post-Processing
+Do the proposed and existing nodes connect to the same other nodes? If both "Sam" nodes connect to nodes like "CSC148" and "Study Group," they are likely the same person.
 
-**Stage 7** (Human Review): Depending on routing:
-- **Auto-approved**: Committed silently, shown in tomorrow's daily digest for retrospective correction
-- **Digest-routed**: Batched into your morning review
-- **Explicit-confirm**: Shown immediately with full context
+**Signal 6: LLM Adjudication (weight: 0.90)**
 
-**Stage 8** (Graph Commit): An **atomic transaction** — all changes succeed or all fail. No partial commits.
+For ambiguous cases (combined score between 0.40 and 0.90), the LLM is asked directly: "Are these two entries referring to the same entity?" Returns a 0.0-1.0 confidence score.
+
+### Weighted Scoring Formula
+
+The combined score is a **weighted average** of all available signals:
 
 ```python
-def commit_proposal(proposal: GraphProposal, graph_db: GraphDB) -> bool:
-    """
-    Atomically commit a graph proposal.
-
-    CSC148 connection: This is the concept of atomicity —
-    either ALL operations succeed, or NONE do.
-    Similar to how you'd implement a multi-step operation
-    that must not leave data in an inconsistent state.
-    """
-    transaction = graph_db.begin_transaction()
-
-    try:
-        # 1. Create all new nodes
-        node_id_map = {}  # temp_id -> real UUID
-        for node in proposal.nodes_to_create:
-            real_id = transaction.create_node(node)
-            node_id_map[node.temp_id] = real_id
-
-        # 2. Update existing nodes
-        for update in proposal.nodes_to_update:
-            transaction.update_node(update.node_id, update.updates)
-
-        # 3. Create edges (resolve temp_ids to real UUIDs)
-        for edge in proposal.edges_to_create:
-            source = node_id_map.get(edge.source_id, edge.source_id)
-            target = node_id_map.get(edge.target_id, edge.target_id)
-            transaction.create_edge(source, target, edge)
-
-        # 4. Update existing edges
-        for update in proposal.edges_to_update:
-            transaction.update_edge(update.edge_id, update.updates)
-
-        # 5. Log provenance (audit trail)
-        transaction.log_provenance(proposal)
-
-        # 6. Commit — all or nothing
-        transaction.commit()
-        return True
-
-    except Exception:
-        transaction.rollback()  # undo everything
-        return False
-```
-
-**Stage 9** (Post-Commit Processing): After successful commit, several async processes fire:
-
-1. **Embedding generation**: all-mpnet-base-v2 converts new node content into 768-dimensional vectors, stored in LanceDB
-2. **Bridge discovery**: New node's embedding is compared against nodes in *other* networks via HNSW index
-3. **Network health recalculation**: If the new data affects commitment counts or alerts, health status is updated
-4. **Notification triggers**: Check if any notification rules fire (deadline approaching, relationship decay, etc.)
-5. **Truth Layer cross-reference**: If the committed data contains claims that intersect with verified facts, flag contradictions
-
----
-
-## Part 5: The AI Agent System — Three Agents, One Council
-
-### 5.1 Why Agents?
-
-In CSC148, when you write a program, it does exactly what you tell it. An **AI agent** is different — it's given a goal, a set of tools, and context, and it figures out how to accomplish the goal on its own.
-
-Memora has three specialized agents and one orchestrator:
-
-```
-                    ┌─────────────────┐
-                    │   Orchestrator   │
-                    │   (LangGraph)    │
-                    └─────┬───────────┘
-                          │
-              ┌───────────┼───────────┐
-              ▼           ▼           ▼
-        ┌──────────┐ ┌──────────┐ ┌──────────┐
-        │Archivist │ │Strategist│ │Researcher│
-        │(GPT-5-  │ │(GPT-5-  │ │(GPT-5-  │
-        │  nano)   │ │  nano)   │ │  nano)   │
-        └──────────┘ └──────────┘ └──────────┘
-        Writes to      Reads from    Bridges to
-        the graph      the graph     the internet
-```
-
-### 5.2 Why Three Agents and Not One?
-
-You might wonder: why not just have one AI that does everything?
-
-Research from Google DeepMind (December 2025) showed that in multi-agent systems:
-- Independent agents **amplify errors by 17.2x** compared to single agents
-- Accuracy **saturates at 4–5 agents** (more doesn't help)
-- Single agents with better tools are strictly superior for sequential reasoning
-- The optimal topology is a **graph-mesh** (agents can communicate), not an unstructured "bag of agents"
-
-So Memora uses exactly 3 agents, each with a clear, non-overlapping role:
-
-| Agent | Role | Model | Frequency | Analogy |
-|---|---|---|---|---|
-| **Archivist** | Writes to the graph | GPT-5-nano | Every capture (10+/day) | A librarian who catalogs every new book |
-| **Strategist** | Reads and analyzes the graph | GPT-5-nano | Daily + on-demand | An intelligence analyst who spots patterns |
-| **Researcher** | Bridges graph to internet | GPT-5-nano | On-demand | A research assistant who checks external facts |
-
-### 5.3 The Archivist — Deep Dive
-
-The Archivist is the workhorse. It runs on **every single capture** — the highest-frequency agent by far.
-
-**Why GPT-5-nano?**
-- It runs 10+ times per day — needs to be fast and cheap
-- Its output is **constrained** by Pydantic schemas via the Responses API's `json_schema` mode — it can only produce valid graph operations
-- Speed matters more than deep reasoning for extraction
-- With prompt caching (explained below), it's extremely cheap
-
-**Prompt Caching — The Cost Trick:**
-
-The Archivist's prompt has 5 components:
-
-```
-Components 1-4 (STATIC — identical every time):
-  - Graph schema definition (~1000 tokens)
-  - Network definitions (~500 tokens)
-  - Extraction rules (~500 tokens)
-  - Output format / Pydantic schema (~500 tokens)
-  Total: ~2,500 tokens → CACHED at 0.1x cost
-
-Component 5 (DYNAMIC — changes every time):
-  - Recent nodes from RAG (~500-1000 tokens)
-  - User's actual capture (~100-500 tokens)
-  Total: ~1,000 tokens → Full cost
-```
-
-OpenAI's API automatically caches the static prefix of prompts. Since 70% of the Archivist's prompt is identical across calls, you pay a reduced rate for that portion. **Net result: 60-70% cost reduction.**
-
-**CSC148 connection:** This is conceptually like memoization. Instead of recomputing the same result every time, you cache it. The difference is that here we're caching at the API level (the LLM provider caches the static prefix of the prompt).
-
-### 5.4 The Strategist — Deep Dive
-
-The Strategist is the intelligence analyst. It doesn't write to the graph — it reads it and generates insights.
-
-**Daily briefing generation:**
-
-Every morning, the Strategist receives pre-computed metrics from the Core Engine (health scores, bridge discoveries, overdue commitments, SM-2 items) and synthesizes them into a human-readable intelligence report.
-
-**On-demand analysis:**
-
-When you ask "Should I follow up with Sam about the investor intro?", the Strategist:
-
-1. Queries the graph for all nodes related to Sam Chen
-2. Checks Sam's commitment history (has he followed through before?)
-3. Looks at your Ventures network health
-4. Checks if the commitment is approaching its due date
-5. Consults the Truth Layer for any verified facts about the investor
-6. Generates a recommendation with citations
-
-**Critic mode:**
-
-This is unique. You can ask the Strategist to deliberately **challenge** your thinking:
-
-> You: "I'm planning to take the job offer from Company X."
-> Strategist (Critic mode): "Your graph shows 3 open commitments in your Ventures network that conflict with a full-time role. Your Social network health would drop — you've mentioned wanting to spend more time with family. Also, the last time you switched jobs (Event: 2025-06-15), your stress mentions increased 3x for 2 months. Are you sure about the timing?"
-
-### 5.5 The Researcher — Deep Dive
-
-The Researcher bridges your private graph with the public internet. When the Strategist (or you) needs external information, the Researcher searches the web, academic databases, and code repositories.
-
-**Tools available (via MCP servers):**
-
-| Tool | What It Does | Rate Limit |
-|---|---|---|
-| Google Search | Web search | 100 free queries/day |
-| Brave Search | Fallback web search | 2,000 free/month |
-| Playwright | Full web page scraping | On-demand |
-| Semantic Scholar + arXiv | Academic paper search | On-demand |
-| GitHub MCP | Code and repo search | On-demand |
-| Graph + Vector DB | Query Memora's own graph | Unlimited |
-
-**Critical constraint — Privacy:**
-
-The Researcher must **anonymize** all queries before sending them to external services. It cannot leak your personal information to Google.
-
-```python
-# BAD — leaks personal info:
-google_search("Sam Chen investor introduction for my startup Memora")
-
-# GOOD — anonymized:
-google_search("angel investor introduction etiquette startup fundraising 2026")
-```
-
-### 5.6 The Council Decision Pattern
-
-When you ask a high-stakes question, the Orchestrator invokes the full Council:
-
-**Step-by-step for "Should I take this job offer?":**
-
-1. **Decomposition** — The Orchestrator breaks this into sub-queries:
-   - Archivist sub-query: "What is the user's current professional context, commitments, and financial situation?"
-   - Strategist sub-query: "What cross-network impacts would this decision have? What's the risk profile?"
-   - Researcher sub-query: "What are current market conditions for this role? Company reputation? Glassdoor data?"
-
-2. **Independent Analysis** — All three agents work **in parallel** on their sub-queries
-
-3. **Proposal Submission** — Each agent submits:
-   - An answer
-   - A confidence score (0–1)
-   - Evidence (graph nodes + facts cited)
-   - Risks identified
-
-4. **Deliberation** (optional, max 2–3 rounds) — For high-stakes queries, agents review each other's proposals and look for contradictions
-
-5. **Synthesis** — The Orchestrator performs confidence-weighted aggregation. If agents strongly disagree, the disagreement is flagged for you to resolve
-
-**CSC148 connection:** This is like a **divide-and-conquer** algorithm. Break the problem into sub-problems, solve them independently, then merge the results. The twist is that the "sub-problems" are solved by different agents with different specialties.
-
----
-
-## Part 6: Vector Embeddings and Semantic Search
-
-### 6.1 What Is an Embedding?
-
-This is probably a new concept for CSC148 students, so let me explain from scratch.
-
-An **embedding** is a way to convert text into a list of numbers (a vector) such that **semantically similar text produces similar vectors**.
-
-```python
-# Conceptual example (real embeddings have 768 dimensions)
-
-embed("I feel stressed about my midterm")     → [0.8, 0.2, -0.5, 0.9, ...]
-embed("I'm anxious about my exam")            → [0.79, 0.21, -0.48, 0.88, ...]
-embed("I had pizza for lunch")                → [-0.1, 0.7, 0.3, -0.2, ...]
-```
-
-Notice that the first two sentences — which mean similar things — produce similar vectors. The third sentence, which is about something completely different, produces a very different vector.
-
-**Why does this matter?** It enables **semantic search** — finding information based on meaning rather than exact keywords.
-
-```python
-# Keyword search (traditional):
-search("stressed") → only finds documents containing the word "stressed"
-
-# Semantic search (embedding-based):
-search("stressed") → finds documents about stress, anxiety, pressure,
-                      overwork, burnout — even if they don't use the
-                      word "stressed"
-```
-
-### 6.2 How Embeddings Work in Memora
-
-Memora uses the **all-mpnet-base-v2** model (from the sentence-transformers library) to generate embeddings. This model:
-- Runs **locally** on your machine (no API cost)
-- Produces **768-dimensional** dense vectors
-- High quality English embeddings with strong semantic understanding
-
-Every node in the graph gets an embedding stored in LanceDB:
-
-```python
-# When a new node is committed:
-node_content = "Sam Chen promised to introduce me to his investor"
-embedding = embedding_model.encode(node_content)  # → list of 768 floats
-
-# Store in LanceDB
-vector_store.add({
-    "node_id": node.id,
-    "content": node_content,
-    "dense": embedding,          # 768-dim float vector
-    "node_type": "COMMITMENT",
-    "networks": ["VENTURES"]
-})
-```
-
-### 6.3 Cosine Similarity — The Math
-
-To find similar nodes, we compute **cosine similarity** between vectors:
-
-```
-cos(θ) = (A · B) / (||A|| × ||B||)
-```
-
-In Python (from our CSC148 foundation):
-
-```python
-import math
-
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """
-    Compute cosine similarity between two vectors.
-
-    Returns a value between -1 and 1:
-      1.0  = identical direction (very similar)
-      0.0  = orthogonal (unrelated)
-     -1.0  = opposite direction (very dissimilar)
-
-    Time complexity: O(d) where d = len(a) = len(b)
-    For all-mpnet-base-v2: d = 768, so this is O(768) ≈ O(1)
-    """
-    dot = sum(x * y for x, y in zip(a, b))
-    mag_a = math.sqrt(sum(x ** 2 for x in a))
-    mag_b = math.sqrt(sum(x ** 2 for x in b))
-
-    if mag_a == 0 or mag_b == 0:
+def _weighted_sum(self, signals: dict[str, float]) -> float:
+    """Compute weighted average of available signals."""
+    total_weight = sum(self.WEIGHTS[k] for k in signals if k in self.WEIGHTS)
+    if total_weight == 0:
         return 0.0
-    return dot / (mag_a * mag_b)
+    weighted = sum(signals[k] * self.WEIGHTS[k] for k in signals if k in self.WEIGHTS)
+    return weighted / total_weight
 ```
 
-**CSC148 connection:** This is just arithmetic on lists. The dot product is a loop over two lists, computing element-wise products and summing. You've done this kind of list processing many times in CSC148.
+> **CSC148 Connection:** This is a **hash table lookup** combined with a **weighted average**. The `WEIGHTS` dictionary provides O(1) lookup for each signal's weight. The weighted average formula is:
+>
+> `score = (sum of signal_i * weight_i) / (sum of weight_i for available signals)`
+>
+> This "only average over available signals" design means missing signals do not penalize the score — the same principle behind handling missing data in any scoring system.
 
-### 6.4 HNSW Index — Why Search Is O(log N)
+### Resolution Outcomes
 
-If you have 10,000 nodes and want to find the 10 most similar ones, the naive approach is:
+Based on the combined score, each proposed node gets one of four outcomes:
 
-```python
-# Naive: compute similarity against ALL nodes
-# Time: O(N × d) where N = 10,000 and d = 768
-similarities = [(cosine_similarity(query_vec, node.embedding), node)
-                for node in all_nodes]
-top_10 = sorted(similarities, reverse=True)[:10]
-```
-
-This is O(N) — too slow at scale. Instead, LanceDB uses an **HNSW (Hierarchical Navigable Small World)** index that achieves approximate nearest neighbor search in **O(log N)** time.
-
-**How HNSW works (simplified):**
-
-Imagine your nodes arranged in multiple layers:
-- Top layer: a few "hub" nodes connected to each other
-- Each lower layer: more nodes, more connections
-- Bottom layer: all nodes
-
-To find nearest neighbors, you start at the top layer, find the closest hub, then "zoom in" to each lower layer, always following the closest connection. It's like using a map — first find the right country, then the right city, then the right street.
-
-```
-Layer 3:    [A] ---- [B]                     ← few nodes, coarse navigation
-Layer 2:    [A] - [C] - [B] - [D]           ← more nodes
-Layer 1:    [A]-[E]-[C]-[F]-[B]-[G]-[D]     ← most nodes
-Layer 0:    [A][E][H][C][I][F][J][B][K][G][L][D]  ← all nodes
-```
-
-**CSC148 connection:** This is conceptually similar to a **balanced BST** or a **skip list** — data structures that achieve O(log N) search by organizing data in layers of increasing granularity. The difference is that HNSW operates in high-dimensional vector space instead of 1D.
-
-### 6.5 Hybrid Search: Combining Dense and Sparse
-
-Memora uses **hybrid search** — combining two types of retrieval:
-
-1. **Dense search** (semantic): Uses all-mpnet-base-v2 embeddings + cosine similarity. Good at finding conceptually similar content even with different words.
-
-2. **Full-text search** (keyword): LanceDB supports full-text search for keyword matching. Good at finding exact term matches.
-
-Results can be combined using **Reciprocal Rank Fusion (RRF)**:
-
-```python
-def reciprocal_rank_fusion(dense_results: list, sparse_results: list,
-                            k: int = 60) -> list:
-    """
-    Combine dense and sparse search results.
-
-    For each result, its fused score is:
-      score = 1 / (k + rank_in_dense) + 1 / (k + rank_in_sparse)
-
-    Higher fused score = better match.
-
-    CSC148 connection: This is just a scoring algorithm over
-    two sorted lists, producing a merged sorted list.
-    """
-    scores = {}
-
-    for rank, (node_id, _) in enumerate(dense_results):
-        scores[node_id] = scores.get(node_id, 0) + 1 / (k + rank + 1)
-
-    for rank, (node_id, _) in enumerate(sparse_results):
-        scores[node_id] = scores.get(node_id, 0) + 1 / (k + rank + 1)
-
-    # Sort by fused score, descending
-    return sorted(scores.items(), key=lambda x: x[1], reverse=True)
-```
-
-**Why hybrid?** Dense search understands meaning but can miss exact terms. Sparse search catches exact keywords but misses synonyms. Together, they get the best of both worlds.
-
----
-
-## Part 7: The Adaptive RAG Pipeline — How Queries Are Answered
-
-### 7.1 What Is RAG?
-
-**RAG (Retrieval-Augmented Generation)** is a pattern where, before asking an LLM to answer a question, you first **retrieve relevant information** and include it in the prompt.
-
-Without RAG:
-```
-User: "When did I meet Sam?"
-LLM: "I don't know — I don't have access to your personal data." ← useless
-```
-
-With RAG:
-```
-1. Search graph for nodes related to "Sam" and "meeting"
-2. Find: EVENT("Coffee meeting with Sam Chen", date: 2026-02-27)
-3. Include this in the prompt:
-   "Based on the following context:
-    - EVENT: Coffee meeting with Sam Chen on 2026-02-27
-    Answer the user's question: When did I meet Sam?"
-4. LLM: "You met Sam on February 27, 2026, for a coffee meeting." ← useful!
-```
-
-### 7.2 Why "Adaptive"?
-
-Not all queries need the same retrieval strategy. Memora classifies queries into four types and routes them differently:
-
-```python
-def classify_query(query: str) -> str:
-    """
-    Classify a query to determine retrieval strategy.
-
-    CSC148 connection: This is pattern matching / classification.
-    """
-    # Simple factual — can be answered by a single node
-    if is_factual_lookup(query):
-        return "simple"         # → vector search only
-
-    # Relationship — needs to traverse edges
-    if involves_relationships(query):
-        return "relationship"   # → graph traversal + vector
-
-    # Cross-network — needs to look across multiple networks
-    if spans_domains(query):
-        return "cross_network"  # → multi-network graph walk
-
-    # Complex decision — needs multiple agents
-    return "complex"            # → full council deliberation
-```
-
-**Examples for each type:**
-
-| Query | Type | Strategy | Why |
-|---|---|---|---|
-| "When did I meet Sam?" | Simple | Vector search finds the EVENT node | One node answers it |
-| "Who introduced me to the VC?" | Relationship | Traverse INTRODUCED_BY edges from the VC node | Need to follow edges |
-| "How is my health affecting my work?" | Cross-network | Walk bridges between Health and Professional networks | Spans two domains |
-| "Should I take this job offer?" | Complex | Full council — Archivist for context, Strategist for analysis, Researcher for market data | Multi-factor decision |
-
-### 7.3 CRAG — Corrective RAG
-
-What if the retrieval step finds poor results? Maybe the query is about something not in your graph yet.
-
-**CRAG (Corrective RAG)** detects poor retrieval quality and falls back to the Researcher agent for web search:
-
-```python
-def crag_quality_check(results: list[SearchResult], threshold: float = 0.5) -> bool:
-    """
-    Check if retrieval results are sufficient.
-
-    Returns True if quality is good enough, False if we need web fallback.
-
-    CSC148 connection: Simple threshold check on a quality metric.
-    """
-    if not results:
-        return False
-
-    # Check if top result is relevant enough
-    if results[0].relevance_score < threshold:
-        return False
-
-    # Check if we have enough results
-    if len(results) < 3:
-        return False
-
-    return True
-```
-
-If CRAG determines the retrieval is poor, the Researcher agent searches the web, finds relevant information, deposits it into the Truth Layer, and the pipeline continues with this enriched context.
-
-This is how Memora seamlessly blends your private knowledge graph with public internet information.
-
-### 7.4 Graph-Augmented Context Expansion
-
-After finding relevant nodes via hybrid search, Memora **expands** the results by including neighboring nodes (1-hop BFS):
-
-```python
-def expand_context(seed_nodes: list[str], graph: KnowledgeGraph,
-                   max_hops: int = 1) -> list[str]:
-    """
-    Expand seed nodes to include 1-hop neighbors.
-
-    CSC148 connection: This is literally BFS with a depth limit!
-    You learned this exact algorithm in CSC148.
-    """
-    expanded = set(seed_nodes)
-    frontier = list(seed_nodes)
-
-    for hop in range(max_hops):
-        next_frontier = []
-        for node_id in frontier:
-            neighbors = graph.get_neighbors(node_id)
-            for neighbor_id in neighbors:
-                if neighbor_id not in expanded:
-                    expanded.add(neighbor_id)
-                    next_frontier.append(neighbor_id)
-        frontier = next_frontier
-
-    return list(expanded)
-```
-
-**Why expand?** If you search for "Sam" and find the PERSON node, expanding to 1-hop includes:
-- All of Sam's commitments to you
-- Events where Sam was present
-- Projects Sam is involved in
-- Other people connected to Sam
-
-This gives the LLM much richer context for generating a useful answer.
-
----
-
-## Part 8: Background Mechanics — The Living Graph Engine
-
-### 8.1 What Makes the Graph "Living"?
-
-A traditional note-taking app is a **static** document store — you put notes in, they sit there forever, unchanged. Memora's graph is a **living system** that evolves on its own through deterministic algorithms running on schedule.
-
-These algorithms are the "engine room" of Memora. They are:
-- **Deterministic** — no AI, no randomness, same input always produces same output
-- **LLM-independent** — they work even if the AI layer is completely removed
-- **Scheduled** — they run automatically at defined intervals
-
-This is a critical architectural point: the Core Engine layer is what makes Memora NOT an LLM wrapper. If OpenAI shut off the API tomorrow, the graph, the decay mechanics, the health scores, the bridge discovery, the spaced repetition — all of it would still work.
-
-### 8.2 Decay Scoring — Knowledge Fading
-
-**The idea:** Just like human memory, information in the graph should fade if you don't revisit it. The decay function is exponential:
-
-```
-decay_score(t) = e^(-λ · (t_now - t_last_access))
-```
-
-Let's unpack this with Python:
-
-```python
-import math
-from datetime import datetime, timedelta
-
-def compute_decay_score(last_accessed: datetime,
-                         now: datetime,
-                         decay_constant: float = 0.05) -> float:
-    """
-    Compute the decay score for a node.
-
-    Args:
-        last_accessed: when the node was last referenced
-        now: current time
-        decay_constant: lambda — how fast knowledge decays
-                        (configurable per network)
-
-    Returns:
-        Float between 0 and 1:
-          1.0 = just accessed (perfectly fresh)
-          0.0 = hasn't been accessed in a very long time
-
-    CSC148 connection: This is just evaluating a mathematical function.
-    The exponential function e^(-x) approaches 0 as x grows —
-    you might have seen this in MAT102/MAT137.
-    """
-    delta_days = (now - last_accessed).total_seconds() / 86400  # convert to days
-    return math.exp(-decay_constant * delta_days)
-
-
-# Example:
-now = datetime(2026, 2, 27)
-
-# Accessed yesterday → very fresh
-score_1 = compute_decay_score(datetime(2026, 2, 26), now)
-# = e^(-0.05 * 1) = 0.951
-
-# Accessed a week ago → still fresh
-score_7 = compute_decay_score(datetime(2026, 2, 20), now)
-# = e^(-0.05 * 7) = 0.705
-
-# Accessed a month ago → fading
-score_30 = compute_decay_score(datetime(2026, 1, 28), now)
-# = e^(-0.05 * 30) = 0.223
-
-# Accessed 3 months ago → nearly forgotten
-score_90 = compute_decay_score(datetime(2025, 11, 29), now)
-# = e^(-0.05 * 90) = 0.011
-```
-
-**What happens to low-decay nodes?**
-- They get surfaced in spaced repetition ("You haven't thought about this in 30 days — still relevant?")
-- They get lower weight in search results (fresh knowledge is prioritized)
-- Eventually, they become archival candidates
-
-**Lambda (λ) is configurable per network:** Academic knowledge (concepts you're studying) might have a slower decay rate (you should remember theory for longer), while Social network interactions (who you talked to at a party) might decay faster.
-
-**CSC148 complexity:** Computing decay for all N nodes is **O(N)**, run once daily.
-
-### 8.3 Bridge Discovery — Finding Hidden Connections
-
-This is the most valuable algorithm in the system. Bridge discovery finds **connections between nodes in different networks** that you'd never notice on your own.
-
-**How it works:**
-
-1. **Per-capture (incremental):** When a new node is committed, compare its embedding against nodes in *other* networks:
-
-```python
-def discover_bridges_incremental(new_node: BaseNode,
-                                  vector_store: VectorStore) -> list[Bridge]:
-    """
-    Find potential cross-network bridges for a newly committed node.
-
-    CSC148 connection: This is a nearest-neighbor search with filtering.
-    We search for similar nodes but EXCLUDE nodes in the same network.
-
-    Time complexity: O(log N) per network — HNSW index lookup
-    """
-    bridges = []
-
-    for network in ALL_NETWORKS:
-        # Skip the node's own networks
-        if network in new_node.networks:
-            continue
-
-        # Find similar nodes in OTHER networks
-        similar_nodes = vector_store.search(
-            query_vector=new_node.embedding,
-            filter={"networks": network},
-            top_k=5,
-            min_similarity=0.75
-        )
-
-        for match in similar_nodes:
-            bridges.append(Bridge(
-                source_node_id=new_node.id,
-                target_node_id=match.node_id,
-                source_network=new_node.networks[0],
-                target_network=network,
-                similarity=match.similarity
-            ))
-
-    return bridges
-```
-
-2. **Daily batch:** Once a day, scan all nodes modified in the last 24 hours for potential bridges. Batch the candidates into a **single LLM call** for validation:
-
-```python
-# Instead of 15 individual LLM calls:
-# "Is this a meaningful connection?" × 15
-
-# We make 1 call:
-# "Here are 15 potential connections. For each, tell me if it's meaningful
-#  and why. Respond as JSON."
-```
-
-**Real example:** You mention stress twice this week (Health network). You have 4 open commitments past due (Professional network). Bridge discovery finds high embedding similarity between the stress mentions and the overdue commitment nodes. The daily batch LLM validates: "Yes, this is meaningful — stress correlates with professional overcommitment." → A BRIDGES edge is created.
-
-The Strategist then surfaces this in your briefing: "You're stressed because you're overextended. The commitment from Sam is stale — he missed his last two promises. Consider deprioritizing the venture with Sam and focusing on your 3 remaining professional commitments."
-
-No single-domain tool could ever make this connection.
-
-### 8.4 Spaced Repetition (SM-2)
-
-The SM-2 algorithm is used in flashcard apps like Anki. Memora applies it to knowledge graph nodes to fight the "67% of notes never revisited" problem.
-
-```python
-def sm2_update(easiness_factor: float,
-               repetition_number: int,
-               interval: int,
-               quality: int) -> tuple[float, int, int]:
-    """
-    SM-2 spaced repetition algorithm.
-
-    Args:
-        easiness_factor: how easy this item is to recall (min 1.3)
-        repetition_number: how many times reviewed successfully
-        interval: current interval in days
-        quality: user's recall quality rating (0-5)
-                 0 = complete blackout
-                 3 = correct with difficulty
-                 5 = perfect recall
-
-    Returns:
-        (new_easiness_factor, new_repetition_number, new_interval)
-
-    CSC148 connection: This is just a function that updates state
-    based on input. It's essentially a state machine:
-    quality >= 3 → advance (longer interval)
-    quality < 3  → reset (start over)
-    """
-    if quality >= 3:
-        # Successful recall → increase interval
-        if repetition_number == 0:
-            new_interval = 1
-        elif repetition_number == 1:
-            new_interval = 6
-        else:
-            new_interval = round(interval * easiness_factor)
-
-        new_repetition = repetition_number + 1
-    else:
-        # Failed recall → reset
-        new_interval = 1
-        new_repetition = 0
-
-    # Update easiness factor
-    new_ef = easiness_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02))
-    new_ef = max(1.3, new_ef)
-
-    return new_ef, new_repetition, new_interval
-
-
-# Example: First review of a CONCEPT node
-ef, rep, interval = sm2_update(
-    easiness_factor=2.5,
-    repetition_number=0,
-    interval=0,
-    quality=4  # recalled correctly
-)
-# ef=2.5, rep=1, interval=1 → review again tomorrow
-
-# Second review, recalled well
-ef, rep, interval = sm2_update(ef, rep, interval, quality=4)
-# ef=2.5, rep=2, interval=6 → review in 6 days
-
-# Third review, still good
-ef, rep, interval = sm2_update(ef, rep, interval, quality=5)
-# ef=2.6, rep=3, interval=16 → review in 16 days
-```
-
-### 8.5 Network Health Scoring
-
-Every 6 hours, Memora computes health status for each of the 7 networks:
-
-```python
-def compute_network_health(network: str, graph: KnowledgeGraph) -> HealthStatus:
-    """
-    Compute health status for a context network.
-
-    CSC148 connection: This is a weighted scoring algorithm
-    that combines multiple metrics into a single status.
-    """
-    # 1. Commitment completion rate
-    commitments = graph.get_nodes(type="COMMITMENT", network=network)
-    open_count = sum(1 for c in commitments if c.status == "open")
-    overdue_count = sum(1 for c in commitments if c.status == "overdue")
-    completed_count = sum(1 for c in commitments if c.status == "completed")
-    total = open_count + overdue_count + completed_count
-
-    if total > 0:
-        completion_rate = completed_count / total
-    else:
-        completion_rate = 1.0  # no commitments = fine
-
-    # 2. Alert ratio
-    alerts = graph.get_alerts(network=network)
-    total_nodes = graph.count_nodes(network=network)
-    alert_ratio = len(alerts) / max(total_nodes, 1)
-
-    # 3. Staleness flag
-    # Only triggered when commitments exist but haven't been updated
-    if open_count > 0:
-        most_recent_update = max(c.updated_at for c in commitments if c.status == "open")
-        days_since_update = (datetime.now() - most_recent_update).days
-        is_stale = days_since_update > 7
-    else:
-        is_stale = False  # silence is fine when there are no deadlines
-
-    # Determine status
-    if overdue_count >= 3 or (is_stale and alert_ratio > 0.3):
-        return HealthStatus("falling_behind", momentum="down")
-    elif overdue_count >= 1 or alert_ratio > 0.15 or is_stale:
-        return HealthStatus("needs_attention", momentum="stable")
-    else:
-        return HealthStatus("on_track", momentum="up" if completion_rate > 0.8 else "stable")
-```
-
-### 8.6 Gap Detection
-
-Weekly, the system scans for structural weaknesses in the graph:
-
-```python
-def detect_gaps(graph: KnowledgeGraph) -> list[Gap]:
-    """
-    Find structural weaknesses in the knowledge graph.
-
-    CSC148 connection: These are all GRAPH ALGORITHMS!
-    - Orphaned nodes = nodes with degree 0 (no edges)
-    - Stalled goals = nodes with no recent incoming edges of a specific type
-    - Dead-end projects = same
-    - Isolated concepts = nodes not connected to any practical node type
-    """
-    gaps = []
-
-    # 1. Orphaned nodes — degree 0
-    for node in graph.get_all_nodes():
-        if graph.degree(node.id) == 0:
-            gaps.append(Gap("orphaned", node.id,
-                           f"'{node.title}' has no connections"))
-
-    # 2. Stalled goals — GOAL nodes with no recent PROGRESS edges
-    for goal in graph.get_nodes(type="GOAL", status="active"):
-        recent_progress = graph.get_edges(
-            target=goal.id,
-            edge_type="PROGRESS",
-            since=datetime.now() - timedelta(days=14)
-        )
-        if not recent_progress:
-            gaps.append(Gap("stalled_goal", goal.id,
-                           f"Goal '{goal.title}' has no progress in 14 days"))
-
-    # 3. Dead-end projects
-    for project in graph.get_nodes(type="PROJECT", status="active"):
-        recent_activity = graph.get_edges(
-            source=project.id,
-            since=datetime.now() - timedelta(days=14)
-        )
-        if not recent_activity:
-            gaps.append(Gap("dead_end_project", project.id,
-                           f"Project '{project.title}' has no activity in 14 days"))
-
-    # 4. Isolated concepts
-    for concept in graph.get_nodes(type="CONCEPT"):
-        connected_to_practical = any(
-            graph.get_node(edge.target_id).node_type in
-            ["PROJECT", "GOAL", "COMMITMENT", "DECISION"]
-            for edge in graph.get_edges(source=concept.id)
-        )
-        if not connected_to_practical:
-            gaps.append(Gap("isolated_concept", concept.id,
-                           f"Concept '{concept.title}' isn't linked to any practical application"))
-
-    return gaps
-```
-
-**CSC148 connection:** Gap detection is pure graph analysis. Orphaned nodes = degree-0 vertices. Stalled goals = nodes with no incoming edges of a specific type within a time window. These are exactly the kinds of graph traversal problems you solve in CSC148.
-
----
-
-## Part 9: The Truth Layer — Fact Verification
-
-### 9.1 Why Facts Need Verification
-
-The graph contains three categories of information with very different reliability:
-
-1. **Things the LLM extracted** — the Archivist inferred "Sam is an investor" from your text. But did you actually say that, or did the LLM misinterpret?
-
-2. **Things the Researcher found online** — "Company X raised $50M in Series B." But is that article from 2024 still accurate in 2026?
-
-3. **Things you self-reported** — "Sam told me the deal closed." But Sam might have been wrong, or you might have misheard.
-
-**The risk:** If the Strategist recommends an action based on a hallucinated LLM inference layered on top of stale web data layered on top of self-reported hearsay, you've made a decision based on fiction.
-
-The Truth Layer prevents this.
-
-### 9.2 Source Confidence Hierarchy
-
-```python
-class SourceType:
-    """
-    CSC148 connection: This is just an ordered enum.
-    PRIMARY > SECONDARY > SELF_REPORTED
-    """
-    PRIMARY = "PRIMARY"           # Official records, government databases, published financials
-    SECONDARY = "SECONDARY"       # News articles, research papers, third-party reports
-    SELF_REPORTED = "SELF_REPORTED"  # User hearsay ("Sam told me X")
-```
-
-| Source Type | Confidence | Examples |
+| Score Range | Outcome | What Happens |
 |---|---|---|
-| `PRIMARY` | Highest | Official records, government databases, published financials, SEC filings |
-| `SECONDARY` | Medium | News articles, research papers, third-party reports (with citation) |
-| `SELF_REPORTED` | Lowest | User-stated hearsay ("Sam told me X") — always flagged as such |
-
-### 9.3 The Fact-Check Gate
-
-Before any agent generates a recommendation, it cross-references against the Truth Layer:
+| >= 0.85 | MERGE | Proposed node merges with existing node |
+| 0.40 - 0.85 | DEFER | Needs human review |
+| < 0.40 | CREATE | Create as a new node |
+| Exact name match = 1.0 | MERGE (forced) | Perfect name match always merges |
 
 ```python
-def fact_check_gate(claims: list[str], truth_layer: TruthLayer) -> list[FactCheckResult]:
-    """
-    Cross-reference claims against verified facts.
+@dataclass
+class ResolutionResult:
+    proposed_temp_id: str
+    proposed_title: str
+    candidates: list[ResolutionCandidate] = field(default_factory=list)
+    chosen: ResolutionCandidate | None = None
+    outcome: ResolutionOutcome = ResolutionOutcome.CREATE
+    audit_log: list[str] = field(default_factory=list)
+```
 
-    CSC148 connection: This is a search/match algorithm over
-    a collection of verified facts.
-    """
-    results = []
+The `audit_log` is a list of human-readable strings documenting every decision, enabling full transparency:
 
-    for claim in claims:
-        # Search Truth Layer for related facts
-        related_facts = truth_layer.search(claim)
-
-        if not related_facts:
-            results.append(FactCheckResult(
-                claim=claim,
-                status="unverified",
-                message="No verified facts found — unverified claim"
-            ))
-        else:
-            for fact in related_facts:
-                if fact.contradicts(claim):
-                    results.append(FactCheckResult(
-                        claim=claim,
-                        status="contradicted",
-                        message=f"Contradicted by {fact.source_type} source: {fact.source_title}",
-                        conflicting_fact=fact
-                    ))
-                else:
-                    results.append(FactCheckResult(
-                        claim=claim,
-                        status="supported",
-                        message=f"Supported by {fact.source_type} source: {fact.source_title}",
-                        supporting_fact=fact
-                    ))
-
-    return results
+```
+["Exact name search: 1 matches for 'Sam'",
+ "Embedding search: 3 similar nodes",
+ "MERGE (exact name): 'Sam' -> 'Sam Chen' (exact_name=1.0, forced merge)"]
 ```
 
 ---
 
-## Part 10: The API Layer — How Frontend Talks to Backend
+## Part 7: The AI Council
 
-### 10.1 What Is an API?
+### Three Specialized Agents + Orchestrator
 
-In CSC148, your programs are self-contained — you call functions directly. In a web application, the frontend (running in your browser) and the backend (running on your computer) are separate programs that communicate over **HTTP**.
+Memora's AI council consists of three specialized agents coordinated by an orchestrator:
 
-An **API (Application Programming Interface)** defines the contract for this communication: what requests the frontend can make, what data it sends, and what the backend responds with.
+1. **Archivist** — Extracts structured data from unstructured text
+2. **Strategist** — Analyzes graph data and provides strategic insights
+3. **Researcher** — Gathers external information with PII anonymization
+4. **Orchestrator** — Routes queries and synthesizes multi-agent outputs
 
-**Analogy:** Think of the API as a restaurant menu. The frontend (customer) looks at the menu (API docs) and orders (makes a request). The backend (kitchen) prepares the order and sends it back (response). The customer doesn't need to know how the kitchen works internally.
+### The Archivist Agent
 
-### 10.2 REST Endpoints
-
-Memora's API uses **REST** — a standard pattern where each resource has a URL, and you use HTTP methods (GET, POST, PATCH, DELETE) to interact with it:
+The Archivist converts natural language into `GraphProposal` objects using the OpenAI Responses API with `json_schema` structured output:
 
 ```python
-# Framework: FastAPI (Python)
+class ArchivistAgent:
+    def __init__(self, api_key, vector_store=None, embedding_engine=None,
+                 model="gpt-5-nano", you_node_id=None):
+        self._client = openai.AsyncOpenAI(api_key=api_key)
+        self._model = model
+        self._system_prompt = self._load_system_prompt()  # from prompts/archivist_system.md
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+    async def extract(self, text: str, capture_id: str) -> ArchivistResult:
+        # 1. Retrieve similar existing nodes for RAG context
+        rag_nodes = await self._retrieve_rag_context(text)
 
-app = FastAPI()
+        # 2. Build static + dynamic prompt (static is cacheable by OpenAI)
+        system_prompt = self._get_static_system_prompt()
+        dynamic_context = self._build_dynamic_context(context, capture_id)
 
+        # 3. Call OpenAI Responses API with json_schema format
+        response = await self._client.responses.create(
+            model=self._model,
+            instructions=system_prompt,
+            input=f"{dynamic_context}\n\n---\n\nText:\n{text}",
+            text={"format": {"type": "json_schema", "name": "graph_proposal",
+                             "schema": GRAPH_PROPOSAL_SCHEMA}},
+            reasoning={"effort": "low"},
+            max_output_tokens=16384,
+        )
 
-# ─── Captures ───────────────────────────────────
-
-class CaptureCreate(BaseModel):
-    """Request body for creating a capture."""
-    modality: str       # "text", "voice", "image"
-    content: str
-    metadata: dict = {}
-
-class CaptureResponse(BaseModel):
-    """Response after creating a capture."""
-    id: str
-    status: str         # "processing", "completed"
-    pipeline_stage: str
-    created_at: str
-
-
-@app.post("/api/v1/captures", response_model=CaptureResponse)
-async def create_capture(capture: CaptureCreate):
-    """
-    Create a new capture and start the pipeline.
-
-    CSC148 connection: This is just a function that takes input
-    and returns output — but it's triggered by an HTTP request
-    instead of a direct function call.
-    """
-    # 1. Store the raw capture
-    record = await capture_store.save(capture)
-
-    # 2. Start the 9-stage pipeline (async — doesn't block)
-    await pipeline.start(record.id)
-
-    return CaptureResponse(
-        id=record.id,
-        status="processing",
-        pipeline_stage="preprocessing",
-        created_at=record.created_at.isoformat()
-    )
-
-
-@app.get("/api/v1/captures")
-async def list_captures(limit: int = 20, offset: int = 0):
-    """List captures with pagination."""
-    return await capture_store.list(limit=limit, offset=offset)
-
-
-# ─── Graph ──────────────────────────────────────
-
-@app.get("/api/v1/graph/nodes/{node_id}")
-async def get_node(node_id: str):
-    """Get a node with all its properties and edges."""
-    node = await graph_db.get_node(node_id)
-    if not node:
-        raise HTTPException(status_code=404, detail="Node not found")
-    edges = await graph_db.get_edges(node_id=node_id)
-    return {"node": node, "edges": edges}
-
-
-@app.get("/api/v1/graph/nodes/{node_id}/neighborhood")
-async def get_neighborhood(node_id: str, hops: int = 1):
-    """
-    Get the local subgraph around a node.
-
-    CSC148 connection: This triggers a BFS with depth limit!
-    """
-    return await graph_db.bfs_neighborhood(node_id, max_hops=hops)
-
-
-@app.get("/api/v1/graph/search")
-async def search_graph(query: str, top_k: int = 10):
-    """Hybrid search (BM25 + dense vector fusion)."""
-    return await search_engine.hybrid_search(query, top_k=top_k)
-
-
-# ─── AI Council ─────────────────────────────────
-
-class CouncilQuery(BaseModel):
-    query: str
-    mode: str = "council"       # "council" or "single_agent"
-    include_critique: bool = False
-
-@app.post("/api/v1/council/query")
-async def council_query(request: CouncilQuery):
-    """Submit a question to the AI Council."""
-    # Response streams via WebSocket (see Section 10.3)
-    session_id = await orchestrator.start_query(
-        query=request.query,
-        mode=request.mode,
-        include_critique=request.include_critique
-    )
-    return {"session_id": session_id, "ws_url": f"/api/v1/ws/stream/{session_id}"}
+        # 4. Parse JSON into validated GraphProposal
+        proposal = GraphProposal(**json.loads(response.output_text))
+        return ArchivistResult(proposal=proposal)
 ```
 
-### 10.3 WebSocket — Real-Time Streaming
+Key design decisions:
+- The `json_schema` response format guarantees valid JSON matching the Pydantic-generated schema
+- The system prompt is static (cacheable by OpenAI for cost savings), while capture-specific context is injected via the input message
+- RAG context from existing nodes helps the LLM avoid creating duplicates
+- `reasoning={"effort": "low"}` keeps costs down for extraction tasks
 
-When the AI Council is answering a complex question, you don't want to wait for the entire answer to be generated. You want to see tokens streaming in real-time (like ChatGPT).
+> **CSC148 Connection:** The Archivist uses the **template method pattern**: the `extract()` method defines the algorithm skeleton (retrieve context, build prompt, call API, parse response), while the individual steps can be customized. The RAG context retrieval is essentially a **priority queue** pattern — retrieve the top-K most relevant existing nodes to inject into the prompt.
 
-**WebSocket** is a protocol that maintains a persistent connection between the browser and the server, allowing the server to push data to the browser at any time.
+### The Strategist Agent
+
+The Strategist analyzes graph data and provides insights. It has three modes:
+
+1. **Analyze** — Strategic analysis of a query using graph context
+2. **Generate Briefing** — Daily briefing from collected data
+3. **Critique** — Challenge a statement using graph evidence (adversarial mode)
 
 ```python
-from fastapi import WebSocket
+class StrategistAgent:
+    async def analyze(self, query: str, graph_context: dict | None = None) -> StrategistResult:
+        """Strategic analysis with graph context."""
+        if graph_context is None:
+            graph_context = self._build_graph_context(query)  # hybrid search + entity lookup
+        # ... LLM call with context injection
 
-@app.websocket("/api/v1/ws/stream/{session_id}")
-async def stream_council_response(websocket: WebSocket, session_id: str):
-    """
-    Stream AI Council response token-by-token.
+    async def generate_briefing(self, briefing_data: dict) -> DailyBriefing:
+        """Generate daily briefing with typed sections."""
+        # Returns: summary, mood, urgent items, upcoming, people followup,
+        #          patterns, wins, stalled items, review queue
 
-    CSC148 connection: Think of this as an iterator/generator.
-    Instead of returning one big response, we yield tokens one at a time.
-    """
-    await websocket.accept()
+    async def critique(self, statement: str, graph_context: dict | None = None) -> CritiqueResult:
+        """CRITIC MODE: challenge a statement using graph evidence."""
+        # Returns: counter_evidence, blind_spots, confidence
+```
 
-    async for token in orchestrator.stream(session_id):
-        await websocket.send_json({
-            "type": "agent_token",
-            "agent": token.agent_name,    # "archivist", "strategist", "researcher"
-            "text": token.text,
-            "metadata": {
-                "confidence": token.confidence,
-                "citing_nodes": token.cited_node_ids
-            }
+The Strategist builds **entity-aware graph context** by extracting capitalized words (proper nouns) from the query, searching the graph by title, and expanding their 1-hop neighborhoods. This ensures the LLM has concrete data about every named entity mentioned.
+
+### The Researcher Agent
+
+The Researcher gathers external information with **PII anonymization**:
+
+```python
+class ResearcherAgent:
+    def _anonymize_query(self, query: str, graph_context: dict | None = None) -> str:
+        """Strip PII from the query before external searches."""
+        text = query
+        text = _EMAIL_PATTERN.sub("[email]", text)    # regex: email addresses
+        text = _PHONE_PATTERN.sub("[phone]", text)    # regex: phone numbers
+        text = _SSN_PATTERN.sub("[id-number]", text)  # regex: SSN patterns
+        text = _DOLLAR_PATTERN.sub("a sum of money", text)  # dollar amounts
+
+        # Replace names found in graph context
+        if graph_context:
+            names = self._extract_names_from_context(graph_context)
+            for name in names:
+                text = text.replace(name, "someone")
+        return text
+```
+
+The Researcher has access to MCP (Model Context Protocol) tool servers:
+- **GoogleSearchMCP** — Google web search
+- **BraveSearchMCP** — Brave web search
+- **SemanticScholarMCP** — Academic paper search
+- **PlaywrightScraperMCP** — Web scraping via httpx
+- **GitHubMCP** — Repository and code search
+
+Research findings are deposited as verified facts in the Truth Layer with source URLs for traceability.
+
+### The Orchestrator (LangGraph State Machine)
+
+The Orchestrator coordinates all three agents using a LangGraph state machine:
+
+```python
+class Orchestrator:
+    def _build_graph(self) -> StateGraph:
+        graph = StateGraph(CouncilState)
+
+        # Add nodes (processing steps)
+        graph.add_node("classify", self._classify_node)
+        graph.add_node("archivist", self._archivist_node)
+        graph.add_node("strategist", self._strategist_node)
+        graph.add_node("researcher", self._researcher_node)
+        graph.add_node("council_all", self._council_all_agents_node)
+        graph.add_node("synthesize", self._synthesize_node)
+        graph.add_node("deliberate", self._deliberation_node)
+
+        # Set entry point
+        graph.set_entry_point("classify")
+
+        # Conditional routing after classification
+        graph.add_conditional_edges("classify", self._route_after_classify, {
+            "archivist": "archivist",
+            "strategist": "strategist",
+            "researcher": "researcher",
+            "council_all": "council_all",
         })
 
-    # Send completion signal
-    await websocket.send_json({"type": "complete"})
-    await websocket.close()
+        # All paths converge at synthesis
+        graph.add_edge("archivist", "synthesize")
+        graph.add_edge("strategist", "synthesize")
+        graph.add_edge("researcher", "synthesize")
+        graph.add_edge("council_all", "synthesize")
+
+        # Deliberation loop for high-disagreement council queries
+        graph.add_conditional_edges("synthesize", self._route_after_synthesize, {
+            "deliberate": "deliberate",
+            "end": END,
+        })
+        graph.add_edge("deliberate", "synthesize")
+
+        return graph.compile()
+```
+
+> **CSC148 Connection:** This is a **directed graph used as a state machine**. Each node in the LangGraph is a processing step. Conditional edges are like `if/elif` branches — the `_route_after_classify` function returns a string indicating which node to visit next. The deliberation loop creates a **cycle** in the graph, bounded by `max_deliberation_rounds` to prevent infinite loops. This is exactly the kind of graph structure you study in CSC148: nodes, directed edges, cycles, and traversal.
+
+### Query Classification
+
+The classifier uses weighted keyword scoring to route queries:
+
+```python
+class QueryType(str, Enum):
+    CAPTURE = "capture"     # "I met Sam today..."
+    ANALYSIS = "analysis"   # "How am I doing on my goals?"
+    RESEARCH = "research"   # "What is the latest on graph databases?"
+    COUNCIL = "council"     # "Help me make a comprehensive decision about..."
+```
+
+Capture signals ("I did", "I met", "I promised") route to the Archivist. Analysis signals ("analyze", "should I", "status") route to the Strategist. Research signals ("how does", "look up", "fact check") route to the Researcher. Council signals ("complex decision", "comprehensive analysis") invoke all three agents.
+
+### Confidence-Weighted Synthesis
+
+When multiple agents contribute, the synthesizer produces a coherent response:
+
+```python
+def _synthesize_node(self, state: CouncilState) -> CouncilState:
+    # Collect outputs and detect disagreement
+    confidences = [o.get("confidence", 0.5) for o in outputs]
+    spread = max(confidences) - min(confidences)
+    state["high_disagreement"] = spread > 0.3
+
+    # If single agent, use its output directly
+    # If multiple agents, use LLM to produce coherent synthesis
+    if len(outputs) > 1:
+        state["synthesis"] = self._llm_synthesize(query, raw_synthesis, outputs)
+
+    # Apply truth layer fact-check gate
+    if self._truth_layer:
+        fact_check = self._fact_check_synthesis(raw_synthesis)
+        if fact_check:
+            raw_synthesis += f"\n\n[fact_check] {fact_check}"
 ```
 
 ---
 
-## Part 11: Putting It All Together — A Full User Flow
+## Part 8: The Living Graph Engine
 
-Let's trace a complete user interaction through the entire system architecture.
+The graph is not static. It is a living system maintained by 10 scheduled background jobs that run automatically. These jobs implement the "Living Graph Engine" — the subsystem that keeps the graph accurate, relevant, and insightful.
+
+### Job 1: Decay Scoring (runs 2:00 AM daily)
+
+Every node has a `decay_score` between 0.0 and 1.0 that represents its current relevance. The score decays exponentially over time:
+
+```
+decay_score = e^(-effective_lambda * delta_days)
+```
+
+Where:
+- `delta_days` = days since the node's most recent meaningful timestamp
+- `effective_lambda` = lambda / (1 + ln(1 + access_count))
+- Access count **slows** decay (logarithmic damping)
+
+```python
+class DecayScoring:
+    def compute_decay(self, t_anchor: datetime, lambda_val: float,
+                      access_count: int = 0) -> float:
+        delta_days = max(0.0, (now - t_anchor).total_seconds() / 86400.0)
+        effective_lambda = lambda_val / (1 + log(1 + access_count))
+        return exp(-effective_lambda * delta_days)
+```
+
+Each network decays at a different rate:
+
+| Network | Lambda | Half-Life (days) | Rationale |
+|---|---|---|---|
+| SOCIAL | 0.07 | ~10 | Social interactions fade fast |
+| ACADEMIC | 0.05 | ~14 | Course material cycles each semester |
+| HEALTH | 0.05 | ~14 | Health habits need regular reinforcement |
+| PERSONAL_GROWTH | 0.04 | ~17 | Skills take time to build |
+| PROFESSIONAL | 0.03 | ~23 | Work relationships are more stable |
+| VENTURES | 0.03 | ~23 | Side projects evolve slowly |
+| FINANCIAL | 0.02 | ~35 | Financial decisions have long-term impact |
+
+Active items (open commitments, active goals, active projects) are **pinned at 1.0** — they never decay until their status changes. Future-dated items also stay at 1.0 until their date passes.
+
+> **CSC148 Connection:** The decay function is a composition of **exponential decay** (e^-x) with **logarithmic damping** (ln(1+x)). The logarithmic damping on access count means the first few accesses dramatically slow decay, but additional accesses have diminishing returns. This is exactly the kind of mathematical analysis you do in CSC148's Big-O discussions — logarithmic growth is slower than linear, which is slower than exponential.
+
+### Job 2: Bridge Discovery (runs 3:00 AM daily)
+
+Bridges are cross-network connections — nodes in different networks that are semantically similar. The bridge discovery algorithm:
+
+1. For each recently modified node, embed it into the 768-dimensional vector space
+2. Search for similar nodes in **different** networks
+3. If cosine similarity exceeds the threshold (default 0.75), create a bridge record
+4. Batch-validate bridges with the LLM to check if the connection is meaningful
+
+Example: Your "Graph visualization tool" idea (VENTURES) might bridge to your "BFS concepts" note (ACADEMIC) — the AI helps you see that your coursework directly feeds your side project.
+
+### Job 3: Network Health Scoring (runs every 6 hours)
+
+For each of the 7 networks, compute a health snapshot with three metrics:
+
+- **Commitment completion rate** — what fraction of commitments in this network are completed?
+- **Alert ratio** — what fraction of nodes are flagged (overdue, decayed, stale)?
+- **Staleness flags** — how many nodes have decay scores below 0.3?
+
+```python
+# Thresholds for status determination
+FALLING_BEHIND_COMPLETION = 0.4     # < 40% completion = falling behind
+NEEDS_ATTENTION_COMPLETION = 0.7    # < 70% completion = needs attention
+FALLING_BEHIND_ALERT_RATIO = 0.3   # > 30% alerts = falling behind
+STALENESS_DECAY_THRESHOLD = 0.3    # nodes below this are "stale"
+```
+
+Status is determined as: `ON_TRACK`, `NEEDS_ATTENTION`, or `FALLING_BEHIND`. Momentum is computed by comparing with the previous snapshot: `UP`, `STABLE`, or `DOWN`.
+
+### Job 4: Commitment Scanning (runs 6:00 AM daily)
+
+Scans all open commitments for approaching deadlines and overdue items. Generates notifications for commitments due within 48 hours and marks past-due commitments as overdue.
+
+### Job 5: Relationship Decay Detection (runs weekly, Sundays)
+
+Detects relationships that are growing stale based on tiered thresholds:
+
+```python
+# Relationship tiers and their staleness thresholds (days)
+relationship_decay_thresholds = {
+    "close": 7,        # Close contacts: no interaction in 7 days = decay alert
+    "regular": 14,     # Regular contacts: 14 days
+    "acquaintance": 30, # Acquaintances: 30 days
+}
+```
+
+### Job 6: Spaced Repetition (runs 5:00 AM daily)
+
+Implements the **SM-2 algorithm** (SuperMemo 2) for scheduling knowledge review:
+
+```python
+# SM-2 parameters per node
+sm2_params = {
+    "easiness_factor": 2.5,    # starts at 2.5, adjusted per review
+    "repetition_number": 0,     # count of successful reviews
+    "interval": 0,              # days until next review
+    "review_date": "2026-03-02",
+}
+```
+
+After each review, the quality score (0-5) adjusts the easiness factor:
+- Quality 0 (complete blackout): reset interval to 0
+- Quality 5 (perfect recall): extend interval by easiness factor
+
+> **CSC148 Connection:** SM-2 is a **state machine** with five parameters. Each review transitions the state based on the quality score. The interval growth follows a recurrence relation: `interval(n) = interval(n-1) * easiness_factor`. This is exactly the kind of recurrence you analyze in CSC148: each step depends on the previous step's output.
+
+### Job 7: Gap Detection (runs weekly, Sundays 1:00 AM)
+
+Identifies 5 types of gaps in the knowledge graph:
+
+1. **Orphaned nodes** — nodes with zero edges (isolated vertices)
+2. **Stalled goals** — goals with no recent activity or progress
+3. **Dead-end projects** — projects with no active subtasks or next steps
+4. **Isolated concepts** — concepts not linked to any actionable nodes
+5. **Unresolved decisions** — decisions still pending without resolution
+
+### Job 8: Daily Briefing (runs 7:00 AM daily)
+
+The `BriefingCollector` aggregates data from all subsystems, then the Strategist agent generates a structured daily briefing with sections for urgent items, recent activity, upcoming commitments, people to follow up with, detected patterns, wins, stalled items, and review queue.
+
+### Job 9: Pattern Detection (runs 4:00 AM daily)
+
+The PatternEngine runs 11 behavioral detectors (covered in Part 11).
+
+### Job 10: Outcome Review (runs 6:30 AM daily)
+
+Reviews decisions and goals whose outcomes can now be evaluated, prompting the user to record actual outcomes for feedback loop analysis.
+
+---
+
+## Part 9: Truth Layer and Verified Facts
+
+### The Problem: Not All Information is Equal
+
+When the Archivist extracts "Sam said the midterm is on March 15th," is that a verified fact? It is a claim extracted from user input, attributed to Sam, with no external verification. The Truth Layer provides a system for tracking fact confidence, lifecycle, and verification status.
+
+### Fact Model
+
+```python
+class FactStatus(str, Enum):
+    ACTIVE = "active"          # Currently believed to be true
+    STALE = "stale"            # Past recheck date, needs verification
+    CONTRADICTED = "contradicted"  # Conflicting evidence found
+    RETIRED = "retired"        # No longer relevant
+
+class FactLifecycle(str, Enum):
+    STATIC = "static"    # Facts that don't change (e.g., "Paris is the capital of France")
+    DYNAMIC = "dynamic"  # Facts that may change (e.g., "Midterm is March 15th")
+```
+
+### Core Operations
+
+**Deposit a fact:**
+```python
+def deposit_fact(self, node_id, statement, confidence=0.8,
+                 lifecycle=FactLifecycle.DYNAMIC, verified_by="archivist",
+                 recheck_interval_days=90):
+    # Create fact with status=ACTIVE
+    # Set next_check = now + recheck_interval for DYNAMIC facts
+    # STATIC facts never need rechecking
+```
+
+**Check for contradictions:**
+```python
+def check_contradiction(self, statement: str, node_id: str) -> list[dict]:
+    """Find existing active facts that might contradict the new statement."""
+    existing = self.query_facts(node_id=node_id, status="active")
+    new_words = set(statement.lower().split())
+    contradictions = []
+    for fact in existing:
+        existing_words = set(fact["statement"].lower().split())
+        overlap = new_words & existing_words
+        # High word overlap + different statement = potential contradiction
+        if len(overlap) >= 3 and fact["statement"].lower() != statement.lower():
+            contradictions.append(fact)
+    return contradictions
+```
+
+**Record a fact check:**
+```python
+def record_check(self, fact_id, check_type, result, evidence="", checked_by="system"):
+    # result can be "confirmed" or "contradicted"
+    # If confirmed: reset next_check timer for dynamic facts
+    # If contradicted: set status to CONTRADICTED
+```
+
+> **CSC148 Connection:** The contradiction detector uses **set intersection** — converting statements into sets of words and checking overlap. This is O(n) for set construction and O(min(m,n)) for intersection, where n and m are the word counts. The 3-word overlap threshold is a heuristic, not a formal proof, but it avoids false positives from generic words while catching genuine conflicts. This is the kind of practical algorithmic reasoning CSC148 teaches.
+
+### Integration with Pipeline
+
+During Stage 9 (Post-Commit), the pipeline automatically:
+1. Cross-references new claims against existing verified facts
+2. If no contradiction is found, auto-deposits the claim as a verified fact with confidence 0.7
+3. If a contradiction is found, creates a high-priority notification
+
+---
+
+## Part 10: Adaptive RAG Pipeline
+
+### What is RAG?
+
+RAG (Retrieval-Augmented Generation) is a technique where you **retrieve** relevant documents before **generating** an LLM response. Instead of relying solely on the LLM's training data, you inject specific, current information from your knowledge graph.
+
+### Memora's RAG Flow
+
+When you ask Memora a question like "What is my progress on CSC148 goals?", the Orchestrator:
+
+1. **Embeds** the query into a 768-dimensional vector using all-mpnet-base-v2
+2. **Hybrid searches** Weaviate (dense vector search + BM25 keyword search with RRF fusion)
+3. **Expands** the top-5 results' 1-hop neighborhoods in the graph
+4. **Entity-aware lookup**: extracts capitalized words (proper nouns) from the query, searches graph by title, expands their neighborhoods
+5. **Assesses retrieval quality** (CRAG gate)
+6. **Injects** the gathered context into the LLM prompt
+
+### CRAG: Corrective RAG
+
+CRAG (Corrective Retrieval-Augmented Generation) adds a quality gate on retrieval results:
+
+```python
+def _assess_retrieval_quality(self, query: str, results: list) -> str:
+    """Returns 'sufficient' or 'poor' based on three checks."""
+
+    # Check 1: Minimum number of results (default: 3)
+    if len(results) < self._settings.crag_min_results:
+        return "poor"
+
+    # Check 2: Top result relevance score (default threshold: 0.5)
+    if results[0].score < self._settings.crag_relevance_threshold:
+        return "poor"
+
+    # Check 3: Query term coverage (default: 30%)
+    query_terms = {t.lower() for t in query.split() if len(t) > 2}
+    all_content = " ".join(r.content.lower() for r in results)
+    covered = sum(1 for t in query_terms if t in all_content)
+    if covered / len(query_terms) < self._settings.crag_term_coverage_threshold:
+        return "poor"
+
+    return "sufficient"
+```
+
+If retrieval quality is "poor," the Orchestrator escalates from a single-agent strategist call to the full council (all three agents), allowing the Researcher to supplement with external web search.
+
+### Hybrid Search in Weaviate
+
+Weaviate provides both dense vector search and BM25 keyword search. Memora combines them with **Reciprocal Rank Fusion (RRF)**:
+
+```
+hybrid_score = alpha * dense_rank_score + (1 - alpha) * bm25_rank_score
+```
+
+Dense search is good at finding semantically similar content ("BFS algorithm" matches "breadth-first traversal"). BM25 is good at exact keyword matches ("CSC148" matches "CSC148"). The hybrid approach captures both.
+
+> **CSC148 Connection:** Vector search is essentially a **nearest neighbor search** in 768-dimensional space. Weaviate uses HNSW (Hierarchical Navigable Small World) graphs internally — a graph data structure where nodes are vectors and edges connect nearby vectors, enabling approximate nearest neighbor search in O(log n) time instead of O(n) brute force. BM25 is based on **inverted indexes** — hash tables that map each word to the list of documents containing it.
+
+---
+
+## Part 11: Action Engine, Outcomes, and Patterns
+
+### The Action Engine
+
+The Action Engine provides 6 typed operations that modify the knowledge graph with precondition checks and cascading side effects:
+
+```python
+class ActionEngine:
+    def __init__(self, repo, truth_layer=None, health_scoring=None,
+                 notification_manager=None):
+        self._registry = {
+            ActionType.COMPLETE_COMMITMENT: {
+                "label": "Complete Commitment",
+                "node_types": [NodeType.COMMITMENT],
+                "handler": self._complete_commitment,
+            },
+            ActionType.PROMOTE_IDEA: {
+                "label": "Promote Idea to Project",
+                "node_types": [NodeType.IDEA],
+                "handler": self._promote_idea,
+            },
+            ActionType.ARCHIVE_GOAL: {
+                "label": "Archive Goal",
+                "node_types": [NodeType.GOAL],
+                "handler": self._archive_goal,
+            },
+            ActionType.ADVANCE_GOAL: {
+                "label": "Advance Goal",
+                "node_types": [NodeType.GOAL],
+                "handler": self._advance_goal,
+            },
+            ActionType.RECORD_OUTCOME: {
+                "label": "Record Outcome",
+                "node_types": [NodeType.DECISION, NodeType.GOAL, NodeType.COMMITMENT],
+                "handler": self._record_outcome,
+            },
+            ActionType.LINK_ENTITIES: {
+                "label": "Link Entities",
+                "node_types": list(NodeType),  # any type
+                "handler": self._link_entities,
+            },
+        }
+```
+
+> **CSC148 Connection:** The `_registry` is a **dispatch table** — a dictionary mapping action types to handler functions. This is the same pattern as a command dispatch in a REPL: instead of a long `if/elif` chain, you look up the handler in O(1) time. The `get_available_actions()` method filters the registry by checking preconditions against the node's current state, demonstrating **runtime polymorphism**.
+
+### Precondition Checks
+
+Each action has preconditions that must be satisfied:
+
+```python
+def _check_precondition(self, action_type, node) -> bool:
+    if action_type == ActionType.COMPLETE_COMMITMENT:
+        return node.status == CommitmentStatus.OPEN  # Can only complete open commitments
+    elif action_type == ActionType.PROMOTE_IDEA:
+        return node.maturity != IdeaMaturity.ARCHIVED  # Can't promote archived ideas
+    elif action_type == ActionType.ARCHIVE_GOAL:
+        return node.status == GoalStatus.ACTIVE  # Can only archive active goals
+    # ...
+```
+
+### Side Effects
+
+After a successful action, side effects cascade:
+
+- **COMPLETE_COMMITMENT**: Recalculates network health, sends "COMMITMENT_COMPLETED" notification
+- **RECORD_OUTCOME**: Deposits outcome as a verified fact in the Truth Layer
+- **PROMOTE_IDEA**: Creates a new ProjectNode, creates EVOLVED_INTO edge from idea to project, archives the idea, triggers bridge discovery on the new project, sends notification
+- **ARCHIVE_GOAL**: Creates an InsightNode with the archival reason, recalculates network health, sends "GOAL_DRIFT" notification
+
+Every action is recorded in the `actions` table with full audit trail: action type, status, parameters, result, and timestamp.
+
+### The Outcome Tracker
+
+Outcomes provide feedback loops by recording the actual results of decisions, goals, and commitments:
+
+```python
+class Outcome(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    node_id: str
+    node_type: str
+    outcome_text: str
+    rating: OutcomeRating  # POSITIVE, NEUTRAL, NEGATIVE, MIXED
+    evidence: list[str] = Field(default_factory=list)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+```
+
+When you record an outcome for a decision ("Skipping the hackathon turned out well — I got 92% on the midterm"), the system updates the decision node's confidence and deposits the outcome as a verified fact. This creates a **feedback loop**: future analysis by the Strategist can reference past outcomes to improve recommendations.
+
+### Pattern Detection Engine
+
+The PatternEngine runs 11 behavioral detectors that scan the entire knowledge graph:
+
+```python
+class PatternEngine:
+    def detect_all(self) -> list[dict]:
+        detectors = [
+            self.detect_commitment_patterns,        # Overcommitting? Completion rate?
+            self.detect_goal_lifecycle_patterns,     # Goals stalling? Abandonment rate?
+            self.detect_temporal_patterns,           # Activity spikes? Dead zones?
+            self.detect_cross_network_correlations,  # Which networks co-activate?
+            self.detect_relationship_patterns,       # Neglected relationships?
+            self.detect_outcome_patterns,            # Mostly positive? Negative?
+            self.detect_decision_quality_patterns,   # Good decisions? Bad patterns?
+            self.detect_goal_alignment_patterns,     # Goals aligned across networks?
+            self.detect_commitment_scope_patterns,   # Scope creep? Over-promising?
+            self.detect_idea_maturity_patterns,      # Ideas stuck as seeds?
+            self.detect_network_balance_patterns,    # Lopsided attention?
+        ]
+        for detector in detectors:
+            results = detector()
+            patterns.extend(results)
+        return patterns
+```
+
+Each pattern has a type, description, confidence score, severity (INFO/WARNING/CRITICAL), and a suggested action.
+
+The confidence formula balances data volume with signal strength:
+
+```python
+def _compute_confidence(data_points: int, signal_strength: float) -> float:
+    volume_ratio = min(data_points / 20, 1.0)  # 20 data points = max base
+    base = 0.25 + 0.30 * volume_ratio           # base range: 0.25-0.55
+    return min(0.95, base + signal_strength * 0.4)  # signal adds up to 0.4
+```
+
+Example patterns:
+- **commitment_pattern** (WARNING): "Commitment completion rate is 35% (7/20). Consider reducing new commitments."
+- **network_balance** (INFO): "ACADEMIC network has 45% of all nodes. Consider diversifying attention."
+- **idea_maturity** (INFO): "8 ideas are still at SEED stage after 30+ days. Consider developing or archiving them."
+- **relationship_pattern** (WARNING): "3 close contacts have not been interacted with in 14+ days."
+
+> **CSC148 Connection:** Pattern detection is **graph-wide analysis** — iterating over all nodes and edges to compute aggregate statistics. This is O(V + E) for most detectors. The confidence model is a **bounded function** that maps inputs to [0.15, 0.95], similar to how you analyze function ranges in CSC148. The stale pattern lifecycle (auto-resolve after TTL) is a **garbage collection** mechanism.
+
+---
+
+## Part 12: Investigation, Timeline, and People Intel
+
+### Investigation Engine
+
+The Investigation Engine provides interactive deep-link analysis:
+
+#### Expand: Filtered Neighborhood Traversal
+
+```python
+def expand(self, node_id, hops=1, node_types=None, edge_types=None, networks=None):
+    """Get filtered neighborhood around a node, enriched with context."""
+    result = self.repo.get_filtered_neighborhood(
+        node_id=node_id, hops=hops,
+        node_types=node_types, edge_types=edge_types, networks=networks,
+    )
+    # Enrich each node with decay score, health context, outcome status
+    for node_data in result["nodes"]:
+        enrichment = {
+            "decay_score": node_data.get("decay_score", 1.0),
+            "network_health": health_status,
+            "has_outcomes": len(outcomes) > 0,
+        }
+        node_data["enrichment"] = enrichment
+    return result
+```
+
+#### Find Path: BFS Shortest Path
+
+```python
+def find_path(self, source_id: str, target_id: str, max_depth: int = 6) -> dict:
+    """Find shortest path between two nodes, enriched with edge semantics."""
+    path = self.repo.find_shortest_path(source_id, target_id, max_depth=max_depth)
+
+    if path is None:
+        return {"found": False, "path": [], "nodes": [], "hops": []}
+
+    # Fetch node details and edge information for each hop
+    nodes_map = self.repo.get_nodes_batch(path)
+    hops = []
+    for i in range(len(path) - 1):
+        edges = self.repo.get_edges_between(path[i], path[i + 1])
+        hops.append({
+            "from": {"id": path[i], "title": nodes_map[path[i]].title},
+            "to": {"id": path[i+1], "title": nodes_map[path[i+1]].title},
+            "edge": {"edge_type": edges[0].edge_type.value, ...} if edges else None,
+        })
+
+    return {"found": True, "path": path, "nodes": nodes, "hops": hops}
+```
+
+> **CSC148 Connection:** `find_path` uses **BFS** — the same algorithm you implement in CSC148 labs. BFS guarantees the shortest path in an unweighted graph. The `max_depth` parameter bounds the search space, preventing exploration of the entire graph for disconnected nodes. The `repo.find_shortest_path()` implementation uses a queue-based BFS traversal — you could implement this yourself with a `deque` from the `collections` module.
+
+#### Find Common: Shared Connections
+
+```python
+def find_common(self, node_ids: list[str]) -> list[dict]:
+    """Find entities connected to ALL specified nodes."""
+    return self.repo.get_shared_connections(node_ids)
+```
+
+This finds nodes that are in the intersection of all specified nodes' neighborhoods — for example, finding shared contacts between two people.
+
+### Timeline Engine
+
+#### Causal Chain Tracing (BFS Along Temporal Edges)
+
+The Timeline Engine traces causal chains by performing BFS specifically along temporal edge types:
+
+```python
+def trace_causal_chain(self, node_id, direction="both", max_depth=5):
+    """BFS along temporal edges to reconstruct causal chains."""
+    forward_types = ["EVOLVED_INTO", "TRIGGERED"]
+    backward_types = ["PRECEDED_BY"]
+
+    visited = {node_id}
+    queue = deque([(node_id, 0)])
+    chain_nodes = [node_id]
+    chain_edges = []
+
+    while queue:
+        current_id, depth = queue.popleft()
+        if depth >= max_depth:
+            continue
+
+        neighbors = []
+        if direction in ("forward", "both"):
+            neighbors.extend(
+                self.repo.get_temporal_neighbors_directed(
+                    current_id, direction="forward", edge_types=forward_types
+                )
+            )
+        if direction in ("backward", "both"):
+            neighbors.extend(
+                self.repo.get_temporal_neighbors_directed(
+                    current_id, direction="backward", edge_types=backward_types
+                )
+            )
+
+        for neighbor in neighbors:
+            nid = neighbor["node_id"]
+            if nid not in visited:
+                visited.add(nid)
+                chain_nodes.append(nid)
+                chain_edges.append({...})
+                queue.append((nid, depth + 1))
+
+    return {"nodes": nodes, "edges": chain_edges}
+```
+
+> **CSC148 Connection:** This is a **textbook BFS implementation** from CSC148. The `deque` acts as a FIFO queue. The `visited` set prevents revisiting nodes (avoiding infinite loops in cyclic graphs). The `depth` counter limits traversal depth. The key insight: by filtering edges to only temporal types (EVOLVED_INTO, TRIGGERED, PRECEDED_BY), we turn a general graph traversal into a **causal chain reconstruction** — following the chain of events through time.
+
+#### Activity Burst Detection
+
+```python
+def detect_activity_bursts(self, window_days=7, threshold=2.0):
+    """Find periods with above-average node creation."""
+    # Bucket nodes by day
+    daily_counts: dict[str, int] = defaultdict(int)
+    for n in nodes:
+        day = n["created_at"][:10]
+        daily_counts[day] += 1
+
+    avg = sum(daily_counts.values()) / max(len(daily_counts), 1)
+    burst_threshold = avg * threshold  # 2x average = burst
+
+    # Sliding window detection
+    bursts = []
+    for i in range(len(sorted_days)):
+        window_count = sum(daily_counts[sorted_days[j]] for j in range(i, i + window_days))
+        if window_count / window_days > burst_threshold / window_days:
+            bursts.append({"start": sorted_days[i], "node_count": window_count, ...})
+```
+
+This detects periods when you were unusually active — for example, a burst of 15 captures during midterm week when your average is 3 per week.
+
+### People Intelligence Engine
+
+The People Intel Engine computes **relationship strength** using 5 weighted signals:
+
+```python
+SIGNAL_WEIGHTS = {
+    "edge_weight": 0.25,           # Cosine similarity between node embeddings
+    "edge_confidence": 0.15,       # How confident is the relationship?
+    "edge_type_importance": 0.20,  # COLLABORATES_WITH = 1.0, KNOWS = 0.6
+    "recency": 0.25,               # Exponential decay with 35-day half-life
+    "shared_connections": 0.15,    # Log-scaled count of mutual connections
+}
+```
+
+The recency signal uses exponential decay:
+
+```python
+def _compute_recency(updated_at):
+    days_ago = (now - updated_at).total_seconds() / 86400
+    return math.exp(-0.693 * days_ago / 35.0)  # 35-day half-life
+```
+
+The shared connections signal uses logarithmic scaling:
+
+```python
+def _compute_shared_connections_score(count):
+    capped = min(count, 5)
+    return math.log(1 + capped) / math.log(6)  # normalized to ~1.0
+```
+
+> **CSC148 Connection:** The relationship strength formula is a **weighted sum with heterogeneous signals** — the same concept behind any scoring or ranking algorithm. The logarithmic scaling of shared connections prevents one popular node from dominating the score (diminishing returns). The exponential recency decay is the same formula from the decay scoring engine but with a different half-life. These mathematical functions are the building blocks you analyze in CSC148's complexity discussions.
+
+---
+
+## Part 13: The CLI Interface
+
+### Architecture: REPL Pattern
+
+Memora uses a terminal-only CLI built with ANSI escape codes — no web frontend, no React, no browser. The interface follows the classic **Read-Eval-Print Loop (REPL)** pattern:
+
+```python
+class MemoraApp:
+    """Main CLI application."""
+
+    def __init__(self):
+        self.settings: Settings | None = None
+        self.repo: GraphRepository | None = None
+        self._pipeline = None
+        self._orchestrator = None
+        self._strategist = None
+
+    def boot(self):
+        """Initialize settings & repo with staged boot sequence."""
+        self.settings = load_settings()
+        self.repo = GraphRepository(db_path=self.settings.db_path)
+        # ... check subsystem status, display boot sequence
+
+    def run(self):
+        self.boot()
+        while True:                              # LOOP
+            telemetry = self._gather_telemetry()
+            command_deck(**telemetry)             # PRINT (display dashboard)
+            choice = prompt("memora > ")         # READ
+
+            if choice in ("q", "quit", "exit"):
+                break
+            elif choice == "c":                  # EVAL (dispatch)
+                from cli.commands.capture import cmd_capture
+                cmd_capture(self)
+            elif choice == "d":
+                from cli.commands.dossier import cmd_dossier
+                cmd_dossier(self)
+            # ... 20 subcommands total
+```
+
+> **CSC148 Connection:** This is the **REPL pattern** — Read-Eval-Print-Loop — the same pattern as the Python interpreter itself. The command dispatch uses **lazy imports** (`from cli.commands.capture import cmd_capture` inside the branch) to avoid loading all 20 command modules at startup. This is an optimization pattern: load code only when needed, reducing startup time.
+
+### Lazy Subsystem Initialization
+
+Subsystems are initialized on first use, not at boot:
+
+```python
+def _get_embedding_engine(self):
+    """Lazily initialize the embedding engine."""
+    if not hasattr(self, '_embedding_engine') or self._embedding_engine is None:
+        from memora.vector.embeddings import EmbeddingEngine
+        self._embedding_engine = EmbeddingEngine(
+            model_name=self.settings.embedding_model,
+            cache_dir=self.settings.models_dir,
+        )
+    return self._embedding_engine
+
+def _get_vector_store(self):
+    """Lazily initialize the vector store."""
+    if not hasattr(self, '_vector_store') or self._vector_store is None:
+        from memora.vector.store import VectorStore
+        self._vector_store = VectorStore(db_path=self.settings.vector_dir)
+    return self._vector_store
+```
+
+The embedding model (all-mpnet-base-v2) takes several seconds to load. By deferring initialization to first use, the CLI boots instantly and only loads the model when you first invoke a command that needs embeddings.
+
+> **CSC148 Connection:** This is the **lazy initialization** pattern — a form of **memoization**. The first call to `_get_embedding_engine()` does the expensive work; subsequent calls return the cached object in O(1). The `hasattr` check handles both the "never initialized" and "initialized to None" cases.
+
+### The 20 Subcommands
+
+| Key | Command | Description |
+|---|---|---|
+| c | capture | Capture new text, run 9-stage pipeline |
+| p | profile | Set/view your profile (the You node) |
+| r | proposals | Review pending graph proposals |
+| d | dossier | Search nodes, view details |
+| i | investigate | Deep link analysis, path finding |
+| w | browse | Browse graph by type or network |
+| s | search | Search (routes to dossier) |
+| b | briefing | Generate daily briefing |
+| k | critique | Challenge a statement (Strategist critic mode) |
+| u | council | Full AI council deliberation |
+| t | timeline | Chronological view, causal chains |
+| o | outcomes | Record and view outcomes |
+| a | patterns | View detected behavioral patterns |
+| g | stats | Graph statistics and metrics |
+| n | networks | Network health overview |
+| e | people | People directory and relationship strength |
+| j | actions | Execute typed graph actions |
+| 0 | settings | View current configuration |
+| x | clear | Clear all data (destructive) |
+| q | quit | Exit Memora |
+
+### Palantir-Inspired Terminal Rendering
+
+The rendering module provides a Palantir Gotham-inspired visual design using ANSI 256-color escape codes:
+
+```python
+class C:
+    """ANSI color codes -- Palantir-inspired 256-color palette."""
+    BASE    = "\033[38;5;253m"   # Light silver text
+    FRAME   = "\033[38;5;240m"   # Dim borders
+    ACCENT  = "\033[38;5;39m"    # Primary cyan -- active UI
+    SIGNAL  = "\033[38;5;214m"   # Amber gold -- alerts
+    CONFIRM = "\033[38;5;84m"    # Green -- healthy
+    DANGER  = "\033[38;5;196m"   # Red -- critical
+    INTEL   = "\033[38;5;183m"   # Soft violet -- AI outputs
+    DIM     = "\033[38;5;243m"   # Descriptions, metadata
+```
+
+The rendering module provides:
+- **Box drawing** with Unicode characters for clean layouts
+- **Tables** with aligned columns
+- **Progress bars** for pipeline tracking
+- **Sparklines** for compact data visualization
+- **Health bars** with color-coded status
+- **ASCII graph visualization** for showing node neighborhoods
+
+### Pipeline Progress Tracker
+
+The CLI tracker provides live visualization of the 9-stage pipeline:
+
+```
+  Pipeline Progress:
+  [1] Raw Input         done
+  [2] Preprocessing     done
+  [3] Extraction        running...
+  [4] Entity Resolution pending
+  ...
+```
+
+The `on_stage` callback from the pipeline runner feeds into the tracker, updating the display in real-time as each stage completes.
+
+---
+
+## Part 14: Putting It All Together — Full Walkthrough
 
 ### Scenario: Monday Morning
 
-**7:00 AM — Daily Briefing**
+It is 7:30 AM on a Monday. You open your terminal and type `python cli.py`.
 
-The APScheduler triggers the daily briefing job. Here's the execution path:
+**Step 1: Boot Sequence**
 
-```
-APScheduler (cron: 7am daily)
-  │
-  ├── compute_decay_scores()        ← Core Engine (O(N), no LLM)
-  ├── compute_network_health()      ← Core Engine (no LLM)
-  ├── run_commitment_scan()         ← Core Engine (no LLM)
-  ├── run_bridge_discovery_batch()  ← Core Engine (1 LLM call for batch)
-  ├── get_sm2_due_items()           ← Core Engine (no LLM)
-  │
-  ▼
-  Strategist Agent (GPT-5-nano)
-    Input: all computed metrics above
-    Output: formatted daily briefing
-  │
-  ▼
-  Push notification to frontend
-```
-
-Your briefing says:
-> **Academic**: 🟡 Needs Attention — CSC148 A3 due in 2 days, no study input in 5 days
-> **Professional**: 🟢 On Track
-> **Ventures**: 🟡 Needs Attention — Sam's investor intro is due Friday, still open
-> **Bridge detected**: Your stress mentions (Health) correlate with your 2 overdue academic commitments
-
-**10:30 AM — New Capture**
-
-You type: "Had coffee with Sam Chen today. He promised to introduce me to his investor by next Friday."
-
-Execution path through all 9 pipeline stages:
+The MemoraApp boots with a staged initialization:
 
 ```
-Frontend (React)
-  │ POST /api/v1/captures
-  ▼
-FastAPI Backend
-  │
-  ├── Stage 1: Store raw capture (O(1))
-  ├── Stage 2: Preprocess — normalize dates, detect language (O(n), no LLM)
-  ├── Stage 3: Archivist (GPT-5-nano) — extract entities & relationships
-  │             Input: processed text + RAG context of existing nodes + schema
-  │             Output: GraphProposal (3 nodes, 5 edges, 4 network assignments)
-  ├── Stage 4: Entity Resolution — "Sam Chen" matches existing node (O(log N))
-  ├── Stage 5: Assemble proposal (O(1))
-  ├── Stage 6: Validation gate — confidence 0.88 ≥ 0.85 → AUTO-APPROVE
-  ├── Stage 7: Auto-approved → logged for daily digest
-  ├── Stage 8: Graph commit — atomic transaction
-  └── Stage 9: Post-commit
-       ├── Generate embeddings (all-mpnet-base-v2, O(1) per node)
-       ├── Bridge discovery (HNSW search, O(log N) per network)
-       ├── Network health update (O(1))
-       ├── Notification check (commitment due Friday → schedule alert for Thursday)
-       └── Truth Layer cross-reference (O(log N))
+  +==========================================+
+  |           M E M O R A                     |
+  |     Personal Knowledge Graph Engine       |
+  +==========================================+
+
+  Subsystem Status:
+    [ONLINE]   Graph Engine (DuckDB)
+    [ONLINE]   Vector Store (Weaviate)
+    [STANDBY]  Embedding Engine (loads on first use)
+    [ONLINE]   AI Council (OpenAI configured)
+    [ONLINE]   Scheduler (10 jobs registered)
 ```
 
-**3:00 PM — Complex Query**
+**Step 2: Command Deck**
 
-You ask: "Should I follow up with Sam about the investor intro, or wait?"
+The main screen displays live telemetry:
 
 ```
-Frontend (React)
-  │ POST /api/v1/council/query
-  ▼
-Orchestrator (LangGraph)
-  │ Classify: complex decision → full council
-  │
-  ├── Archivist sub-query (parallel):
-  │     "What is user's context with Sam Chen?"
-  │     → Reads graph: Sam's commitment history, meeting history,
-  │       reliability (has he followed through before?)
-  │
-  ├── Strategist sub-query (parallel):
-  │     "What are the cross-network impacts?"
-  │     → Sam's investor intro is in Ventures network
-  │     → User's deadline pressure in Academic network
-  │     → Bridge: stress (Health) ↔ overdue commitments
-  │
-  └── Researcher sub-query (parallel):
-        "What's the etiquette for following up on intros?"
-        → Google Search (anonymized): "angel investor intro followup timing"
-        → Deposits findings into Truth Layer
-  │
-  ▼
-Synthesis (confidence-weighted aggregation)
-  │
-  ▼
-Response (streamed via WebSocket):
-  "Based on your graph:
-   - Sam has a strong track record — he fulfilled 4 of 5 prior commitments
-   - The intro is due Friday, so a gentle Thursday follow-up is appropriate
-   - However, your Academic network needs attention — CSC148 A3 is due
-     Wednesday. Prioritize that first.
+  ===================================================
+  Graph: 847 nodes | 1,923 edges | density: 0.0054
 
-   Recommended action: Focus on CSC148 A3 today and tomorrow.
-   Send Sam a brief follow-up Thursday morning.
+  Network Health:
+    ACADEMIC        ========.. ON_TRACK (UP)
+    PROFESSIONAL    ======.... NEEDS_ATTENTION (STABLE)
+    SOCIAL          ========.. ON_TRACK (DOWN)
 
-   Sources: [PERSON: Sam Chen] [COMMITMENT: investor intro]
-   [COMMITMENT: CSC148 A3] [Verified fact: Follow-up etiquette (SECONDARY)]"
+  Pending: 2 proposals | 1 alert
+  ===================================================
 ```
+
+**Step 3: Check Your Briefing (press `b`)**
+
+The BriefingCollector aggregates from all subsystems. The Strategist generates:
+
+```
+  Summary: A mixed start to the week. You have 3 overdue commitments
+  and 2 approaching deadlines, but your ACADEMIC network shows upward
+  momentum with strong goal progress.
+
+  Urgent:
+  - Commitment "Review Sam's A2 code" was due Friday -- now 3 days overdue
+  - Midterm prep goal at 65% with exam in 5 days
+
+  People Follow-up:
+  - Sam Chen: last interaction 4 days ago (close contact threshold: 7 days)
+  - Prof. Liu: mentioned office hours opportunity 2 weeks ago, no follow-up
+
+  Patterns:
+  - Commitment completion rate is 58% in ACADEMIC (below 70% threshold)
+  - Activity burst detected last week: 23 nodes created (avg: 8/week)
+```
+
+**Step 4: Capture New Information (press `c`)**
+
+You type: "Just finished reviewing Sam's A2 code. His BFS implementation was clean but the DFS had a bug in the visited set logic. Promised to pair program with him Wednesday to fix it."
+
+The 9-stage pipeline runs:
+
+1. **Preprocessing**: "Wednesday" normalizes to "2026-03-04"
+2. **Extraction**: Archivist produces a GraphProposal with:
+   - EventNode: "Reviewed Sam's A2 code"
+   - CommitmentNode: "Pair program with Sam" (due: 2026-03-04)
+   - NoteNode: "Sam's DFS had visited set bug"
+   - ConceptNode: "DFS visited set logic"
+   - Edges: You --COMMITTED_TO--> "Pair program", Event --RELATED_TO--> "BFS", Event --RELATED_TO--> "DFS"
+3. **Entity Resolution**: "Sam" matches existing PersonNode "Sam Chen" (exact name match, score 1.0 -> forced MERGE). "BFS" matches existing ConceptNode (embedding similarity 0.97 -> MERGE).
+4. **Proposal Assembly**: Merge decisions applied. Sam's node gets updated with new interaction timestamp. BFS concept node updated.
+5. **Validation Gate**: Confidence 0.88 >= 0.85 threshold, with merges -> route EXPLICIT (human review for merge safety)
+6. **Review**: Proposal stored, you confirm the merges
+7. **Graph Commit**: Atomic DuckDB transaction creates 3 new nodes, 5 new edges, updates 2 existing nodes
+8. **Post-Commit**:
+   - Embeddings generated for 3 new nodes
+   - Edge weights computed from cosine similarity
+   - Bridge discovery: "DFS visited set logic" (ACADEMIC) bridges to your "Debugging techniques" note (PROFESSIONAL)
+   - Health recalculated: ACADEMIC network completion rate improves (you completed a commitment)
+   - Truth layer: "Sam's DFS had a bug in visited set logic" deposited as fact
+   - Overdue commitment "Review Sam's A2 code" can now be completed
+
+**Step 5: Complete the Overdue Commitment (press `j`)**
+
+You select "Review Sam's A2 code" and choose COMPLETE_COMMITMENT:
+
+```python
+# Action execution:
+# 1. Precondition check: status == OPEN? Yes
+# 2. Update node properties: status -> COMPLETED, completed_at -> now
+# 3. Record action in audit trail
+# 4. Side effects:
+#    - Recalculate ACADEMIC network health (completion rate increases)
+#    - Send COMMITMENT_COMPLETED notification
+```
+
+**Step 6: Investigate Connections (press `i`)**
+
+You investigate the path between "Sam Chen" and "Debugging techniques":
+
+```
+  Path found (3 hops):
+
+  Sam Chen --[KNOWS]--> You --[RELATED_TO]--> DFS visited set logic
+           --[BRIDGES]--> Debugging techniques
+
+  This cross-network bridge connects ACADEMIC and PROFESSIONAL:
+  Your CSC148 debugging experience directly applies to work projects.
+```
+
+This demonstrates BFS shortest path finding across the knowledge graph — the exact algorithm from your CSC148 course, applied to navigating your own life.
+
+### The Feedback Loop
+
+Over time, the system builds increasingly accurate models:
+
+1. **More data** -> Better entity resolution (more signals to match against)
+2. **More outcomes recorded** -> Better pattern detection
+3. **More interactions** -> More accurate relationship strength scores
+4. **More verified facts** -> Better contradiction detection
+5. **More bridges discovered** -> Richer cross-network insights
+
+Each piece of information you capture makes the entire system smarter. The knowledge graph is not just storing data — it is learning the structure of your life.
 
 ---
 
-## Part 12: Anti-Wrapper Positioning — Why This Isn't Just ChatGPT
+## Summary: CSC148 in Production
 
-### 12.1 The Wrapper Problem
+Every concept from CSC148 appears in Memora:
 
-Google VP Darren Mowry (February 2026): "Wrapping thin IP around Gemini or GPT-5 is a sign that a startup is not distinguishing itself."
+| CSC148 Concept | Where It Appears |
+|---|---|
+| **Classes and OOP** | BaseNode hierarchy, 12 specialized node types, Pydantic models |
+| **Inheritance** | EventNode(BaseNode), PersonNode(BaseNode), etc. |
+| **Composition** | MemoraApp has-a Repository, Pipeline, Orchestrator |
+| **Abstract Data Types** | NodeFilter, Subgraph, GraphProposal with invariants |
+| **Hash Tables** | Entity resolution WEIGHTS dict, command dispatch, NODE_TYPE_MODEL_MAP |
+| **Trees** | LangGraph state machine (tree of processing paths) |
+| **Graphs** | The entire knowledge graph: 12 node types, 29 edge types, 7 categories |
+| **BFS** | Shortest path finding, causal chain tracing, graph connectivity |
+| **DFS** | Neighborhood expansion (recursive exploration of connected nodes) |
+| **Stacks** | Exception handling chain in pipeline (errors unwind to caller) |
+| **Queues** | BFS implementation uses `deque` as FIFO queue |
+| **Recursion** | Neighborhood hops, decay computation, graph traversal |
+| **Big-O Analysis** | Vector search O(log n), keyword matching O(K*W), BFS O(V+E) |
+| **Enums** | NodeType, EdgeType, NetworkType, CommitmentStatus, etc. |
+| **State Machines** | Pipeline stages, SM-2 repetition, LangGraph orchestration |
+| **Sorting** | Entity resolution candidates sorted by score, timeline ordering |
+| **Linked Structures** | Edge list representation of the graph in DuckDB |
 
-**The test: If your LLM provider shut off your API key, would your product die?**
+The difference between a toy CSC148 assignment and a production system like Memora is not the algorithms — it is the **composition** of algorithms into a coherent system, the **error handling** at every boundary, the **validation** of inputs and outputs, and the **thoughtful design** of data models that support long-term evolution.
 
-Memora passes this test. Here's what survives without any LLM:
-
-| Component | LLM required? | What it does without LLM |
-|---|---|---|
-| Knowledge graph | No | Fully queryable database of your life |
-| Decay scoring | No | Nodes still fade based on access patterns |
-| Bridge discovery | Partially (batch validation) | Embedding similarity still finds candidates |
-| Health scoring | No | Network status still computed from metrics |
-| Spaced repetition | No | SM-2 still schedules reviews |
-| Truth Layer | No | Verified facts still stored and queryable |
-| Entity resolution | Partially (LLM adjudication) | 5 of 6 signals still work |
-| Notifications | No | Deadline and staleness alerts still fire |
-
-What you **lose** without an LLM: the Archivist can't extract entities from natural language, the Strategist can't generate briefings, the Researcher can't synthesize web results. But the underlying data structures and algorithms — the actual intelligence — remain.
-
-### 12.2 The Differentiation Stack
-
-Ordered by distance from "commodity LLM wrapper":
-
-1. **Knowledge graph + ontology** — proprietary data structure, can't be replicated by prompting ChatGPT
-2. **Truth Layer** — verified fact store with source typing and staleness detection
-3. **Bridge discovery** — custom algorithm (embeddings + graph traversal + LLM validation)
-4. **Background mechanics** — decay, health scoring, SM-2, gap detection — all deterministic
-5. **Entity resolution** — multi-signal scoring with domain-specific weights
-6. **Council chat** — this IS the wrapper zone, but mitigated by always citing graph nodes and verified facts
+Every class, every function, every data structure in Memora exists because a CSC148 concept made it possible.
 
 ---
 
-## Part 13: Complexity Analysis Summary
-
-For the CSC148-trained reader, here's every algorithm and its time complexity:
-
-| Algorithm | Time Complexity | Space Complexity | Frequency |
-|---|---|---|---|
-| Content hash dedup | O(1) lookup | O(N) hash table | Per capture |
-| Archivist extraction | O(1) API call | O(1) | Per capture |
-| Entity resolution (per candidate) | O(d) cosine similarity | O(1) | Per capture |
-| HNSW vector search | O(log N) | O(N log N) index | Per capture + per query |
-| BFS neighborhood expansion | O(V + E) for subgraph | O(V) visited set | Per query |
-| Hybrid search (BM25 + dense) | O(log N) each + O(K) merge | O(K) results | Per query |
-| Decay scoring (all nodes) | O(N) | O(1) | Daily |
-| Bridge discovery (incremental) | O(7 × log N) ≈ O(log N) | O(K) candidates | Per commit |
-| Bridge discovery (batch) | O(M × log N) + O(1) LLM | O(M) modified nodes | Daily |
-| Network health scoring | O(C) per network, C = commitments | O(1) | Every 6 hours |
-| SM-2 scheduling | O(N) scan for due items | O(1) per item | Daily |
-| Gap detection | O(V + E) | O(V) | Weekly |
-| Graph commit (atomic) | O(K) where K = proposal size | O(K) | Per proposal |
-
-Where:
-- N = total nodes in graph
-- E = total edges in graph
-- V = vertices in a subgraph
-- K = number of results or items
-- M = nodes modified in last 24 hours
-- C = commitments in a network
-- d = embedding dimension (768)
-
----
-
-## Part 14: Key Takeaways
-
-### For CSC148 Students
-
-1. **Graphs are everywhere.** The knowledge graph data structure you studied in CSC148 is the foundation of a real product architecture. Nodes, edges, traversal, neighborhoods — it's all the same.
-
-2. **OOP scales.** The class hierarchy (BaseNode → PersonNode, CommitmentNode, etc.) is exactly the inheritance pattern from CSC148, used at production scale with Pydantic validation.
-
-3. **Algorithms matter.** Decay scoring (exponential function), bridge discovery (nearest neighbor search), spaced repetition (SM-2), gap detection (graph traversal) — these are all algorithms you can implement from your CSC148 knowledge.
-
-4. **Complexity analysis is practical.** The reason we use HNSW (O(log N)) instead of brute-force cosine similarity (O(N)) isn't theoretical — it's the difference between 1ms and 10 seconds at 10,000 nodes.
-
-5. **ADTs have real implementations.** The graph "abstract data type" has a concrete implementation: DuckDB for the graph, LanceDB for vectors, Pydantic for schema validation.
-
-### For Understanding System Architecture
-
-1. **Separation of concerns** — each layer has one job. Change the LLM? Only the Intelligence layer changes. Swap the database? Only the Infrastructure layer changes.
-
-2. **The pipeline pattern** — complex processing broken into 9 stages, each with a single responsibility. Data flows through stages like items on a conveyor belt.
-
-3. **Deterministic vs. non-deterministic** — the Core Engine is deterministic (same input → same output). The AI layer is non-deterministic (LLMs can produce different outputs for the same input). By grounding non-deterministic AI outputs in deterministic algorithms and verified facts, Memora achieves reliability.
-
-4. **Human-in-the-loop** — the system never acts autonomously on high-impact decisions. It proposes, you decide. The auto-approve threshold is a calibrated tradeoff between convenience and control.
-
-5. **Local-first** — everything on your machine, you own your data, zero infrastructure cost. The only external dependency is the LLM API.
-
----
-
-*End of Lecture — Memora System Architecture*
-*Estimated reading time: 60-75 minutes*
+*This lecture reflects the actual implemented Memora codebase as of March 2026. All code examples are drawn from the real source files, not design documents.*

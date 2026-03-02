@@ -72,14 +72,10 @@ def _row_to_dict(row: tuple) -> dict[str, Any]:
 
 
 class NotificationManager:
-    """Create, query, and manage user notifications backed by DuckDB.
+    """Create, query, and manage user notifications backed by DuckDB."""
 
-    Optionally publishes events to the SSE manager for real-time push.
-    """
-
-    def __init__(self, conn, sse_manager=None) -> None:
+    def __init__(self, conn) -> None:
         self._conn = conn
-        self._sse_manager = sse_manager
         self._ensure_table()
 
     # ── Setup ────────────────────────────────────────────────────────
@@ -121,29 +117,6 @@ class NotificationManager:
                 ],
             )
             logger.debug("Created notification %s [%s]: %s", nid, type, message[:80])
-
-            # Publish to SSE if manager is available
-            if self._sse_manager:
-                try:
-                    import asyncio
-                    event_data = {
-                        "id": nid,
-                        "type": type,
-                        "message": message,
-                        "priority": priority,
-                        "related_node_ids": related_node_ids or [],
-                    }
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.ensure_future(
-                            self._sse_manager.publish(f"notification_{type}", event_data)
-                        )
-                    else:
-                        loop.run_until_complete(
-                            self._sse_manager.publish(f"notification_{type}", event_data)
-                        )
-                except Exception:
-                    logger.debug("SSE publish failed for notification", exc_info=True)
 
         except Exception:
             logger.error("Failed to create notification", exc_info=True)

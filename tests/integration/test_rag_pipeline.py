@@ -32,10 +32,22 @@ def repo():
     r.close()
 
 
-@pytest.fixture
-def vector_store(tmp_path):
-    """LanceDB-backed vector store in a temporary directory."""
-    return VectorStore(db_path=str(tmp_path / "test_lance"))
+@pytest.fixture(scope="module")
+def vector_store(tmp_path_factory):
+    """Weaviate-backed vector store in a temporary directory."""
+    db_path = tmp_path_factory.mktemp("vectors") / "test_weaviate"
+    vs = VectorStore(db_path=str(db_path), port=8081, grpc_port=50052)
+    yield vs
+    vs.close()
+
+
+@pytest.fixture(autouse=True)
+def _clear_vector_store(vector_store):
+    """Delete and recreate collection between tests to ensure isolation."""
+    from memora.vector.store import COLLECTION_NAME
+    yield
+    vector_store._client.collections.delete(COLLECTION_NAME)
+    vector_store._ensure_collection()
 
 
 def _random_vector(dim: int = EMBEDDING_DIM) -> list[float]:

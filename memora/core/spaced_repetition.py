@@ -38,10 +38,7 @@ class SpacedRepetition:
         self._merge_properties(node_id, sm2_params)
         # Also set the top-level review_date column
         try:
-            self._repo._conn.execute(
-                "UPDATE nodes SET review_date = ?, updated_at = ? WHERE id = ?",
-                [now.isoformat(), now.isoformat(), node_id],
-            )
+            self._repo.update_node_review_date(node_id, now.isoformat())
         except Exception:
             logger.warning("Failed to set review_date column for node %s", node_id)
 
@@ -95,10 +92,7 @@ class SpacedRepetition:
 
         # Update the top-level review_date column too
         try:
-            self._repo._conn.execute(
-                "UPDATE nodes SET review_date = ?, updated_at = ? WHERE id = ?",
-                [next_review.isoformat(), datetime.now(timezone.utc).isoformat(), node_id],
-            )
+            self._repo.update_node_review_date(node_id, next_review.isoformat())
         except Exception:
             logger.warning("Failed to update review_date column for node %s", node_id)
 
@@ -115,23 +109,13 @@ class SpacedRepetition:
         """
         now = datetime.now(timezone.utc).isoformat()
         try:
-            rows = self._repo._conn.execute(
-                """SELECT id, node_type, title, properties, review_date
-                   FROM nodes
-                   WHERE deleted = FALSE
-                     AND review_date IS NOT NULL
-                     AND review_date <= ?
-                   ORDER BY review_date ASC""",
-                [now],
-            ).fetchall()
+            rows = self._repo.get_review_due_nodes(now)
         except Exception:
             logger.warning("Failed to fetch review queue", exc_info=True)
             return []
 
-        cols = ["id", "node_type", "title", "properties", "review_date"]
         results: list[dict[str, Any]] = []
-        for row in rows:
-            d = dict(zip(cols, row))
+        for d in rows:
             if isinstance(d["properties"], str):
                 try:
                     d["properties"] = json.loads(d["properties"])
@@ -154,34 +138,27 @@ class SpacedRepetition:
     def _get_sm2_params(self, node_id: str) -> dict[str, Any]:
         """Read the current SM-2 parameters from a node's properties."""
         try:
-            row = self._repo._conn.execute(
-                "SELECT properties FROM nodes WHERE id = ?",
-                [node_id],
-            ).fetchone()
+            raw = self._repo.get_node_properties_raw(node_id)
         except Exception:
             logger.warning("Failed to read properties for node %s", node_id)
             return {}
 
-        if not row or not row[0]:
+        if not raw:
             return {}
 
-        props = row[0]
-        if isinstance(props, str):
+        if isinstance(raw, str):
             try:
-                props = json.loads(props)
+                return json.loads(raw)
             except (json.JSONDecodeError, TypeError):
                 return {}
-        return props
+        return raw
 
     def _merge_properties(self, node_id: str, updates: dict[str, Any]) -> None:
         """Merge *updates* into the node's existing properties JSON."""
         current = self._get_sm2_params(node_id)
         current.update(updates)
         try:
-            self._repo._conn.execute(
-                "UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?",
-                [json.dumps(current), datetime.now(timezone.utc).isoformat(), node_id],
-            )
+            self._repo.update_node_properties_raw(node_id, json.dumps(current))
         except Exception:
             logger.warning(
                 "Failed to merge properties for node %s", node_id, exc_info=True

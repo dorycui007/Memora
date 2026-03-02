@@ -21,23 +21,12 @@ from memora.agents.archivist import ArchivistAgent
 from memora.agents.researcher import ResearcherAgent
 from memora.agents.strategist import StrategistAgent
 from memora.config import Settings
+from memora.core.async_utils import run_async as _run_async
 from memora.graph.repository import GraphRepository
 from memora.vector.embeddings import EmbeddingEngine
 from memora.vector.store import VectorStore
 
 logger = logging.getLogger(__name__)
-
-
-def _run_async(coro):
-    """Run an async coroutine from a sync context, handling nested event loops."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    # If already in an event loop (e.g. FastAPI), use nest_asyncio or thread
-    import concurrent.futures
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
 
 
 class QueryType(str, Enum):
@@ -234,36 +223,81 @@ class Orchestrator:
             state["query_type"] = query_type
             return state
 
-        # Heuristic classification
-        capture_signals = [
-            "i did", "i met", "i went", "i bought", "i decided",
-            "i learned", "i read", "i heard", "happened today",
-            "note to self", "remember that", "i promised", "i owe",
-        ]
-        research_signals = [
-            "what is", "how does", "explain", "look up", "search for",
-            "find information", "research", "what are the latest",
-            "is it true", "fact check", "compare",
-        ]
-        analysis_signals = [
-            "analyze", "recommend", "prioritize", "assess", "evaluate",
-            "should i", "what should", "how am i doing", "status",
-            "health of", "progress on", "summary of", "briefing",
-        ]
+        # Heuristic classification with weighted scoring
+        # Each category accumulates a score; highest wins.
+        scores: dict[str, float] = {
+            QueryType.CAPTURE.value: 0.0,
+            QueryType.RESEARCH.value: 0.0,
+            QueryType.ANALYSIS.value: 0.0,
+            QueryType.COUNCIL.value: 0.0,
+        }
+
+        # Council signals (high weight — explicit intent for multi-agent)
         council_signals = [
             "complex decision", "weigh options", "major decision",
             "all things considered", "comprehensive analysis",
             "help me decide", "big picture",
         ]
+        for sig in council_signals:
+            if sig in query:
+                scores[QueryType.COUNCIL.value] += 2.0
 
-        if any(sig in query for sig in council_signals):
-            state["query_type"] = QueryType.COUNCIL.value
-        elif any(sig in query for sig in capture_signals):
-            state["query_type"] = QueryType.CAPTURE.value
-        elif any(sig in query for sig in research_signals):
-            state["query_type"] = QueryType.RESEARCH.value
-        elif any(sig in query for sig in analysis_signals):
-            state["query_type"] = QueryType.ANALYSIS.value
+        # Analysis signals (explicit analytical intent)
+        analysis_signals = [
+            "analyze", "recommend", "prioritize", "assess", "evaluate",
+            "should i", "what should", "how am i doing", "status",
+            "health of", "progress on", "summary of", "briefing",
+        ]
+        for sig in analysis_signals:
+            if sig in query:
+                scores[QueryType.ANALYSIS.value] += 1.5
+
+        # Research signals (information-seeking)
+        research_signals = [
+            "how does", "explain", "look up", "search for",
+            "find information", "research", "what are the latest",
+            "is it true", "fact check",
+        ]
+        for sig in research_signals:
+            if sig in query:
+                scores[QueryType.RESEARCH.value] += 1.5
+        # "what is" is research UNLESS followed by analysis words like status/progress
+        _analysis_after_what_is = ["status", "progress", "health", "state of"]
+        if "what is" in query:
+            if any(w in query for w in _analysis_after_what_is):
+                scores[QueryType.ANALYSIS.value] += 1.5
+            else:
+                scores[QueryType.RESEARCH.value] += 1.5
+        # "compare" is weaker — could be analysis or research
+        if "compare" in query:
+            scores[QueryType.RESEARCH.value] += 0.5
+            scores[QueryType.ANALYSIS.value] += 0.5
+
+        # Capture signals (lowest weight — most likely to false-positive)
+        capture_signals = [
+            "i did", "i met", "i went", "i bought", "i decided",
+            "i learned", "i read", "i heard", "happened today",
+            "note to self", "remember that", "i promised", "i owe",
+        ]
+        for sig in capture_signals:
+            if sig in query:
+                scores[QueryType.CAPTURE.value] += 1.0
+
+        # If capture and analysis both triggered, analysis intent likely dominates
+        # e.g. "what should I do about my decision" — analysis, not capture
+        if (scores[QueryType.CAPTURE.value] > 0
+                and scores[QueryType.ANALYSIS.value] > 0):
+            scores[QueryType.CAPTURE.value] *= 0.5
+
+        # Tie-break: prefer ANALYSIS over RESEARCH for internal-data queries
+        if (scores[QueryType.ANALYSIS.value] > 0
+                and scores[QueryType.ANALYSIS.value] == scores[QueryType.RESEARCH.value]):
+            scores[QueryType.ANALYSIS.value] += 0.1
+
+        # Pick highest score, default to ANALYSIS
+        best_type = max(scores, key=scores.get)  # type: ignore[arg-type]
+        if scores[best_type] > 0:
+            state["query_type"] = best_type
         else:
             state["query_type"] = QueryType.ANALYSIS.value
 
@@ -362,17 +396,31 @@ class Orchestrator:
     def _council_all_agents_node(self, state: CouncilState) -> CouncilState:
         """Run ALL three agents for council queries (comprehensive analysis).
 
-        Runs archivist (context), strategist (analysis), and researcher (external)
-        sequentially, each building on the prior outputs.
+        Runs archivist and researcher in parallel (they are independent),
+        then strategist analyzes with their combined output.
         """
-        # 1. Archivist gathers internal context first
-        state = self._archivist_node(state)
+        # 1. Archivist and researcher run concurrently
+        import concurrent.futures
 
-        # 2. Researcher gathers external data
-        state = self._researcher_node(state)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            # Each runs in its own thread with its own event loop
+            def run_archivist():
+                s = dict(state)
+                s = self._archivist_node(s)
+                return s.get("archivist_output")
 
-        # 3. Strategist analyzes with all context available
-        # Inject prior agent outputs into context for richer analysis
+            def run_researcher():
+                s = dict(state)
+                s = self._researcher_node(s)
+                return s.get("researcher_output")
+
+            arch_future = pool.submit(run_archivist)
+            res_future = pool.submit(run_researcher)
+
+            state["archivist_output"] = arch_future.result()
+            state["researcher_output"] = res_future.result()
+
+        # 2. Strategist analyzes with all context available
         context = dict(state["graph_context"])
         if state.get("archivist_output") and "error" not in state["archivist_output"]:
             context["archivist_findings"] = state["archivist_output"].get("content", "")
@@ -486,6 +534,28 @@ class Orchestrator:
                 confidence = output.get("confidence", 0.5)
                 total_confidence += confidence
                 all_citations.extend(output.get("citations", []))
+
+        # CRAG fallback: if the only output is a low-confidence researcher result,
+        # the query was likely misrouted — fall back to the strategist.
+        if (len(outputs) == 1
+                and outputs[0].get("confidence", 0) <= 0.1
+                and outputs[0].get("agent") == "researcher"
+                and state.get("query_type") == QueryType.RESEARCH.value
+                and self._strategist
+                and not state.get("strategist_output")):
+            logger.info("CRAG: researcher returned low confidence, falling back to strategist")
+            state = self._strategist_node(state)
+            # Re-collect outputs with strategist result
+            outputs = []
+            total_confidence = 0.0
+            all_citations = []
+            for key in ("archivist_output", "strategist_output", "researcher_output"):
+                output = state.get(key)
+                if output and "error" not in output:
+                    outputs.append(output)
+                    confidence = output.get("confidence", 0.5)
+                    total_confidence += confidence
+                    all_citations.extend(output.get("citations", []))
 
         if not outputs:
             state["synthesis"] = "No agent produced valid output."
@@ -623,7 +693,8 @@ class Orchestrator:
     def _gather_context(self, query: str) -> dict[str, Any]:
         """Gather graph context for the query via hybrid search + 1-hop expansion.
 
-        Includes CRAG quality assessment on the retrieval results.
+        Includes CRAG quality assessment on the retrieval results and
+        entity-aware graph lookup for named entities mentioned in the query.
         """
         context: dict[str, Any] = {
             "nodes": [], "expanded_nodes": [], "stats": {},
@@ -693,7 +764,120 @@ class Orchestrator:
             # No vector store available — retrieval quality is inherently poor
             context["retrieval_quality"] = "poor"
 
+        # Entity-aware graph lookup: search for named entities directly in the
+        # graph DB by title.  This supplements vector search and is critical
+        # when the vector store is empty or returns poor results.
+        if self._repo:
+            self._enrich_context_with_entity_lookup(query, context)
+
         return context
+
+    def _enrich_context_with_entity_lookup(
+        self, query: str, context: dict[str, Any],
+    ) -> None:
+        """Search the graph for named entities mentioned in the query.
+
+        Extracts capitalized words (likely proper nouns) from the query,
+        searches for matching nodes by title, and expands their 1-hop
+        neighborhoods so the strategist has concrete data about the people,
+        projects, and goals mentioned.
+        """
+        # Extract candidate entity names: capitalized words that aren't
+        # common English words at the start of a sentence.
+        _skip = {
+            "What", "How", "Who", "Where", "When", "Why", "Which",
+            "Is", "Are", "Was", "Were", "Do", "Does", "Did", "Can",
+            "Could", "Should", "Would", "Will", "The", "A", "An",
+            "My", "His", "Her", "Their", "Our", "Its", "That", "This",
+            "Tell", "Show", "Give", "Get", "Has", "Have", "Had",
+        }
+        words = query.split()
+        entity_candidates: list[str] = []
+        for word in words:
+            # Strip trailing punctuation and possessive 's
+            clean = word.rstrip(".,;:!?'\"")
+            if clean.endswith("'s") or clean.endswith("\u2019s"):
+                clean = clean[:-2]
+            if clean and clean[0].isupper() and clean not in _skip and len(clean) > 1:
+                entity_candidates.append(clean)
+
+        if not entity_candidates:
+            return
+
+        existing_ids = {n.get("node_id") for n in context.get("nodes", [])}
+        existing_ids |= {n.get("node_id") for n in context.get("expanded_nodes", [])}
+
+        for candidate in entity_candidates:
+            try:
+                matches = self._repo.search_by_title(candidate, limit=5)
+            except Exception:
+                logger.debug("Entity lookup failed for %r", candidate)
+                continue
+
+            for node in matches:
+                nid = str(node.id)
+                if nid in existing_ids:
+                    continue
+                existing_ids.add(nid)
+
+                # Add the matched node as a primary context node
+                context["nodes"].append({
+                    "node_id": nid,
+                    "node_type": node.node_type.value
+                        if hasattr(node.node_type, "value") else str(node.node_type),
+                    "title": node.title,
+                    "content": node.content or node.title,
+                    "networks": [
+                        net.value if hasattr(net, "value") else str(net)
+                        for net in node.networks
+                    ],
+                    "confidence": node.confidence,
+                    "properties": node.properties,
+                })
+
+                # Expand 1-hop neighborhood for the entity
+                try:
+                    subgraph = self._repo.get_neighborhood(node.id, hops=1)
+                    for neighbor in subgraph.nodes:
+                        neighbor_id = str(neighbor.id)
+                        if neighbor_id in existing_ids:
+                            continue
+                        existing_ids.add(neighbor_id)
+                        context["expanded_nodes"].append({
+                            "node_id": neighbor_id,
+                            "title": neighbor.title,
+                            "content": neighbor.content or neighbor.title,
+                            "node_type": neighbor.node_type.value
+                                if hasattr(neighbor.node_type, "value")
+                                else str(neighbor.node_type),
+                            "networks": [
+                                net.value if hasattr(net, "value") else str(net)
+                                for net in neighbor.networks
+                            ],
+                            "properties": neighbor.properties,
+                        })
+                    # Include edges for relationship context
+                    if subgraph.edges and "edges" not in context:
+                        context["edges"] = []
+                    for edge in subgraph.edges:
+                        context.setdefault("edges", []).append({
+                            "source_id": str(edge.source_id),
+                            "target_id": str(edge.target_id),
+                            "edge_type": edge.edge_type.value
+                                if hasattr(edge.edge_type, "value")
+                                else str(edge.edge_type),
+                            "properties": edge.properties,
+                        })
+                except Exception:
+                    logger.debug("Neighborhood expansion failed for entity %s", nid)
+
+        # If entity lookup found nodes, upgrade retrieval quality from poor
+        if context["nodes"] and context.get("retrieval_quality") == "poor":
+            context["retrieval_quality"] = "sufficient"
+            logger.info(
+                "Entity lookup found %d nodes, upgraded retrieval quality",
+                len(context["nodes"]),
+            )
 
     def _llm_synthesize(
         self, query: str, raw_synthesis: str, outputs: list[dict[str, Any]],
@@ -746,16 +930,37 @@ class Orchestrator:
             if not facts:
                 return None
 
+            # Stopwords to exclude from overlap matching
+            _stopwords = {
+                "the", "a", "an", "is", "are", "was", "were", "be", "been",
+                "being", "have", "has", "had", "do", "does", "did", "will",
+                "would", "could", "should", "may", "might", "can", "shall",
+                "to", "of", "in", "for", "on", "with", "at", "by", "from",
+                "as", "into", "through", "during", "before", "after", "and",
+                "but", "or", "nor", "not", "no", "so", "if", "then", "than",
+                "too", "very", "just", "about", "above", "also", "both",
+                "each", "few", "more", "most", "other", "some", "such",
+                "that", "this", "these", "those", "it", "its", "i", "my",
+                "me", "we", "our", "you", "your", "he", "she", "they",
+                "his", "her", "their", "what", "which", "who", "when",
+                "where", "how", "all", "any", "there", "here",
+            }
+
             contradictions = []
+            synth_words = {
+                w for w in synthesis_text.lower().split()
+                if w not in _stopwords and len(w) > 2
+            }
             for fact in facts:
                 statement = fact.get("statement", "")
                 if not statement:
                     continue
-                # Simple keyword overlap check for potential contradictions
-                fact_words = set(statement.lower().split())
-                synth_words = set(synthesis_text.lower().split())
+                fact_words = {
+                    w for w in statement.lower().split()
+                    if w not in _stopwords and len(w) > 2
+                }
                 overlap = fact_words & synth_words
-                if len(overlap) >= 3:  # Meaningful overlap
+                if len(overlap) >= 3:
                     contradictions.append(
                         f"Verified fact: \"{statement}\" "
                         f"(confidence: {fact.get('confidence', '?')})"

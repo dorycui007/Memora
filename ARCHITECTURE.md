@@ -1,249 +1,231 @@
-# Memora — System Architecture Document
+# Memora Architecture Document v2.0
 
-> **Version:** 1.0
-> **Date:** February 27, 2026
-> **Status:** Technical Reference
-> **Audience:** Engineering Team & Architecture Review
-> **Classification:** CONFIDENTIAL — Internal Distribution Only
+> **Date:** March 2, 2026
+> **Status:** Reflects the implemented codebase (not design documents)
+> **Python:** 3.12+ &nbsp;|&nbsp; **License:** MIT
 
 ---
 
 ## Table of Contents
 
-- [1. System Overview](#1-system-overview)
-  - [1.1 What Memora Is](#11-what-memora-is)
-  - [1.2 Core Thesis](#12-core-thesis)
-  - [1.3 High-Level System Context](#13-high-level-system-context)
-  - [1.4 Layered Architecture](#14-layered-architecture)
-  - [1.5 Design Principles](#15-design-principles)
-- [2. Input-to-Graph Pipeline](#2-input-to-graph-pipeline)
-  - [2.1 Pipeline Overview](#21-pipeline-overview)
-  - [2.2 Stage 1: Raw Input Capture](#22-stage-1-raw-input-capture)
-  - [2.3 Stage 2: Preprocessing](#23-stage-2-preprocessing)
-  - [2.4 Stage 3: Archivist Extraction](#24-stage-3-archivist-extraction)
-  - [2.5 Stage 4: Entity Resolution](#25-stage-4-entity-resolution)
-  - [2.6 Stage 5: Graph Proposal Assembly](#26-stage-5-graph-proposal-assembly)
-  - [2.7 Stage 6: Validation Gate](#27-stage-6-validation-gate)
-  - [2.8 Stage 7: Human Review / Auto-Approve](#28-stage-7-human-review--auto-approve)
-  - [2.9 Stage 8: Graph Commit](#29-stage-8-graph-commit)
-  - [2.10 Stage 9: Post-Commit Processing](#210-stage-9-post-commit-processing)
-- [3. Graph Ontology & Data Models](#3-graph-ontology--data-models)
-  - [3.1 Node Type Taxonomy](#31-node-type-taxonomy)
-  - [3.2 Shared Node Properties](#32-shared-node-properties)
-  - [3.3 Node-Type-Specific Properties](#33-node-type-specific-properties)
-  - [3.4 Edge Types & Categories](#34-edge-types--categories)
-  - [3.5 Edge Properties Schema](#35-edge-properties-schema)
-  - [3.6 Context Networks](#36-context-networks)
-- [4. Database Schemas](#4-database-schemas)
-  - [4.1 Graph Database (DuckDB)](#41-graph-database-duckdb)
-  - [4.2 Vector Database (LanceDB)](#42-vector-database-lancedb)
-  - [4.3 Truth Layer Tables](#43-truth-layer-tables)
-- [5. AI Agent System Design](#5-ai-agent-system-design)
-  - [5.1 Agent Architecture Overview](#51-agent-architecture-overview)
-  - [5.2 Agent 1: The Archivist (Graph Writer)](#52-agent-1-the-archivist-graph-writer)
-  - [5.3 Agent 2: The Strategist (Graph Reader + Analyst)](#53-agent-2-the-strategist-graph-reader--analyst)
-  - [5.4 Agent 3: The Researcher (Internet Bridge)](#54-agent-3-the-researcher-internet-bridge)
-  - [5.5 The Orchestrator: Agent Coordination](#55-the-orchestrator-agent-coordination)
-  - [5.6 Council Decision Pattern (High-Stakes Queries)](#56-council-decision-pattern-high-stakes-queries)
-  - [5.7 LLM Routing & Cost Model](#57-llm-routing--cost-model)
-- [6. Adaptive RAG Pipeline](#6-adaptive-rag-pipeline)
-  - [6.1 Query Classification & Routing](#61-query-classification--routing)
-  - [6.2 RAG Pipeline Flow](#62-rag-pipeline-flow)
-  - [6.3 CRAG (Corrective RAG)](#63-crag-corrective-rag)
-  - [6.4 Graph-Augmented Context Expansion](#64-graph-augmented-context-expansion)
-  - [6.5 Truth Layer Fact-Check Gate](#65-truth-layer-fact-check-gate)
-- [7. Truth Layer: Verified Fact Store](#7-truth-layer-verified-fact-store)
-  - [7.1 Source Confidence Hierarchy](#71-source-confidence-hierarchy)
-  - [7.2 Fact Lifecycle](#72-fact-lifecycle)
-  - [7.3 Fact-Check Gate Integration](#73-fact-check-gate-integration)
-- [8. Background Mechanics: The Living Graph Engine](#8-background-mechanics-the-living-graph-engine)
-  - [8.1 Job Schedule Overview](#81-job-schedule-overview)
-  - [8.2 Decay Scoring](#82-decay-scoring)
-  - [8.3 Bridge Discovery](#83-bridge-discovery)
-  - [8.4 Network Health Scoring](#84-network-health-scoring)
-  - [8.5 Spaced Repetition (SM-2)](#85-spaced-repetition-sm-2)
-  - [8.6 Gap Detection](#86-gap-detection)
-- [9. Notification & Briefing System](#9-notification--briefing-system)
-  - [9.1 Notification Triggers](#91-notification-triggers)
-  - [9.2 Daily Briefing Structure](#92-daily-briefing-structure)
-  - [9.3 Briefing Generation Flow](#93-briefing-generation-flow)
-- [10. API Specification](#10-api-specification)
-  - [10.1 API Overview](#101-api-overview)
-  - [10.2 Core Endpoints](#102-core-endpoints)
-  - [10.3 WebSocket Streaming](#103-websocket-streaming)
-  - [10.4 Request/Response Examples](#104-requestresponse-examples)
-- [11. Deployment Architecture](#11-deployment-architecture)
-  - [11.1 Local-First Architecture](#111-local-first-architecture)
-  - [11.2 File System Layout](#112-file-system-layout)
-  - [11.3 Infrastructure Cost](#113-infrastructure-cost)
-- [12. Project Structure](#12-project-structure)
-- [13. Implementation Roadmap](#13-implementation-roadmap)
-  - [13.1 Phase 0–1: Foundation (Weeks 1–5)](#131-phase-01-foundation-weeks-15)
-  - [13.2 Phase 2: Intelligence (Weeks 6–9)](#132-phase-2-intelligence-weeks-69)
-  - [13.3 Gantt Chart](#133-gantt-chart)
-- [14. Success Metrics](#14-success-metrics)
-- [15. Risk Assessment](#15-risk-assessment)
-- [16. Open Questions & Decisions](#16-open-questions--decisions)
-- [Appendix A: Complete Node Type Property Reference](#appendix-a-complete-node-type-property-reference)
-- [Appendix B: Complete Edge Type Reference](#appendix-b-complete-edge-type-reference)
-- [Appendix C: Archivist System Prompt Template](#appendix-c-archivist-system-prompt-template)
-- [Appendix D: Glossary](#appendix-d-glossary)
+1. [System Overview](#1-system-overview)
+2. [Input-to-Graph Pipeline](#2-input-to-graph-pipeline)
+3. [Graph Ontology & Data Models](#3-graph-ontology--data-models)
+4. [Database Schemas](#4-database-schemas)
+5. [AI Agent System](#5-ai-agent-system)
+6. [Adaptive RAG Pipeline (CRAG)](#6-adaptive-rag-pipeline-crag)
+7. [Truth Layer](#7-truth-layer)
+8. [Living Graph Engine (Background Jobs)](#8-living-graph-engine-background-jobs)
+9. [Action Engine & Outcomes](#9-action-engine--outcomes)
+10. [Investigation & Timeline](#10-investigation--timeline)
+11. [People Intelligence](#11-people-intelligence)
+12. [Pattern Detection](#12-pattern-detection)
+13. [Notification & Briefing System](#13-notification--briefing-system)
+14. [CLI Interface](#14-cli-interface)
+15. [MCP Servers](#15-mcp-servers)
+16. [Project Structure](#16-project-structure)
+17. [Configuration & Environment](#17-configuration--environment)
+18. [Test Suite Overview](#18-test-suite-overview)
+19. [Implementation Status](#19-implementation-status)
 
 ---
 
 ## 1. System Overview
 
-### 1.1 What Memora Is
+Memora is a **local-first decision intelligence platform** that converts unstructured text into a typed knowledge graph. An AI agent system (powered by OpenAI's `gpt-5-nano` via the Responses API) extracts entities and relationships, while background jobs keep the graph alive with decay scoring, pattern detection, and proactive notifications.
 
-Memora is a **local-first decision intelligence platform** that turns everything a person captures — text — into a structured, interconnected knowledge graph. Three specialized AI agents continuously reason over this living graph to surface hidden connections, flag neglected commitments, recommend optimal actions, and deliver real-time situational awareness that no human memory can maintain.
+### Tech Stack
 
-**This is not a note-taking app.** Context capture is the input; **better high-stakes decisions, proactive recommendations, and strategic foresight** are the output.
+| Layer | Technology |
+|---|---|
+| Language | Python 3.12+ |
+| Data Models | Pydantic v2 (`pydantic>=2.0`) |
+| Graph Storage | DuckDB (`duckdb>=1.0`) |
+| Vector Store | Weaviate embedded (`weaviate-client>=4.0`) |
+| Embeddings | `sentence-transformers>=3.0` / `all-mpnet-base-v2` (768-dim) |
+| LLM | OpenAI Responses API (`openai>=1.60`) / `gpt-5-nano` |
+| Orchestration | LangGraph (`langgraph>=0.2`) |
+| Background Jobs | APScheduler (`apscheduler>=3.10`) |
+| HTTP Client | `httpx>=0.27` |
+| Config | Pydantic Settings + YAML (`pyyaml>=6.0`) |
+| Interface | CLI with ANSI terminal rendering (no web frontend) |
 
-### 1.2 Core Thesis
-
-Memora is architecturally a **Personal Palantir**. Palantir ingests raw data from dozens of sources, resolves entities, builds an ontology graph, deploys AI agents, and surfaces hidden connections at enterprise/government scale. Memora follows the identical pipeline applied to a single human life — the "nation" being surveilled is your own life, and the "intelligence analyst" is you.
-
-### 1.3 High-Level System Context
+### High-Level Architecture
 
 ```mermaid
 graph TB
-    User["👤 User"]
-
-    subgraph Memora["Memora Platform (Local)"]
-        CLI["CLI / REST API"]
-        API["FastAPI Backend<br/>localhost:8000"]
-        Agents["AI Council<br/>(3 Agents + Orchestrator)"]
-        Graph["Knowledge Graph<br/>(DuckDB)"]
-        Vector["Vector Store<br/>(LanceDB)"]
-        Engine["Core Engine<br/>(Background Mechanics)"]
+    subgraph CLI["CLI Interface (ANSI Terminal)"]
+        REPL["MemoraApp REPL Loop"]
+        CMDS["20 Commands"]
+        RENDER["cli/rendering.py<br>ANSI colors, boxes, tables"]
+        TRACKER["cli/tracker.py<br>Pipeline progress"]
     end
 
-    OpenAI["OpenAI API<br/>(BYOK)"]
-    Internet["Public Internet<br/>(via MCP Servers)"]
+    subgraph Agents["AI Agent System"]
+        ARCH["Archivist<br>(extraction)"]
+        STRAT["Strategist<br>(analysis)"]
+        RES["Researcher<br>(external)"]
+        ORCH["Orchestrator<br>(LangGraph)"]
+    end
 
-    User -->|"text"| CLI
-    CLI -->|"REST / WebSocket"| API
-    API --> Agents
-    API --> Graph
-    API --> Vector
-    API --> Engine
-    Agents -->|"extraction, analysis"| OpenAI
-    Agents -->|"research (anonymized)"| Internet
+    subgraph Core["Core Engines"]
+        PIPE["ExtractionPipeline<br>(9 stages)"]
+        ER["EntityResolver<br>(6 signals)"]
+        ACT["ActionEngine<br>(6 actions)"]
+        INV["InvestigationEngine"]
+        TL["TimelineEngine"]
+        PAT["PatternEngine<br>(11 detectors)"]
+        PI["PeopleIntelEngine"]
+        OUT["OutcomeTracker"]
+        BRIEF["BriefingCollector"]
+        TRUTH["TruthLayer"]
+    end
+
+    subgraph Storage["Storage Layer"]
+        DUCK["DuckDB<br>(nodes, edges, proposals,<br>actions, outcomes, patterns,<br>bridges, health, truth)"]
+        WEAV["Weaviate Embedded<br>(768-dim vectors,<br>HNSW index)"]
+    end
+
+    subgraph Scheduler["Living Graph Engine"]
+        SCHED["MemoraScheduler<br>(APScheduler)"]
+        JOBS["10 Recurring Jobs"]
+    end
+
+    subgraph MCP["MCP Tool Servers"]
+        GOOG["GoogleSearchMCP"]
+        BRAVE["BraveSearchMCP"]
+        SS["SemanticScholarMCP"]
+        PW["PlaywrightScraperMCP"]
+        GH["GitHubMCP"]
+        GMCP["GraphMCPServer"]
+    end
+
+    CLI --> Core
+    CLI --> Agents
+    Agents --> Core
+    Agents --> MCP
+    Core --> Storage
+    Scheduler --> Core
+    Scheduler --> Storage
 ```
 
-### 1.4 Layered Architecture
+### Data Flow Summary
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  INTERFACE       CLI (Rich) + REST API                                 │
-├─────────────────────────────────────────────────────────────────────────┤
-│  API             FastAPI + Uvicorn │ WebSocket │ Python 3.12+          │
-├─────────────────────────────────────────────────────────────────────────┤
-│  INTELLIGENCE    LangGraph Orchestrator │ OpenAI Responses API │       │
-│                  3 MCP Servers │ OpenAI API (BYOK)                      │
-├─────────────────────────────────────────────────────────────────────────┤
-│  CORE ENGINE     APScheduler │ Decay/SM-2 │ Health Scoring │           │
-│                  Bridge Discovery │ Truth Layer                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│  INFRASTRUCTURE  DuckDB │ LanceDB │ all-mpnet-base-v2 (local)                │
-└─────────────────────────────────────────────────────────────────────────┘
+User input (text) --> CLI capture command
+  --> ExtractionPipeline.run()
+    --> Stage 1: Raw input capture
+    --> Stage 2: Preprocessing (dates, currency, language, dedup)
+    --> Stage 3: Archivist LLM extraction --> GraphProposal
+    --> Stage 4: Entity resolution (6 signals)
+    --> Stage 5: Proposal assembly (merge decisions)
+    --> Stage 6: Validation gate (confidence routing)
+    --> Stage 7: Review (auto-approve / digest / explicit)
+    --> Stage 8: Graph commit (atomic DuckDB transaction)
+    --> Stage 9: Post-commit (embeddings, edge weights, bridges, health, truth layer)
 ```
-
-> [!IMPORTANT]
-> The Core Engine layer is entirely **LLM-independent** — deterministic algorithms that would function even if the AI layer were removed. This is the primary anti-wrapper defense.
-
-### 1.5 Design Principles
-
-**UX Principles:**
-
-1. **Graph as infrastructure, not interface** — the graph powers everything behind the scenes. Multiple views: graph, outline, timeline, table, network dashboard
-2. **Local graph > global graph** — default to neighborhood of current node. Global graphs become hairballs past a few hundred nodes
-3. **Command palette as primary navigation** — Cmd+K is fastest. Keyboard-first, mouse-friendly
-4. **Capture-first, structure-later** — every entry goes to the Archivist. You just talk naturally
-5. **Progressive disclosure of AI** — show the answer first. Collapsible sections reveal reasoning, sources, agent deliberation
-6. **Decay and resurfacing** — unvisited knowledge fades. Revisited knowledge strengthens. SM-2 spaced repetition on all nodes
-7. **Zero-friction capture** — capture action < 2 seconds. Text input via capture bar or command palette
-8. **Never show a blank page** — always suggest, pre-populate, show context
-9. **Human-in-the-loop by default** — the system proposes, you decide
-
-**Anti-Wrapper Rules:**
-
-1. Every AI output must cite **graph nodes AND verified facts** — ChatGPT cannot do this
-2. The graph is the product, the LLM is the interface — remove the LLM and the graph + Truth Layer + mechanics remain a queryable life database
-3. Custom algorithms > LLM prompts — bridge discovery = embedding similarity + graph traversal; health = weighted metrics; decay = exponential functions; spaced repetition = SM-2. All deterministic and reproducible
-4. Progressive disclosure of AI reasoning — answer first, then collapsible: agents, confidence, graph paths, verified facts, disagreements
-5. Never let the LLM be the sole source of intelligence — every insight must be verifiable by graph query + Truth Layer lookup
 
 ---
 
 ## 2. Input-to-Graph Pipeline
 
-### 2.1 Pipeline Overview
+The `ExtractionPipeline` class in `memora/core/pipeline.py` implements a 9-stage async pipeline.
 
-Every piece of information traverses all nine stages before becoming committed knowledge in the graph. The pipeline mirrors Palantir Foundry's data integration: raw ingestion → transformation → entity resolution → ontology mapping → governance gate → commit.
-
-```mermaid
-flowchart LR
-    S1["Stage 1<br/>Raw Input<br/><i>text</i>"]
-    S2["Stage 2<br/>Preprocessing<br/><i>normalization</i>"]
-    S3["Stage 3<br/>Archivist Extraction<br/><i>LLM + schema</i>"]
-    S4["Stage 4<br/>Entity Resolution<br/><i>dedup + merge</i>"]
-    S5["Stage 5<br/>Graph Proposal<br/><i>structured diff</i>"]
-    S6["Stage 6<br/>Validation Gate<br/><i>confidence routing</i>"]
-    S7["Stage 7<br/>Human Review /<br/>Auto-Approve"]
-    S8["Stage 8<br/>Graph Commit<br/><i>atomic write</i>"]
-    S9["Stage 9<br/>Post-Commit<br/><i>embeddings, bridges,<br/>network assignment</i>"]
-
-    S1 --> S2 --> S3 --> S4 --> S5 --> S6 --> S7 --> S8 --> S9
-    S4 -.->|"rejection / feedback"| S3
-```
-
-### 2.2 Stage 1: Raw Input Capture
-
-**Purpose:** Accept user input as text.
-**LLM required:** No
-
-| Input Type | Format | How It Enters |
-|---|---|---|
-| Text (typed) | Raw string | Capture UI text box, command palette, CLI |
-
-**Design constraint:** Capture action must complete in **< 2 seconds**. Every entry is timestamped, tagged with input modality (`text`), and assigned a unique content hash (SHA-256) for deduplication.
-
-### 2.3 Stage 2: Preprocessing
-
-**Purpose:** Deterministic normalization before the Archivist sees the input.
-**LLM required:** No — entirely deterministic. This ensures reproducibility and keeps costs at zero for this stage.
-
-1. **Text Normalization**: Standardize dates ("next Tuesday" → `2026-03-03`), currency ("5 bucks" → `$5.00`), names ("Dr. Smith" → normalized form)
-2. **Language Detection**: Detect language for proper tokenization
-3. **Deduplication Check**: Content hash compared against recent captures to prevent duplicate processing
-
-### 2.4 Stage 3: Archivist Extraction
-
-**Purpose:** Transform unstructured natural language into structured graph operations.
-**LLM required:** Yes — this is the first and highest-frequency LLM invocation.
-
-**Agent:** The Archivist (GPT-5-nano)
-
-**What the Archivist does per capture:**
-
-1. **Entity Extraction**: Identify all entities — people, organizations, places, events, dates, financial amounts, commitments, decisions, goals, ideas, concepts
-2. **Relationship Extraction**: Identify how entities relate — "Sam *promised* to introduce me to *his investor*" yields: `PERSON(Sam) –[PROMISED]→ COMMITMENT(introduction) –[INVOLVES]→ PERSON(investor)`
-3. **Attribute Extraction**: Pull properties for each entity — roles, amounts, dates, sentiments, confidence levels
-4. **Network Classification**: Assign each entity and relationship to one or more of the seven context networks
-5. **Temporal Anchoring**: Attach temporal metadata — when did this happen? When is it due? Past, present, or future?
-6. **Confidence Scoring**: Rate extraction confidence (0–1) for each proposed node and edge
-
-**Constrained Output via Pydantic Schemas:**
-
-The Archivist does **not** return free-form text. It returns structured JSON validated against strict Pydantic schemas. This prevents hallucinated graph structure.
+### Pipeline Stages
 
 ```python
-from pydantic import BaseModel
-from datetime import datetime
-from enum import Enum
+class PipelineStage(IntEnum):
+    RAW_INPUT = 1
+    PREPROCESSING = 2
+    EXTRACTION = 3
+    ENTITY_RESOLUTION = 4
+    PROPOSAL_ASSEMBLY = 5
+    VALIDATION_GATE = 6
+    REVIEW = 7
+    GRAPH_COMMIT = 8
+    POST_COMMIT = 9
+```
 
+### Pipeline State
 
+```python
+@dataclass
+class PipelineState:
+    capture_id: str
+    raw_content: str
+    processed_content: str = ""
+    content_hash: str = ""
+    language: str = "en"
+    is_duplicate: bool = False
+    proposal: GraphProposal | None = None
+    resolutions: list[ResolutionResult] | None = None
+    proposal_id: str | None = None
+    route: ProposalRoute = ProposalRoute.AUTO
+    stage: PipelineStage = PipelineStage.RAW_INPUT
+    status: str = "processing"
+    error: str | None = None
+    clarification_needed: bool = False
+    clarification_message: str = ""
+```
+
+### Pipeline Class Signature
+
+```python
+class ExtractionPipeline:
+    def __init__(
+        self,
+        repo: GraphRepository,
+        vector_store: VectorStore | None = None,
+        embedding_engine: EmbeddingEngine | None = None,
+        settings: Settings | None = None,
+        archivist: ArchivistAgent | None = None,
+        resolver: EntityResolver | None = None,
+    ) -> None: ...
+
+    async def run(
+        self,
+        capture_id: str,
+        raw_content: str,
+        on_stage: Callable[[PipelineStage, str], None] | None = None,
+    ) -> PipelineState: ...
+```
+
+### Stage Details
+
+| # | Stage | Method | Description |
+|---|---|---|---|
+| 1 | Raw Input | (entry) | Capture ID + raw text passed to `run()` |
+| 2 | Preprocessing | `_preprocess` | Date normalization (`tomorrow`, `next Monday`, `in N days` to ISO), currency normalization (`$50k` to `$50,000.00`, `N bucks/dollars`), language detection (ASCII ratio heuristic), SHA-256 content hash |
+| 3 | Extraction | `_extract` | Calls `ArchivistAgent.extract()` with processed text; returns `GraphProposal` via OpenAI Responses API with `json_schema` format |
+| 4 | Entity Resolution | `_resolve_entities` | Runs `EntityResolver.resolve_nodes()` in a thread; multi-signal matching against existing graph |
+| 5 | Proposal Assembly | `_assemble_proposal` | Applies merge decisions from entity resolution to the proposal |
+| 6 | Validation Gate | `_validation_gate` | Routes by confidence: `AUTO` (>= threshold), `DIGEST`, or `EXPLICIT` (if merges/defers present) |
+| 7 | Review | `_review` | Stores proposal in `proposals` table; auto-approved proposals proceed to commit |
+| 8 | Graph Commit | `_commit` | Atomic DuckDB transaction: creates nodes (temp_id to real UUID mapping), updates existing nodes, creates edges |
+| 9 | Post-Commit | `_post_commit` | Sequential: embeddings, edge weights, graph connectivity. Parallel: bridge detection, health recalc, notification triggers, truth layer cross-reference |
+
+### Post-Commit Sub-stages
+
+The post-commit stage runs sub-stages in a specific order:
+
+1. **`_generate_embeddings`** -- batch embed all new nodes via `EmbeddingEngine.embed_batch()`, upsert to Weaviate
+2. **`_compute_edge_weights`** -- cosine similarity of source/target embeddings for all edges touching new nodes
+3. **`_ensure_graph_connectivity`** -- every node from this capture gets connected to the central You node (via similar existing node or direct fallback)
+4. **Parallel via `asyncio.gather()`:**
+   - `_detect_bridges` -- cross-network bridge discovery for new nodes
+   - `_recalculate_health` -- network health for affected networks
+   - `_check_notification_triggers` -- deadline notifications for new commitments
+   - `_cross_reference_truth_layer` -- contradiction detection and fact auto-deposit
+
+---
+
+## 3. Graph Ontology & Data Models
+
+All models are defined in `memora/graph/models.py` using Pydantic v2. Ontology constraints live in `memora/graph/ontology.py`.
+
+### Node Types (12)
+
+```python
 class NodeType(str, Enum):
     # Life Context Nodes
     EVENT = "EVENT"
@@ -259,8 +241,56 @@ class NodeType(str, Enum):
     CONCEPT = "CONCEPT"
     REFERENCE = "REFERENCE"
     INSIGHT = "INSIGHT"
+```
 
+### BaseNode
 
+All node types extend `BaseNode`:
+
+```python
+class BaseNode(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    node_type: NodeType
+    title: str
+    content: str = ""
+    content_hash: str = ""
+    properties: dict[str, Any] = Field(default_factory=dict)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    networks: list[NetworkType] = Field(default_factory=list)
+    human_approved: bool = False
+    proposed_by: str = ""
+    source_capture_id: UUID | None = None
+    access_count: int = 0
+    last_accessed: datetime | None = None
+    decay_score: float = 1.0
+    review_date: datetime | None = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+
+    def compute_content_hash(self) -> str: ...
+```
+
+### Specialized Node Models
+
+| Model | Extra Fields |
+|---|---|
+| `EventNode` | `event_date`, `location`, `participants`, `event_type`, `duration`, `sentiment`, `recurring` |
+| `PersonNode` | `name`, `aliases`, `role`, `relationship_to_user`, `contact_info`, `organization`, `last_interaction` |
+| `CommitmentNode` | `due_date`, `status: CommitmentStatus`, `committed_by`, `committed_to`, `priority: Priority`, `description` |
+| `DecisionNode` | `decision_date`, `options_considered`, `chosen_option`, `rationale`, `outcome`, `reversible` |
+| `GoalNode` | `target_date`, `progress: float`, `milestones`, `status: GoalStatus`, `priority`, `success_criteria` |
+| `FinancialItemNode` | `amount`, `currency`, `direction: FinancialDirection`, `category`, `recurring`, `frequency`, `counterparty` |
+| `NoteNode` | `source_context`, `note_type: NoteType` |
+| `IdeaNode` | `maturity: IdeaMaturity`, `domain`, `potential_impact` |
+| `ProjectNode` | `status: ProjectStatus`, `start_date`, `target_date`, `team`, `deliverables`, `repository_url` |
+| `ConceptNode` | `definition`, `domain`, `related_concepts`, `complexity_level: ComplexityLevel` |
+| `ReferenceNode` | `url`, `author`, `publication_date`, `source_type`, `citation`, `archived` |
+| `InsightNode` | `derived_from`, `actionable`, `cross_network`, `strength` |
+
+### Edge Types (29 types in 7 categories)
+
+```python
 class EdgeCategory(str, Enum):
     STRUCTURAL = "STRUCTURAL"
     ASSOCIATIVE = "ASSOCIATIVE"
@@ -270,7 +300,100 @@ class EdgeCategory(str, Enum):
     SOCIAL = "SOCIAL"
     NETWORK = "NETWORK"
 
+class EdgeType(str, Enum):
+    # Structural
+    PART_OF = "PART_OF"
+    CONTAINS = "CONTAINS"
+    SUBTASK_OF = "SUBTASK_OF"
+    # Associative
+    RELATED_TO = "RELATED_TO"
+    INSPIRED_BY = "INSPIRED_BY"
+    CONTRADICTS = "CONTRADICTS"
+    SIMILAR_TO = "SIMILAR_TO"
+    COMPLEMENTS = "COMPLEMENTS"
+    # Provenance
+    DERIVED_FROM = "DERIVED_FROM"
+    VERIFIED_BY = "VERIFIED_BY"
+    SOURCE_OF = "SOURCE_OF"
+    EXTRACTED_FROM = "EXTRACTED_FROM"
+    # Temporal
+    PRECEDED_BY = "PRECEDED_BY"
+    EVOLVED_INTO = "EVOLVED_INTO"
+    TRIGGERED = "TRIGGERED"
+    CONCURRENT_WITH = "CONCURRENT_WITH"
+    # Personal
+    COMMITTED_TO = "COMMITTED_TO"
+    DECIDED = "DECIDED"
+    FELT_ABOUT = "FELT_ABOUT"
+    RESPONSIBLE_FOR = "RESPONSIBLE_FOR"
+    # Social
+    KNOWS = "KNOWS"
+    INTRODUCED_BY = "INTRODUCED_BY"
+    OWES_FAVOR = "OWES_FAVOR"
+    COLLABORATES_WITH = "COLLABORATES_WITH"
+    REPORTS_TO = "REPORTS_TO"
+    # Network
+    BRIDGES = "BRIDGES"
+    MEMBER_OF = "MEMBER_OF"
+    IMPACTS = "IMPACTS"
+    CORRELATES_WITH = "CORRELATES_WITH"
+```
 
+### Edge Model
+
+```python
+class Edge(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    source_id: UUID
+    target_id: UUID
+    edge_type: EdgeType
+    edge_category: EdgeCategory
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    weight: float = 1.0
+    bidirectional: bool = False
+    properties: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
+```
+
+### Ontology Constraints
+
+Defined in `EDGE_CONSTRAINTS` in `memora/graph/ontology.py`. Each edge type maps to `(allowed_source_types, allowed_target_types)` where `None` means any type:
+
+```python
+EDGE_CONSTRAINTS: dict[EdgeType, tuple[set[NodeType] | None, set[NodeType] | None]] = {
+    EdgeType.SUBTASK_OF: (
+        {NodeType.COMMITMENT, NodeType.GOAL, NodeType.PROJECT},
+        {NodeType.COMMITMENT, NodeType.GOAL, NodeType.PROJECT},
+    ),
+    EdgeType.VERIFIED_BY: (None, {NodeType.REFERENCE, NodeType.PERSON}),
+    EdgeType.SOURCE_OF: ({NodeType.REFERENCE, NodeType.PERSON}, None),
+    EdgeType.COMMITTED_TO: ({NodeType.PERSON}, {NodeType.COMMITMENT}),
+    EdgeType.DECIDED: ({NodeType.PERSON}, {NodeType.DECISION}),
+    EdgeType.FELT_ABOUT: ({NodeType.PERSON}, None),
+    EdgeType.RESPONSIBLE_FOR: ({NodeType.PERSON}, None),
+    EdgeType.KNOWS: ({NodeType.PERSON}, {NodeType.PERSON}),
+    EdgeType.INTRODUCED_BY: ({NodeType.PERSON}, {NodeType.PERSON}),
+    EdgeType.OWES_FAVOR: ({NodeType.PERSON}, {NodeType.PERSON}),
+    EdgeType.COLLABORATES_WITH: ({NodeType.PERSON}, {NodeType.PERSON}),
+    EdgeType.REPORTS_TO: ({NodeType.PERSON}, {NodeType.PERSON}),
+    EdgeType.MEMBER_OF: (None, {NodeType.PROJECT, NodeType.EVENT}),
+    # All others: (None, None) -- any node type allowed
+}
+```
+
+Validation functions:
+
+```python
+def validate_edge(source_type: NodeType, target_type: NodeType, edge_type: EdgeType) -> bool: ...
+def get_category_for_edge_type(edge_type: EdgeType) -> EdgeCategory: ...
+def get_valid_edge_types(source_type: NodeType, target_type: NodeType) -> list[EdgeType]: ...
+def suggest_networks(text: str) -> list[tuple[str, float]]: ...
+```
+
+### Network Types & Keyword Classification
+
+```python
 class NetworkType(str, Enum):
     ACADEMIC = "ACADEMIC"
     PROFESSIONAL = "PROFESSIONAL"
@@ -279,1588 +402,1461 @@ class NetworkType(str, Enum):
     PERSONAL_GROWTH = "PERSONAL_GROWTH"
     SOCIAL = "SOCIAL"
     VENTURES = "VENTURES"
+```
 
+`NETWORK_KEYWORDS` maps each network to keyword lists for automatic classification via `suggest_networks()`. Confidence formula: `min(0.95, 0.3 + matches * 0.15)`.
 
-class TemporalAnchor(BaseModel):
-    """When does this entity apply in time?"""
-    occurred_at: datetime | None = None
-    due_at: datetime | None = None
-    temporal_type: str  # "past", "present", "future", "recurring"
+### Pipeline Models
 
-
-class NodeProposal(BaseModel):
-    """A proposed new node in the knowledge graph."""
-    temp_id: str                        # temporary ID for edge references
-    node_type: NodeType
-    title: str                          # human-readable name
-    content: str                        # full extracted content
-    properties: dict                    # type-specific properties
-    confidence: float                   # extraction confidence 0-1
-    networks: list[NetworkType]         # which context networks
-    temporal: TemporalAnchor | None     # when does this apply
-
-
-class NodeUpdate(BaseModel):
-    """An update to an existing node."""
-    node_id: str                        # existing graph node ID
-    updates: dict                       # properties to update
-    confidence: float
-    reason: str                         # why this update
-
-
-class EdgeProposal(BaseModel):
-    """A proposed relationship between two nodes."""
-    source_id: str                      # node temp_id or existing graph ID
-    target_id: str
-    edge_type: str                      # 28 subtypes
-    edge_category: EdgeCategory         # 7 categories
-    properties: dict
-    confidence: float
-    bidirectional: bool
-
-
-class EdgeUpdate(BaseModel):
-    """An update to an existing edge."""
-    edge_id: str
-    updates: dict
-    confidence: float
-
-
-class NetworkAssignment(BaseModel):
-    """Assign a node to a context network."""
-    node_id: str                        # temp_id or existing
-    network: NetworkType
-    confidence: float
-
-
+```python
 class GraphProposal(BaseModel):
-    """Atomic set of graph changes proposed by the Archivist."""
     source_capture_id: str
     timestamp: datetime
-    confidence: float                   # 0.0 - 1.0 overall
-
+    confidence: float
     nodes_to_create: list[NodeProposal]
     nodes_to_update: list[NodeUpdate]
     edges_to_create: list[EdgeProposal]
     edges_to_update: list[EdgeUpdate]
     network_assignments: list[NetworkAssignment]
+    human_summary: str = ""
+
+class NodeProposal(BaseModel):
+    temp_id: str
+    node_type: NodeType
+    title: str
+    content: str = ""
+    properties: dict[str, Any]
+    confidence: float
+    networks: list[NetworkType]
+    temporal: TemporalAnchor | None = None
+
+class EdgeProposal(BaseModel):
+    source_id: str       # temp_id or existing graph UUID
+    target_id: str
+    edge_type: EdgeType
+    edge_category: EdgeCategory
+    properties: dict[str, Any]
+    confidence: float
+    bidirectional: bool = False
 ```
 
-**Archivist System Prompt Architecture (5 components):**
+### Additional Enums
 
-1. **The complete graph schema**: All node types, edge types, property definitions, valid combinations
-2. **Existing entity context** (via RAG): Recent nodes that might be referenced or updated — preventing duplicate creation
-3. **Network definitions**: What each context network represents, with classification examples
-4. **Extraction rules**: "If a person is mentioned by first name only and a matching PERSON node exists, reference the existing node rather than creating a new one"
-5. **Clarification protocol**: If the input is ambiguous, the Archivist can request clarification from the user instead of guessing
-
-### 2.5 Stage 4: Entity Resolution
-
-**Purpose:** Determine whether a newly extracted entity refers to an **existing** node or is genuinely new.
-**LLM required:** Partially — LLM adjudication is one of six signals.
-
-This is the single hardest problem in the pipeline.
-
-**Multi-Signal Resolution Strategy:**
-
-| Signal | Weight | Details |
-|---|---|---|
-| Exact name match | 0.95 | Normalized canonical name comparison |
-| Embedding similarity (>0.92) | 0.80 | all-mpnet-base-v2 dense vector cosine similarity |
-| Same context network | 0.15 | Bonus if in overlapping networks |
-| Temporal proximity | 0.10 | Mentioned within 7-day window of existing node |
-| Shared relationships | 0.20 | Connected to same PERSON/EVENT nodes |
-| LLM adjudication | 0.90 | Archivist explicitly asked "same entity?" |
-
-**Ambiguity flag:** If confidence is between 0.6–0.85, flag for human review rather than auto-resolving.
-
-**Resolution Outcomes:**
-
-- **Merge**: Two nodes confirmed as same entity → merge properties, keep all edges, log the merge event
-- **Create**: No match found → create new node with full provenance
-- **Link**: Entities are related but distinct → create an edge (e.g., "Sam (investor)" and "Sam (friend)" might be different people)
-- **Defer**: Ambiguous case → flag for human review with both candidates presented
-
-### 2.6 Stage 5: Graph Proposal Assembly
-
-**Purpose:** Assemble a complete, atomic **Graph Proposal** — a structured diff of all changes.
-**LLM required:** No
-
-> [!IMPORTANT]
-> **Nothing enters the graph without a proposal.** The graph proposal is the fundamental unit of change in Memora. It is analogous to a database transaction or a git commit — an atomic, reviewable, reversible set of changes.
-
-A graph proposal contains:
-
-- **New nodes** to create (with all properties, confidence scores, network assignments)
-- **Existing nodes** to update (property changes, confidence adjustments, new network memberships)
-- **New edges** to create (typed relationships between new and/or existing nodes)
-- **Existing edges** to update (relationship changes, weight adjustments)
-- **Provenance chain**: which capture triggered this proposal, which agent created it, what extraction rules were applied
-- **Overall confidence score**: weighted average of all individual confidences
-- **Human-readable summary**: natural language description ("Adding person Sam Chen, linking to existing Project Alpha, creating commitment: intro to investor by March 5")
-
-### 2.7 Stage 6: Validation Gate
-
-**Purpose:** Route proposals based on confidence and impact.
-**LLM required:** No
-
-| Route | Trigger | UX |
-|---|---|---|
-| **Auto-approve** | confidence ≥ 0.85 | Silently committed; shown in daily digest |
-| **Daily review digest** | All auto-committed | Review what was committed, correct mistakes |
-| **Explicit confirm** | High-impact changes (deletes, merges, contradictions) | Presented immediately for user decision |
-
-> [!NOTE]
-> **Decision fatigue mitigation:** Research shows quality degrades after ~35 micro-decisions per day (Baumeister et al.). Auto-approve at ≥0.85 confidence means most routine captures flow through silently, while the daily review digest catches errors. Target: **< 5% of auto-approved changes require user correction**.
-
-### 2.8 Stage 7: Human Review / Auto-Approve
-
-**Purpose:** Final gate before committing to the graph.
-
-- **Auto-approved proposals**: Committed immediately, logged in daily review digest for retrospective correction
-- **Digest-routed proposals**: Batched into the morning review — user sees a list of proposed changes and can approve, edit, or reject each one
-- **Explicit-confirm proposals**: Presented immediately with full context — "The Archivist wants to merge Person(Sam) with Person(Samuel Chen). Here are both profiles. Approve?"
-
-### 2.9 Stage 8: Graph Commit
-
-**Purpose:** Atomically commit the approved proposal to the knowledge graph.
-**LLM required:** No
-
-1. **Transaction begin**: All node/edge creations and updates wrapped in a single atomic transaction
-2. **Node creation/update**: Nodes written to DuckDB with all properties, timestamps, and approval status
-3. **Edge creation/update**: Typed edges created between nodes with provenance metadata
-4. **Provenance logging**: Full audit trail — which capture, which agent, which extraction rules, human approval status
-5. **Transaction commit**: All-or-nothing — if any step fails, the entire proposal is rolled back
-
-### 2.10 Stage 9: Post-Commit Processing
-
-**Purpose:** Asynchronous enrichment after a successful commit.
-**LLM required:** Partially (bridge discovery daily batch uses 1 LLM call)
-
-1. **Embedding generation**: all-mpnet-base-v2 generates dense (Float[768]) + sparse embeddings for all new/updated nodes → written to LanceDB
-2. **Bridge discovery** (incremental): New node's embedding compared against nodes in *other* context networks via HNSW index lookup (O(log N), ~1–5ms at 10K nodes). High-similarity cross-network pairs flagged as potential bridges
-3. **Network health recalculation**: If the new data affects commitment completion rates or alert counts, network health status is updated
-4. **Notification triggers**: Check if the new data triggers any notification rules (deadline approaching, relationship decay, goal drift)
-5. **Truth Layer cross-reference**: If the committed data contains claims that intersect with verified facts, flag any contradictions
-
----
-
-## 3. Graph Ontology & Data Models
-
-### 3.1 Node Type Taxonomy
-
-Memora's graph uses **12 typed node categories** organized into two clusters:
-
-```mermaid
-graph LR
-    subgraph LC["Life Context Nodes<br/><i>Things that happen in your life</i>"]
-        EVENT
-        PERSON
-        COMMITMENT
-        DECISION
-        GOAL
-        FINANCIAL_ITEM
-    end
-
-    subgraph KN["Knowledge Nodes<br/><i>Things you know or think</i>"]
-        NOTE
-        IDEA
-        PROJECT
-        CONCEPT
-        REFERENCE
-        INSIGHT
-    end
-
-    LC <--->|"Cross-cluster edges<br/>(highest-value insights)"| KN
+```python
+class CommitmentStatus(str, Enum):     # open, completed, overdue, cancelled
+class GoalStatus(str, Enum):           # active, paused, achieved, abandoned
+class ProjectStatus(str, Enum):        # active, paused, completed, abandoned
+class IdeaMaturity(str, Enum):         # seed, developing, mature, archived
+class NoteType(str, Enum):             # observation, reflection, summary, quote
+class ComplexityLevel(str, Enum):      # basic, intermediate, advanced
+class Priority(str, Enum):             # low, medium, high, critical
+class FinancialDirection(str, Enum):   # inflow, outflow
+class HealthStatus(str, Enum):         # on_track, needs_attention, falling_behind
+class Momentum(str, Enum):             # up, stable, down
+class ProposalStatus(str, Enum):       # pending, approved, rejected
+class ProposalRoute(str, Enum):        # auto, digest, explicit
+class ActionType(str, Enum):           # COMPLETE_COMMITMENT, PROMOTE_IDEA, ARCHIVE_GOAL,
+                                       # ADVANCE_GOAL, RECORD_OUTCOME, LINK_ENTITIES
+class ActionStatus(str, Enum):         # completed, failed
+class OutcomeRating(str, Enum):        # positive, neutral, negative, mixed
+class PatternType(str, Enum):          # commitment_pattern, goal_lifecycle, temporal_pattern,
+                                       # cross_network, relationship_pattern, decision_quality,
+                                       # goal_alignment, commitment_scope, idea_maturity,
+                                       # network_balance, outcome_pattern
+class PatternSeverity(str, Enum):      # info, warning, critical
 ```
-
-### 3.2 Shared Node Properties
-
-Every node in the graph carries a standard set of properties — the metadata that enables search, decay, confidence tracking, and provenance:
-
-| Property | Type | Purpose | Constraints |
-|---|---|---|---|
-| `id` | UUID | Unique identifier, immutable after creation | Primary key, auto-generated |
-| `content_hash` | SHA-256 | Deduplication key — identical content = identical hash | Unique |
-| `created_at` | Timestamp | When this node was first created | Auto-set |
-| `updated_at` | Timestamp | Last modification timestamp | Auto-updated |
-| `embedding` | Float[768] | all-mpnet-base-v2 dense vector for semantic search | Generated post-commit |
-| `sparse_embedding` | Sparse vector | BM25-compatible sparse representation (if available) | Generated post-commit |
-| `confidence` | Float [0–1] | Extraction confidence from the Archivist | Required |
-| `networks` | List[NetworkType] | Which context networks this node belongs to | At least one |
-| `human_approved` | Boolean | Whether a human has reviewed and approved this node | Default: false |
-| `proposed_by` | AgentID | Which agent proposed this node (Archivist, Researcher, etc.) | Required |
-| `source_capture_id` | UUID | Link back to the original raw capture | Foreign key |
-| `access_count` | Integer | How many times this node has been accessed (for decay) | Default: 0 |
-| `last_accessed` | Timestamp | Last time this node was referenced (for decay) | Nullable |
-| `decay_score` | Float | Current decay score (exponential decay function) | Default: 1.0 |
-| `review_date` | Timestamp | When this node is due for spaced repetition review | Nullable |
-| `tags` | List[String] | User-defined and auto-generated tags | Optional |
-
-### 3.3 Node-Type-Specific Properties
-
-**Life Context Nodes:**
-
-| Node Type | Type-Specific Properties |
-|---|---|
-| `EVENT` | `event_date`, `location`, `participants: list[str]`, `event_type`, `duration`, `sentiment` |
-| `PERSON` | `name`, `role`, `relationship_to_user`, `contact_info: dict`, `organization`, `last_interaction` |
-| `COMMITMENT` | `due_date`, `status: enum(open, completed, overdue, cancelled)`, `committed_by`, `committed_to`, `priority` |
-| `DECISION` | `decision_date`, `options_considered: list[str]`, `chosen_option`, `rationale`, `outcome`, `reversible: bool` |
-| `GOAL` | `target_date`, `progress: float`, `milestones: list[dict]`, `status: enum(active, paused, achieved, abandoned)`, `priority` |
-| `FINANCIAL_ITEM` | `amount: float`, `currency: str`, `direction: enum(inflow, outflow)`, `category`, `recurring: bool`, `counterparty` |
-
-**Knowledge Nodes:**
-
-| Node Type | Type-Specific Properties |
-|---|---|
-| `NOTE` | `source_context`, `note_type: enum(observation, reflection, summary, quote)` |
-| `IDEA` | `maturity: enum(seed, developing, mature, archived)`, `domain`, `potential_impact` |
-| `PROJECT` | `status: enum(active, paused, completed, abandoned)`, `start_date`, `target_date`, `team: list[str]`, `deliverables: list[str]` |
-| `CONCEPT` | `definition`, `domain`, `related_concepts: list[str]`, `complexity_level` |
-| `REFERENCE` | `url`, `author`, `publication_date`, `source_type`, `citation`, `archived: bool` |
-| `INSIGHT` | `derived_from: list[str]`, `actionable: bool`, `cross_network: bool`, `strength: float` |
-
-### 3.4 Edge Types & Categories
-
-Edges are typed across **seven categories**, each serving a different analytical purpose:
-
-| Category | Example Subtypes | What It Captures |
-|---|---|---|
-| **STRUCTURAL** | `PART_OF`, `CONTAINS`, `SUBTASK_OF` | Hierarchy and composition |
-| **ASSOCIATIVE** | `RELATED_TO`, `INSPIRED_BY`, `CONTRADICTS`, `SIMILAR_TO`, `COMPLEMENTS` | Semantic relationships |
-| **PROVENANCE** | `DERIVED_FROM`, `VERIFIED_BY`, `SOURCE_OF`, `EXTRACTED_FROM` | Where information came from |
-| **TEMPORAL** | `PRECEDED_BY`, `EVOLVED_INTO`, `TRIGGERED`, `CONCURRENT_WITH` | Time-ordered causation |
-| **PERSONAL** | `COMMITTED_TO`, `DECIDED`, `FELT_ABOUT`, `RESPONSIBLE_FOR` | Personal stakes and emotions |
-| **SOCIAL** | `KNOWS`, `INTRODUCED_BY`, `OWES_FAVOR`, `COLLABORATES_WITH`, `REPORTS_TO` | People and social dynamics |
-| **NETWORK** | `BRIDGES`, `MEMBER_OF`, `IMPACTS`, `CORRELATES_WITH` | Cross-network connections |
-
-> [!NOTE]
-> **NETWORK edges (gold bridges)** represent the highest-value intelligence. These are the cross-domain connections invisible to any single-domain tool. Example: a `BRIDGES` edge connecting a Health network stress node to a Professional network overcommitment node.
-
-### 3.5 Edge Properties Schema
-
-| Property | Type | Purpose |
-|---|---|---|
-| `id` | UUID | Unique edge identifier |
-| `source_id` | UUID | Source node reference |
-| `target_id` | UUID | Target node reference |
-| `edge_type` | String | Specific subtype (e.g., `EVOLVED_INTO`) |
-| `edge_category` | EdgeCategory | One of 7 categories |
-| `confidence` | Float [0–1] | Extraction confidence |
-| `weight` | Float | Relationship strength (used by algorithms) |
-| `bidirectional` | Boolean | Whether the relationship goes both ways |
-| `properties` | JSON | Edge-specific metadata |
-| `created_at` | Timestamp | Creation time |
-| `updated_at` | Timestamp | Last modification |
-
-### 3.6 Context Networks
-
-The graph is organized into **seven interconnected context networks** — living subgraphs that each track a domain of the user's life:
-
-| Network | What It Tracks | Example Entities | Health Indicators |
-|---|---|---|---|
-| **Academic** | Courses, grades, research, study commitments | Papers, professors, deadlines, concepts | Assignment completion, study consistency |
-| **Professional** | Work projects, clients, colleagues, deliverables | Meetings, deliverables, career goals | Commitment fulfillment, project velocity |
-| **Financial** | Transactions, budgets, investments | Invoices, subscriptions, loans | Budget adherence, overdue payments |
-| **Health** | Exercise, sleep, stress, medical appointments | Symptoms, medications, habits | Routine consistency, stress trends |
-| **Personal Growth** | Learning goals, skills, habits, self-improvement | Books, courses, habits, reflections | Goal progress, learning streak |
-| **Social** | Friends, family, social events, relationship health | People, gatherings, favors owed | Interaction recency, relationship decay |
-| **Ventures** | Side projects, entrepreneurial activities, business ideas | Startup ideas, MVPs, investors | Milestone progress, runway |
-
-**Critical design point:** A single node can belong to **multiple networks**. "Sam" might be in both Professional and Social. A COMMITMENT to "submit the proposal" might be in both Academic and Ventures. These multi-membership nodes are the natural bridge points where cross-domain intelligence emerges.
-
-**Network Health Status:**
-
-| Status | Meaning |
-|---|---|
-| 🟢 **On Track** | Commitments met, no overdue items, recent engagement |
-| 🟡 **Needs Attention** | Some open alerts, declining momentum, stale commitments |
-| 🔴 **Falling Behind** | Multiple overdue items, no recent input, high alert count |
-
-Health is computed from **commitment completion rate** (actionable), **alert ratio** (urgency), and **staleness flags** (only triggered when commitments exist but haven't been updated). Momentum is internal-only as a directional arrow (up/stable/down) — never shown as a percentage.
 
 ---
 
 ## 4. Database Schemas
 
-### 4.1 Graph Database (DuckDB)
+### DuckDB Core Tables
 
-Primary graph storage using DuckDB — an embedded analytical SQL database. Zero infrastructure cost, runs in-process.
+All DuckDB DDL is in `memora/graph/repository.py` (`SCHEMA_SQL` constant).
 
 ```sql
--- ============================================================
--- CAPTURES: Raw user input storage
--- ============================================================
-CREATE TABLE captures (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    modality        VARCHAR NOT NULL,               -- 'text'
+-- Captures: raw user input
+CREATE TABLE IF NOT EXISTS captures (
+    id              VARCHAR PRIMARY KEY,
+    modality        VARCHAR NOT NULL,
     raw_content     TEXT NOT NULL,
     processed_content TEXT,
-    content_hash    VARCHAR(64) NOT NULL UNIQUE,     -- SHA-256 dedup
-    language        VARCHAR(10),                     -- detected language code
+    content_hash    VARCHAR(64) NOT NULL UNIQUE,
+    language        VARCHAR(10),
     metadata        JSON,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-
--- ============================================================
--- NODES: Knowledge graph nodes
--- ============================================================
-CREATE TABLE nodes (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    node_type       VARCHAR NOT NULL,                -- NodeType enum
+-- Nodes: knowledge graph vertices
+CREATE TABLE IF NOT EXISTS nodes (
+    id              VARCHAR PRIMARY KEY,
+    node_type       VARCHAR NOT NULL,
     title           VARCHAR NOT NULL,
     content         TEXT,
     content_hash    VARCHAR(64) NOT NULL,
-    properties      JSON,                            -- type-specific properties
-    confidence      FLOAT CHECK (confidence >= 0 AND confidence <= 1),
-    networks        VARCHAR[],                       -- array of NetworkType
+    properties      JSON,
+    confidence      DOUBLE CHECK (confidence >= 0 AND confidence <= 1),
+    networks        VARCHAR[],
     human_approved  BOOLEAN DEFAULT FALSE,
-    proposed_by     VARCHAR,                         -- agent ID
-    source_capture_id UUID REFERENCES captures(id),
+    proposed_by     VARCHAR,
+    source_capture_id VARCHAR,
     access_count    INTEGER DEFAULT 0,
     last_accessed   TIMESTAMP,
-    decay_score     FLOAT DEFAULT 1.0,
-    review_date     TIMESTAMP,                       -- SM-2 next review
+    decay_score     DOUBLE DEFAULT 1.0,
+    review_date     TIMESTAMP,
     tags            VARCHAR[],
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted         BOOLEAN DEFAULT FALSE
 );
 
-CREATE INDEX idx_nodes_type ON nodes(node_type);
-CREATE INDEX idx_nodes_networks ON nodes(networks);
-CREATE INDEX idx_nodes_content_hash ON nodes(content_hash);
-CREATE INDEX idx_nodes_decay ON nodes(decay_score);
-CREATE INDEX idx_nodes_review ON nodes(review_date);
-
-
--- ============================================================
--- EDGES: Typed relationships between nodes
--- ============================================================
-CREATE TABLE edges (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_id       UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    target_id       UUID NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    edge_type       VARCHAR NOT NULL,                -- specific subtype
-    edge_category   VARCHAR NOT NULL,                -- EdgeCategory enum
+-- Edges: typed relationships
+CREATE TABLE IF NOT EXISTS edges (
+    id              VARCHAR PRIMARY KEY,
+    source_id       VARCHAR NOT NULL,
+    target_id       VARCHAR NOT NULL,
+    edge_type       VARCHAR NOT NULL,
+    edge_category   VARCHAR NOT NULL,
     properties      JSON,
-    confidence      FLOAT CHECK (confidence >= 0 AND confidence <= 1),
-    weight          FLOAT DEFAULT 1.0,
+    confidence      DOUBLE CHECK (confidence >= 0 AND confidence <= 1),
+    weight          DOUBLE DEFAULT 1.0,
     bidirectional   BOOLEAN DEFAULT FALSE,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_edges_source ON edges(source_id);
-CREATE INDEX idx_edges_target ON edges(target_id);
-CREATE INDEX idx_edges_category ON edges(edge_category);
-CREATE INDEX idx_edges_type ON edges(edge_type);
-
-
--- ============================================================
--- PROPOSALS: Graph change proposals (audit trail)
--- ============================================================
-CREATE TABLE proposals (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    capture_id      UUID REFERENCES captures(id),
+-- Proposals: pending/approved/rejected graph changes
+CREATE TABLE IF NOT EXISTS proposals (
+    id              VARCHAR PRIMARY KEY,
+    capture_id      VARCHAR,
     agent_id        VARCHAR NOT NULL,
-    status          VARCHAR DEFAULT 'pending',       -- pending/approved/rejected
-    route           VARCHAR,                         -- auto/digest/explicit
-    confidence      FLOAT,
-    proposal_data   JSON NOT NULL,                   -- serialized GraphProposal
+    status          VARCHAR DEFAULT 'pending',
+    route           VARCHAR,
+    confidence      DOUBLE,
+    proposal_data   JSON NOT NULL,
     human_summary   TEXT,
     reviewed_at     TIMESTAMP,
-    reviewer        VARCHAR,                         -- 'auto' or 'human'
+    reviewer        VARCHAR,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_proposals_status ON proposals(status);
-CREATE INDEX idx_proposals_capture ON proposals(capture_id);
-
-
--- ============================================================
--- NETWORK_HEALTH: Computed health snapshots
--- ============================================================
-CREATE TABLE network_health (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    network         VARCHAR NOT NULL,                -- NetworkType
-    status          VARCHAR NOT NULL,                -- on_track/needs_attention/falling_behind
-    momentum        VARCHAR DEFAULT 'stable',        -- up/stable/down
-    commitment_completion_rate FLOAT,
-    alert_ratio     FLOAT,
+-- Network Health: periodic health snapshots
+CREATE TABLE IF NOT EXISTS network_health (
+    id              VARCHAR PRIMARY KEY,
+    network         VARCHAR NOT NULL,
+    status          VARCHAR NOT NULL,
+    momentum        VARCHAR DEFAULT 'stable',
+    commitment_completion_rate DOUBLE,
+    alert_ratio     DOUBLE,
     staleness_flags INTEGER DEFAULT 0,
     computed_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_health_network ON network_health(network);
-CREATE INDEX idx_health_computed ON network_health(computed_at);
-
-
--- ============================================================
--- BRIDGES: Cross-network discoveries
--- ============================================================
-CREATE TABLE bridges (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    source_node_id  UUID REFERENCES nodes(id),
-    target_node_id  UUID REFERENCES nodes(id),
+-- Bridges: cross-network connections
+CREATE TABLE IF NOT EXISTS bridges (
+    id              VARCHAR PRIMARY KEY,
+    source_node_id  VARCHAR,
+    target_node_id  VARCHAR,
     source_network  VARCHAR NOT NULL,
     target_network  VARCHAR NOT NULL,
-    similarity      FLOAT,
+    similarity      DOUBLE,
     llm_validated   BOOLEAN DEFAULT FALSE,
-    meaningful      BOOLEAN,                         -- LLM assessment
-    description     TEXT,                            -- why this bridge matters
+    meaningful      BOOLEAN,
+    description     TEXT,
     discovered_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Schema Version tracking
+CREATE TABLE IF NOT EXISTS schema_version (
+    version         INTEGER PRIMARY KEY,
+    description     VARCHAR DEFAULT '',
+    applied_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### 4.2 Vector Database (LanceDB)
+### Migration Tables (via `memora/graph/migrations.py`)
 
-Embedded vector store for semantic search. Uses HNSW index for O(log N) approximate nearest neighbor search.
+Migrations are versioned and applied incrementally with rollback support:
 
-```python
-import pyarrow as pa
-import lancedb
+| Version | Description | Tables/Indexes Added |
+|---|---|---|
+| v1 | Initial schema | (base tables above) |
+| v2 | Dossier performance indexes | `idx_edges_source`, `idx_edges_target` |
+| v3 | Actions table | `actions (id, action_type, status, source_node_id, target_node_id, params, result, executed_at)` |
+| v4 | Outcomes table | `outcomes (id, node_id, node_type, outcome_text, rating, evidence, recorded_at)` + `idx_outcomes_node` |
+| v5 | Patterns table | `detected_patterns (id, pattern_type, description, evidence, confidence, suggested_action, networks, first_detected, last_confirmed, status, created_at)` |
+| v6 | Pattern severity/trend | Adds `severity`, `previous_value`, `current_value` columns + `idx_patterns_type_status` |
 
-EMBEDDING_DIM = 768
+### Truth Layer Tables (via `memora/core/truth_layer.py`)
 
-# PyArrow schema for the vector table
-SCHEMA = pa.schema([
-    pa.field("node_id", pa.string()),       # UUID reference to nodes table
-    pa.field("content", pa.string()),       # text that was embedded
-    pa.field("node_type", pa.string()),     # NodeType for filtered search
-    pa.field("networks", pa.string()),      # JSON-encoded NetworkType list
-    pa.field("dense", pa.list_(pa.float32(), EMBEDDING_DIM)),  # 768-dim embedding
-    pa.field("created_at", pa.string()),    # ISO timestamp
-])
-
-# Database setup
-db = lancedb.connect("~/.memora/vectors")
-table = db.create_table("node_embeddings", schema=SCHEMA)
-```
-
-**Search capabilities:**
-- **Dense search**: Cosine similarity on all-mpnet-base-v2 768-dim vectors
-- **Hybrid search**: Dense vector search with optional full-text search fusion
-- **Filtered search**: Pre-filter by `node_type` and/or `networks` before vector search
-
-### 4.3 Truth Layer Tables
+Created lazily by `TruthLayer._ensure_tables()`:
 
 ```sql
--- ============================================================
--- VERIFIED_FACTS: The fact store
--- ============================================================
 CREATE TABLE IF NOT EXISTS verified_facts (
     id                    VARCHAR PRIMARY KEY,
-    node_id               VARCHAR NOT NULL,           -- graph node this fact supports
-    statement             TEXT NOT NULL,               -- the factual claim
+    node_id               VARCHAR NOT NULL,
+    statement             TEXT NOT NULL,
     confidence            DOUBLE CHECK (confidence >= 0 AND confidence <= 1),
-    status                VARCHAR DEFAULT 'active',    -- active/stale/contradicted/retired
-    lifecycle             VARCHAR DEFAULT 'dynamic',   -- static/dynamic
-    source_capture_id     VARCHAR,                     -- originating capture
+    status                VARCHAR DEFAULT 'active',      -- active, stale, contradicted, retired
+    lifecycle             VARCHAR DEFAULT 'dynamic',     -- static, dynamic
+    source_capture_id     VARCHAR,
     verified_at           TIMESTAMP,
-    verified_by           VARCHAR,                     -- agent that deposited this fact
-    recheck_interval_days INTEGER DEFAULT 90,          -- days between rechecks (DYNAMIC)
+    verified_by           VARCHAR,
+    recheck_interval_days INTEGER DEFAULT 90,
     last_checked          TIMESTAMP,
-    next_check            TIMESTAMP,                   -- for DYNAMIC facts
+    next_check            TIMESTAMP,
     metadata              JSON,
     created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-
--- ============================================================
--- FACT_CHECKS: Audit trail of verification attempts
--- ============================================================
 CREATE TABLE IF NOT EXISTS fact_checks (
     id              VARCHAR PRIMARY KEY,
-    fact_id         VARCHAR NOT NULL,                -- references verified_facts(id)
-    check_type      VARCHAR NOT NULL,                -- 'initial', 'recheck', 'contradiction'
-    result          VARCHAR NOT NULL,                -- 'confirmed', 'contradicted', 'inconclusive'
+    fact_id         VARCHAR NOT NULL,
+    check_type      VARCHAR NOT NULL,
+    result          VARCHAR NOT NULL,
     evidence        TEXT,
-    checked_by      VARCHAR,                         -- agent ID
+    checked_by      VARCHAR,
     checked_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
----
+### Notification Table (via `memora/core/notifications.py`)
 
-## 5. AI Agent System Design
-
-### 5.1 Agent Architecture Overview
-
-```mermaid
-flowchart TB
-    Input["User Query / Capture"]
-    Orch["LangGraph Orchestrator"]
-
-    Input --> Orch
-
-    Orch -->|"every capture"| Arch
-    Orch -->|"analysis queries"| Strat
-    Orch -->|"needs external data"| Res
-
-    subgraph Arch["🏛️ Archivist (GPT-5-nano)"]
-        direction TB
-        A1["Graph Schema Context"]
-        A2["RAG: Recent Nodes"]
-        A3["Pydantic Validator"]
-        A1 --> A3
-        A2 --> A3
-    end
-
-    subgraph Strat["🎯 Strategist (GPT-5-nano)"]
-        direction TB
-        S1["Graph Reader"]
-        S2["Health Scores"]
-        S3["Bridge Analysis"]
-        S4["Critic Mode"]
-    end
-
-    subgraph Res["🔬 Researcher (GPT-5-nano)"]
-        direction TB
-        R1["Query Anonymizer"]
-        R2["MCP Servers (3)"]
-        R3["Truth Layer Writer"]
-        R1 --> R2 --> R3
-    end
-
-    Arch -->|"GraphProposal"| GraphDB[("Graph DB")]
-    Strat -->|"reads"| GraphDB
-    Res -->|"verified facts"| TL[("Truth Layer")]
-    Res -->|"anonymized queries"| Web["🌐 Internet"]
+```sql
+CREATE TABLE IF NOT EXISTS notifications (
+    id                VARCHAR PRIMARY KEY,
+    type              VARCHAR NOT NULL,
+    trigger_condition VARCHAR DEFAULT '',
+    message           TEXT NOT NULL,
+    related_node_ids  JSON DEFAULT '[]',
+    priority          VARCHAR DEFAULT 'medium',
+    read              BOOLEAN DEFAULT FALSE,
+    created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-### 5.2 Agent 1: The Archivist (Graph Writer)
+### Weaviate Collection
 
-| Attribute | Value |
-|---|---|
-| **Role** | Graph construction engine — writes to the graph |
-| **Model** | GPT-5-nano (fast, cheap, structured output via Responses API) |
-| **Frequency** | Every single capture (10+/day) |
-| **Input** | Raw capture + RAG context of existing nodes + graph schema |
-| **Output** | Pydantic-validated `GraphProposal` |
-| **Tools** | Graph query (read existing nodes), schema validator (check proposal validity) |
+Defined in `memora/vector/store.py`:
 
-**Context sources:**
-1. Graph schema (static) — node types, edge types, valid combinations
-2. Recent nodes via RAG (dynamic) — prevents duplicate creation
-3. User's capture (input) — the actual text to process
+```python
+EMBEDDING_DIM = 768
+COLLECTION_NAME = "NodeEmbeddings"
 
-**System prompt:** The system prompt (schema + rules + network definitions) is ~2,000–4,000 tokens and near-identical across 95%+ of calls. Only the RAG context window and user's capture change per invocation.
-
-### 5.3 Agent 2: The Strategist (Graph Reader + Analyst)
-
-| Attribute | Value |
-|---|---|
-| **Role** | Intelligence analyst — reads the graph, computes cross-network analysis, delivers actionable intelligence |
-| **Model** | GPT-5-nano (complex reasoning) |
-| **Frequency** | (1) Daily — morning briefing; (2) On-demand — complex queries |
-| **Input** | Graph state, health scores, bridge discoveries, Truth Layer facts |
-| **Output** | Briefings, recommendations, risk assessments, priority rankings |
-| **Tools** | Graph query, health scores, bridge results, Truth Layer lookup |
-
-**What the Strategist does:**
-
-1. **Cross-network bridge analysis**: Uses bridge discovery results to identify patterns across life domains ("Your stress mentions correlate with your open commitment count — you're overextended")
-2. **Network health assessment**: Reads computed health scores, momentum, and alerts for each context network
-3. **Decision recommendations**: Given a user's question + graph context + Truth Layer facts, recommends specific actions with rationale
-4. **Priority ranking**: Orders today's tasks by urgency, importance, and cross-network impact
-5. **Temporal pattern detection**: Identifies trends over time ("Your Academic network has been declining for 3 weeks")
-6. **Critic mode**: Deliberately challenges the user's assumptions and decisions ("You're assuming the investor will follow through, but your graph shows Sam has missed 2 prior commitments")
-
-### 5.4 Agent 3: The Researcher (Internet Bridge)
-
-| Attribute | Value |
-|---|---|
-| **Role** | Bridges private graph with public internet |
-| **Model** | GPT-5-nano (synthesis from web sources) |
-| **Frequency** | On-demand (triggered by Strategist or user) |
-| **Input** | Research query + anonymized graph context |
-| **Output** | Verified facts deposited into Truth Layer |
-| **Tools** | 3 MCP servers (see below) |
-
-**MCP Servers:**
-
-| MCP Server | Purpose | Status |
-|---|---|---|
-| Semantic Scholar + arXiv | Academic paper search and retrieval | Enabled |
-| Playwright | Full web scraping for deep research | Enabled |
-| GitHub MCP | Code and repository search | Enabled |
-
-> **Note:** Google Search and Brave Search MCP servers are scaffolded but currently disabled in the codebase.
-
-> [!WARNING]
-> **Critical constraint:** The Researcher must **anonymize graph context** before sending external queries. It cannot leak personal information to search engines. Query construction strips PII and uses abstract patterns.
-
-### 5.5 The Orchestrator: Agent Coordination
-
-The AI Council uses a **LangGraph** orchestrator for agent coordination. Each agent has a specific role, specific data access, and specific frequency. The orchestrator:
-
-1. **Classifies** incoming requests (capture → Archivist; analysis → Strategist; needs external data → Researcher)
-2. **Decomposes** complex queries into sub-queries routed to appropriate agents
-3. **Manages** parallel execution when multiple agents work simultaneously
-4. **Synthesizes** results from multiple agents into a unified response
-
-### 5.6 Council Decision Pattern (High-Stakes Queries)
-
-When the user asks a complex question like "Should I take this job offer?", the council follows a structured deliberation:
-
-```mermaid
-sequenceDiagram
-    participant U as 👤 User
-    participant O as Orchestrator
-    participant A as 🏛️ Archivist
-    participant S as 🎯 Strategist
-    participant R as 🔬 Researcher
-
-    U->>O: "Should I take this job offer?"
-    O->>O: Decompose into sub-queries
-
-    par Independent Analysis
-        O->>A: "What is user's current professional<br/>context, commitments, and financial situation?"
-        O->>S: "What cross-network impacts would<br/>this decision have? Risk profile?"
-        O->>R: "Current market conditions for this role?<br/>Company reputation? Glassdoor data?"
-    end
-
-    A->>O: Context (confidence, evidence)
-    S->>O: Analysis (confidence, evidence, risks)
-    R->>O: Research (confidence, evidence, sources)
-
-    opt Deliberation (max 2-3 rounds)
-        O->>S: Review Archivist + Researcher findings
-        O->>A: Review Strategist analysis
-        S->>O: Updated proposal
-        A->>O: Updated proposal
-    end
-
-    O->>O: Confidence-weighted synthesis
-    Note over O: Flag high disagreement for human review
-    O->>U: Final recommendation with citations<br/>(graph nodes + verified facts + reasoning)
+# Collection properties:
+#   node_id:    TEXT
+#   content:    TEXT
+#   node_type:  TEXT
+#   networks:   TEXT_ARRAY
+#   updated_at: TEXT
+#
+# Vector config: self-provided (768-dim), HNSW auto-managed
 ```
 
-### 5.7 LLM Routing & Cost Model
+### Central You Node
 
-| Agent | Model | Use Case | Est. Cost (per user/month) |
-|---|---|---|---|
-| Archivist | GPT-5-nano | Every capture (~10/day) | ~$3–4 (with caching) |
-| Strategist | GPT-5-nano | Daily briefing + ~2 queries/day | ~$5–8 |
-| Researcher | GPT-5-nano | On-demand (~2 queries/day) | ~$2–3 |
+```python
+YOU_NODE_ID = "00000000-0000-0000-0000-000000000001"
+```
 
-**Blended user cost: $10–15/month** at 10 captures/day and 2 council queries.
-
-| Scenario | Monthly Cost | Notes |
-|---|---|---|
-| Light usage (5 captures/day) | ~$5–8/month | Basic capture and analysis |
-| **Recommended (10 captures/day + 2 queries)** | **~$10–15/month** | Optimal usage pattern |
-| Heavy usage (20+ captures/day + frequent queries) | ~$15–25/month | Power user |
+The `GraphRepository._ensure_you_node()` method creates a singleton PERSON node representing the user on first initialization. All other nodes are eventually connected to this ego node via the post-commit connectivity enforcement.
 
 ---
 
-## 6. Adaptive RAG Pipeline
+## 5. AI Agent System
 
-### 6.1 Query Classification & Routing
+Three specialized agents coordinated by a LangGraph orchestrator. All use `gpt-5-nano` as the default model via the OpenAI Responses API.
 
-When querying Memora, the orchestrator classifies queries and routes them to appropriate agents:
+### Archivist Agent (`memora/agents/archivist.py`)
 
-| Query Type | Routing | Example |
-|---|---|---|
-| CAPTURE | Archivist (graph write) | "Had coffee with Sam today, he'll intro me to his VC" |
-| RESEARCH | Researcher (web search) | "What's the latest funding round for Stripe?" |
-| ANALYSIS | Strategist (graph read + analysis) | "How is my health affecting my work?" |
-| COUNCIL | Multi-agent deliberation | "Should I take this job offer?" |
+Extracts structured `GraphProposal` objects from unstructured text.
 
-### 6.2 RAG Pipeline Flow
+```python
+DEFAULT_MODEL = "gpt-5-nano"
 
-```mermaid
-flowchart TD
-    Query["User Query"] --> Classify["Query Classifier"]
+class ArchivistAgent:
+    def __init__(
+        self,
+        api_key: str,
+        vector_store: VectorStore | None = None,
+        embedding_engine: EmbeddingEngine | None = None,
+        you_node_id: str = "",
+    ) -> None: ...
 
-    Classify -->|"CAPTURE"| VS["Archivist<br/>(Graph Write)"]
-    Classify -->|"RESEARCH"| GT["Researcher<br/>(Web Search)"]
-    Classify -->|"ANALYSIS"| MN["Strategist<br/>(Graph Read + Analysis)"]
-    Classify -->|"COUNCIL"| AR["Multi-Agent<br/>Deliberation"]
+    async def extract(self, text: str, capture_id: str) -> ArchivistResult: ...
 
-    VS --> Hybrid["Hybrid Search<br/>(BM25 + Dense Fusion)"]
-    GT --> Hybrid
-    MN --> Hybrid
-    AR --> Hybrid
-
-    Hybrid --> CRAG{"CRAG<br/>Quality Check"}
-    CRAG -->|"Poor quality"| Researcher["🔬 Researcher Agent<br/>(Web Fallback)"]
-    CRAG -->|"Sufficient"| Expand["Graph-Augmented<br/>Context Expansion"]
-    Researcher --> Expand
-
-    Expand --> TruthCheck["Truth Layer<br/>Fact-Check Gate"]
-    TruthCheck --> Generate["LLM Generation<br/>with Source Citations"]
+@dataclass
+class ArchivistResult:
+    proposal: GraphProposal | None = None
+    clarification_needed: bool = False
+    clarification_message: str = ""
 ```
 
-### 6.3 CRAG (Corrective RAG)
+Key implementation details:
+- Uses `json_schema` response format with `GraphProposal.model_json_schema()` (titles stripped, `additionalProperties: false` added for strict mode)
+- RAG context: retrieves existing nodes via vector similarity to provide extraction context
+- Calls `async_call_with_retry()` for resilient API calls
 
-If retrieval quality is poor (low relevance scores, insufficient results), the system automatically falls back to web search via the Researcher agent rather than generating from insufficient context. This is how the private graph and public internet blend seamlessly.
+### Strategist Agent (`memora/agents/strategist.py`)
 
-**Quality assessment criteria:**
-- Top result relevance score below threshold
-- Fewer than minimum required results
-- Query terms not well-represented in retrieved content
+Analytical advisor for cross-network insights, health interpretation, and decision support.
 
-### 6.4 Graph-Augmented Context Expansion
+```python
+DEFAULT_MODEL = "gpt-5-nano"
 
-Retrieved nodes are expanded to include their **1-hop neighborhood** — directly connected nodes and edges. This provides richer context than isolated vector search results:
+class StrategistAgent:
+    def __init__(
+        self,
+        api_key: str,
+        repo: GraphRepository | None = None,
+        vector_store: VectorStore | None = None,
+        embedding_engine: EmbeddingEngine | None = None,
+        truth_layer: Any | None = None,
+    ) -> None: ...
 
-1. Retrieve top-K nodes via hybrid search
-2. For each retrieved node, fetch all edges and connected nodes (1-hop)
-3. Include edge types and properties in the context (relationship semantics)
-4. Deduplicate expanded context
-5. Rank expanded context by relevance to original query
+    async def analyze(self, query: str, context: dict) -> StrategistResult: ...
+    async def critique(self, thesis: str, context: dict) -> CritiqueResult: ...
 
-### 6.5 Truth Layer Fact-Check Gate
+@dataclass
+class StrategistResult:
+    analysis: str = ""
+    recommendations: list[dict[str, Any]]
+    confidence: float = 0.8
+    citations: list[str]
+    token_usage: dict[str, int]
 
-Before generating a final response, the system cross-references against the Truth Layer:
+@dataclass
+class CritiqueResult:
+    analysis: str = ""
+    counter_evidence: list[CounterEvidence]
+    blind_spots: list[str]
+    confidence: float = 0.75
+    citations: list[str]
+    token_usage: dict[str, int]
+```
 
-| Situation | Action |
-|---|---|
-| **Contradiction found** | Flag to user, show both claims with sources. Agent must acknowledge the conflict |
-| **No verified facts exist** | Proceed with caveat — "unverified claim" label attached |
-| **Facts support claim** | Proceed with citation to verified source |
+### Researcher Agent (`memora/agents/researcher.py`)
 
----
+External information gathering with PII anonymization before outbound queries.
 
-## 7. Truth Layer: Verified Fact Store
+```python
+DEFAULT_MODEL = "gpt-5-nano"
 
-### 7.1 Source Confidence Hierarchy
+class ResearcherAgent:
+    def __init__(
+        self,
+        api_key: str,
+        truth_layer: TruthLayer | None = None,
+    ) -> None: ...
 
-| Source Type | Confidence | Examples |
-|---|---|---|
-| `PRIMARY` | Highest | Official records, government databases, published financials |
-| `SECONDARY` | Medium | News articles, research papers, third-party reports (with citation) |
-| `SELF_REPORTED` | Lowest | User-stated hearsay ("Sam told me X") — flagged as such |
+    async def research(self, query: str, context: dict) -> ResearchResult: ...
 
-### 7.2 Fact Lifecycle
+@dataclass
+class ResearchResult:
+    answer: str = ""
+    sources: list[ResearchSource]
+    facts_to_deposit: list[dict[str, Any]]
+    confidence: float = 0.7
+    anonymized_query: str = ""
+    token_usage: dict[str, int]
+```
+
+PII anonymization patterns:
+- Email addresses
+- Phone numbers
+- SSN patterns
+- Dollar amounts
+- Date patterns
+
+### Orchestrator (`memora/agents/orchestrator.py`)
+
+LangGraph-based multi-agent coordinator with query classification, parallel agent dispatch, confidence-weighted synthesis, and iterative deliberation.
+
+```python
+class QueryType(str, Enum):
+    CAPTURE = "capture"
+    ANALYSIS = "analysis"
+    RESEARCH = "research"
+    COUNCIL = "council"
+
+class CouncilState(TypedDict, total=False):
+    query_id: str
+    query: str
+    query_type: str
+    graph_context: dict[str, Any]
+    archivist_output: dict[str, Any] | None
+    strategist_output: dict[str, Any] | None
+    researcher_output: dict[str, Any] | None
+    synthesis: str
+    confidence: float
+    citations: list[str]
+    deliberation_round: int
+    max_deliberation_rounds: int
+    high_disagreement: bool
+    error: str | None
+
+class Orchestrator:
+    def __init__(
+        self,
+        api_key: str,
+        repo: GraphRepository | None = None,
+        vector_store: VectorStore | None = None,
+        embedding_engine: EmbeddingEngine | None = None,
+        truth_layer: Any | None = None,
+        settings: Settings | None = None,
+    ) -> None: ...
+
+    def run(
+        self,
+        query: str,
+        query_type: str | None = None,
+        context: dict[str, Any] | None = None,
+        max_deliberation_rounds: int = 2,
+    ) -> OrchestratorResult: ...
+```
+
+### LangGraph State Machine
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Created: Researcher deposits fact
-    Created --> Verified: Source confirmed
-    Verified --> Active: In use by agents
+    [*] --> classify
+    classify --> archivist: capture
+    classify --> strategist: analysis
+    classify --> researcher: research
+    classify --> council_all: council
 
-    Active --> Stale: DYNAMIC expiry reached
-    Active --> Referenced: Agent cites in recommendation
-    Referenced --> Active
+    archivist --> synthesize
+    strategist --> synthesize
+    researcher --> synthesize
+    council_all --> synthesize
 
-    Stale --> Rechecking: Researcher re-verifies
-    Rechecking --> Active: Still valid (reset expiry)
-    Rechecking --> Contradicted: New data conflicts
-
-    Contradicted --> Flagged: User notified
-    Flagged --> Resolved: User decides
-    Resolved --> Active: Updated fact
-    Resolved --> Archived: Fact retired
+    synthesize --> deliberate: high_disagreement & rounds < max
+    synthesize --> [*]: done
+    deliberate --> synthesize
 ```
 
-- **STATIC** lifecycle facts (birth dates, published papers) never expire
-- **DYNAMIC** lifecycle facts (company valuations, market conditions) get periodic rechecking via the Researcher agent (default: every 90 days)
-- Status transitions: `active` → `stale` (when recheck overdue) → `contradicted` (conflicting evidence) or back to `active` (recheck passes) → `retired` (permanently archived)
-- Stale facts are flagged: *"This fact was last verified 90 days ago — recheck?"*
-
-### 7.3 Fact-Check Gate Integration
-
-Every time the Strategist generates a recommendation:
-
-1. Extract all factual claims from the recommendation
-2. Query Truth Layer for matching or contradicting verified facts
-3. If contradiction found → show both claims with sources, flag for human review
-4. If no verified facts → attach "unverified claim" label
-5. If facts support → attach citation with source type and verification date
+Graph nodes: `classify`, `archivist`, `strategist`, `researcher`, `council_all`, `synthesize`, `deliberate`.
 
 ---
 
-## 8. Background Mechanics: The Living Graph Engine
+## 6. Adaptive RAG Pipeline (CRAG)
 
-These are the **deterministic, LLM-independent algorithms** that run on schedule — the "engine room" that makes the graph a living system rather than a static document store.
+The CRAG (Corrective Retrieval-Augmented Generation) pattern is implemented across the Orchestrator and agent system. Configurable via `Settings`:
 
-### 8.1 Job Schedule Overview
-
-| Job | Frequency | LLM Required | Algorithm | Purpose |
-|---|---|---|---|---|
-| Decay Scoring | Daily | No | Exponential decay | Fade unvisited knowledge |
-| Bridge Discovery | Daily + Per-Capture | Batch: 1 LLM call | HNSW cosine similarity | Find cross-network connections |
-| Network Health | Every 6 hours | No | Weighted metric composition | Compute network status |
-| Commitment Scan | Daily | No | Date comparison + status | Flag overdue commitments |
-| Relationship Decay | Weekly | No | Interaction window analysis | Flag fading relationships |
-| Spaced Repetition | Daily | No | SM-2 algorithm | Surface knowledge for review |
-| Gap Detection | Weekly | No | Graph topology analysis | Find structural weaknesses |
-| Daily Briefing | Daily | Yes (Strategist) | LLM synthesis of metrics | Morning intelligence report |
-
-### 8.2 Decay Scoring
-
-Every node decays exponentially based on time since last access or mention:
-
-```
-decay_score(t) = e^(-λ · (t_now - t_last_access))
+```python
+# CRAG settings
+crag_relevance_threshold: float = 0.5
+crag_min_results: int = 3
+crag_term_coverage_threshold: float = 0.3
 ```
 
-Where **λ** is the decay constant (configurable per network). Nodes with low decay scores are candidates for:
-- Spaced repetition resurfacing
-- Archival suggestions
-- "You haven't referenced this in X days" notifications
+### CRAG Flow
 
-**Example decay curves:**
+1. **Retrieve** -- Vector search via Weaviate (`dense_search` or `hybrid_search`) for graph context relevant to the query
+2. **Grade** -- Each retrieved node scored against query relevance; below `crag_relevance_threshold` triggers correction
+3. **Correct** -- If insufficient relevant results, the Researcher agent supplements with external MCP tool calls
+4. **Generate** -- Final synthesis by the Orchestrator using confidence-weighted merging of agent outputs
 
-| Days Since Access | λ = 0.01 | λ = 0.05 | λ = 0.1 |
+The Orchestrator's `_gather_context()` method performs RAG retrieval, and the `_synthesize_node()` merges all agent outputs into a final response.
+
+---
+
+## 7. Truth Layer
+
+Implemented in `memora/core/truth_layer.py`. Provides verified fact storage with lifecycle management and contradiction detection.
+
+```python
+class FactStatus(str, Enum):
+    ACTIVE = "active"
+    STALE = "stale"
+    CONTRADICTED = "contradicted"
+    RETIRED = "retired"
+
+class FactLifecycle(str, Enum):
+    STATIC = "static"
+    DYNAMIC = "dynamic"
+
+class TruthLayer:
+    def __init__(self, conn) -> None: ...
+    def deposit_fact(
+        self, node_id: str, statement: str, confidence: float,
+        source_capture_id: str, verified_by: str, metadata: dict,
+    ) -> str: ...
+    def check_contradiction(self, claim: str, node_id: str) -> list[dict]: ...
+    def query_facts(self, node_id: str, active_only: bool = True) -> list[dict]: ...
+    def get_stale_facts(self, max_age_days: int = 90) -> list[dict]: ...
+    def record_check(self, fact_id: str, result: str) -> None: ...
+    def retire_fact(self, fact_id: str) -> None: ...
+```
+
+### How the Truth Layer integrates:
+
+- **Pipeline post-commit**: New nodes without contradictions are auto-deposited as facts at confidence 0.7. Contradictions trigger notifications.
+- **Researcher agent**: Deposits externally verified facts from MCP research
+- **Outcome tracker**: Records outcomes as facts with confidence based on rating
+- **Investigation engine**: Enriches nodes with associated verified facts
+
+---
+
+## 8. Living Graph Engine (Background Jobs)
+
+The `MemoraScheduler` class (`memora/scheduler/scheduler.py`) wraps APScheduler's `AsyncIOScheduler` and registers 10 recurring jobs from `memora/scheduler/jobs.py`.
+
+### Job Schedule
+
+| # | Job ID | Schedule | Implementation |
 |---|---|---|---|
-| 1 | 0.99 | 0.95 | 0.90 |
-| 7 | 0.93 | 0.70 | 0.50 |
-| 30 | 0.74 | 0.22 | 0.05 |
-| 90 | 0.41 | 0.01 | ~0 |
+| 1 | `decay_scoring` | Daily 2:00 AM | `run_decay_scoring` -- Recomputes decay scores for all nodes using exponential decay with per-network lambda values |
+| 2 | `bridge_discovery_batch` | Daily 3:00 AM | `run_bridge_discovery_batch` -- Discovers cross-network bridges for recently modified nodes; batch LLM validation of unvalidated bridges |
+| 3 | `network_health` | Every 6 hours | `run_network_health` -- Computes health status and momentum per network |
+| 4 | `commitment_scan` | Daily 6:00 AM | `run_commitment_scan` -- Scans for overdue/approaching commitments; generates notifications |
+| 5 | `relationship_decay` | Weekly Sunday 00:00 | `run_relationship_decay` -- Detects neglected PERSON relationships based on configurable thresholds |
+| 6 | `spaced_repetition` | Daily 5:00 AM | `run_spaced_repetition_queue` -- Schedules review dates using SM-2 algorithm |
+| 7 | `gap_detection` | Weekly Sunday 1:00 AM | `run_gap_detection` -- Finds information gaps and orphan nodes |
+| 8 | `daily_briefing` | Daily 7:00 AM | `run_daily_briefing` -- Aggregates data from all subsystems for morning briefing |
+| 9 | `pattern_detection` | Daily 4:00 AM | `run_pattern_detection` -- Runs all 11 pattern detectors |
+| 10 | `outcome_review` | Daily 6:30 AM | `run_outcome_review` -- Reviews pending outcomes for decisions/goals |
 
-### 8.3 Bridge Discovery
+### Scheduler Configuration
 
-Bridge discovery is the mechanism that finds **cross-network connections** — the highest-value intelligence in the system.
+```python
+class MemoraScheduler:
+    def __init__(
+        self,
+        repo,
+        app_state=None,
+        vector_store=None,
+        embedding_engine=None,
+        truth_layer=None,
+        settings=None,
+    ) -> None: ...
 
-**Two modes:**
+    def start(self) -> None: ...
+    def shutdown(self) -> None: ...
+```
 
-1. **Per-capture (incremental)**: When a new node is committed, its embedding is compared via HNSW index against nodes in *other* networks. Cost: O(log N), ~1–5ms at 10K nodes.
+Job defaults: `coalesce=True`, `max_instances=1`, `misfire_grace_time=3600`.
 
-2. **Daily batch**: Nodes modified in the last 24 hours are batch-scanned for cross-network bridges. High-similarity pairs are batched into a **single LLM call**: "Here are 15 potential connections — which are meaningful?" — 1 API call instead of 15.
+### Decay Scoring (`memora/core/decay.py`)
 
-### 8.4 Network Health Scoring
+Exponential decay with network-specific lambdas:
 
-Each context network has a computed health status, recalculated every 6 hours:
+```python
+DEFAULT_NETWORK_LAMBDAS = {
+    "ACADEMIC": 0.05,
+    "PROFESSIONAL": 0.03,
+    "FINANCIAL": 0.02,
+    "HEALTH": 0.05,
+    "PERSONAL_GROWTH": 0.04,
+    "SOCIAL": 0.07,
+    "VENTURES": 0.03,
+}
+```
 
-**Inputs:**
-- **Commitment completion rate** (actionable) — ratio of completed vs. open + overdue commitments
-- **Alert ratio** (urgency) — number of active alerts / total nodes in network
-- **Staleness flags** (stale only) — only triggered when commitments exist but haven't been updated. Silence is fine when there are no deadlines
+Active nodes (open commitments, active goals/projects) are pinned at decay_score = 1.0. Node types use meaningful temporal fields for decay calculation:
 
-**Output:** One of three statuses (On Track / Needs Attention / Falling Behind) plus momentum direction (up/stable/down).
+```python
+_TEMPORAL_FIELDS = {
+    "EVENT": "event_date",
+    "COMMITMENT": "due_date",
+    "DECISION": "decision_date",
+    "GOAL": "target_date",
+    "PROJECT": "target_date",
+    "PERSON": "last_interaction",
+}
+```
 
-### 8.5 Spaced Repetition (SM-2)
+### Health Scoring (`memora/core/health_scoring.py`)
 
-The SM-2 algorithm surfaces knowledge nodes due for review. This is how Memora fights the "67% of notes never revisited" problem — important knowledge is actively resurfaced on a scientifically-optimized schedule.
+```python
+# Status thresholds
+FALLING_BEHIND_COMPLETION = 0.4
+NEEDS_ATTENTION_COMPLETION = 0.7
+FALLING_BEHIND_ALERT_RATIO = 0.3
+NEEDS_ATTENTION_ALERT_RATIO = 0.1
+FALLING_BEHIND_STALENESS = 2
+STALENESS_DECAY_THRESHOLD = 0.3
 
-**SM-2 Parameters per node:**
-- `easiness_factor` (default 2.5, min 1.3)
-- `repetition_number` (0, 1, 2, ...)
-- `interval` (days until next review)
-- `review_date` (next scheduled review)
+class HealthScoring:
+    def __init__(self, repo: GraphRepository) -> None: ...
+    def compute_network_health(self, network: str) -> dict: ...
+    def compute_all_networks(self) -> list[dict]: ...
+```
 
-**After each review, user rates recall quality (0–5):**
-- Quality < 3 → reset interval, restart repetition
-- Quality ≥ 3 → increase interval using SM-2 formula
+### Spaced Repetition (`memora/core/spaced_repetition.py`)
 
-### 8.6 Gap Detection
+SM-2 algorithm for scheduling knowledge review:
 
-Weekly scan identifies structural weaknesses in the graph:
+```python
+DEFAULT_EASINESS_FACTOR = 2.5
+MIN_EASINESS_FACTOR = 1.3
 
-- **Orphaned nodes**: Nodes with no edges (isolated information)
-- **Stalled goals**: GOAL nodes with no recent PROGRESS edges
-- **Dead-end projects**: PROJECT nodes with no recent activity
-- **Isolated concepts**: CONCEPT nodes not linked to any practical application
-
----
-
-## 9. Notification & Briefing System
-
-### 9.1 Notification Triggers
-
-**All notifications are derived entirely from graph state.** No external tracking, no invasive monitoring.
-
-| Trigger | Condition | Example |
-|---|---|---|
-| Deadline approaching | Commitment due within configurable window | "Midterm in 2 days — you mentioned you haven't started Ch. 7–9" |
-| Decaying relationships | Person node last interaction beyond threshold | "You haven't mentioned Sam in 14 days — you owed him an intro" |
-| Stale commitments | Commitment overdue, status still open | "Invoice to Koo was due 3 days ago — still marked open" |
-| Network health drop | Health status changed to Needs Attention/Falling Behind | "Your Academic network has had no input in 8 days" |
-| Cross-network alerts | Bridge discovery found meaningful correlation | "You mentioned stress twice this week and have 4 open commitments" |
-| Goal drift | Goal progress stalled or timeline at risk | "Memora MVP target is March 31 — progress at 15%" |
-| Review queue | Spaced repetition items due | "3 concepts due for spaced repetition review" |
-
-### 9.2 Daily Briefing Structure
-
-Every morning, the Strategist compiles a **life situation report** from graph state:
-
-1. **Network Status**: Per-network health (On Track / Needs Attention / Falling Behind) with momentum direction
-2. **Open Alerts**: Ranked by urgency — approaching deadlines, decaying relationships, stale commitments
-3. **Cross-Network Bridges**: New correlations discovered in the last 24 hours
-4. **Decision Prompts**: Questions the system thinks you should answer today
-5. **Recommended Actions**: People to contact, deadlines to renegotiate, opportunities to pursue
-6. **Spaced Repetition**: Knowledge nodes due for review
-
-### 9.3 Briefing Generation Flow
-
-```mermaid
-flowchart LR
-    subgraph Inputs["Computed Metrics (no LLM)"]
-        H["Network Health<br/>Scores"]
-        A["Open Alerts"]
-        B["Bridge<br/>Discoveries"]
-        C["Commitment<br/>Scan Results"]
-        SR["SM-2 Due<br/>Items"]
-        G["Gap Detection<br/>Results"]
-    end
-
-    Inputs --> Strategist["🎯 Strategist<br/>(GPT-5-nano)"]
-    Strategist --> Briefing["📋 Daily Briefing"]
-
-    Briefing --> Push["Push Notification"]
-    Briefing --> Dashboard["Dashboard View"]
+class SpacedRepetition:
+    def __init__(self, repo: GraphRepository) -> None: ...
+    def initialize_node(self, node_id: str) -> None: ...
+    # SM-2 parameters stored in node properties:
+    #   easiness_factor, repetition_number, interval, review_date
 ```
 
 ---
 
-## 10. API Specification
+## 9. Action Engine & Outcomes
 
-### 10.1 API Overview
+### Action Engine (`memora/core/actions.py`)
 
-- **Framework**: FastAPI + Uvicorn
-- **Protocol**: REST (CRUD operations) + WebSocket (streaming agent responses)
-- **Base URL**: `http://localhost:8000/api/v1`
-- **Authentication**: Local-only (no auth required for MVP; token-based for multi-device)
+Six typed graph actions with preconditions, validation, and audit logging:
 
-### 10.2 Core Endpoints
+```python
+class ActionEngine:
+    def __init__(
+        self, repo, truth_layer=None, health_scoring=None, notification_manager=None,
+    ) -> None: ...
 
-**Captures:**
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/captures` | Create a new capture (text) |
-| `GET` | `/captures` | List captures with pagination and filters |
-| `GET` | `/captures/{id}` | Get single capture with linked proposals |
-
-**Graph:**
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/graph/nodes` | Query nodes with filters (type, network, tags, date range) |
-| `GET` | `/graph/nodes/{id}` | Get node with all properties and edges |
-| `GET` | `/graph/nodes/{id}/neighborhood` | Get local subgraph (1–2 hop radius) |
-| `PATCH` | `/graph/nodes/{id}` | Update node properties |
-| `DELETE` | `/graph/nodes/{id}` | Delete node (generates explicit-confirm proposal) |
-| `GET` | `/graph/edges` | Query edges with filters (category, type) |
-| `GET` | `/graph/search` | Hybrid search (BM25 + dense vector fusion) |
-| `GET` | `/graph/stats` | Graph statistics (node count, edge count, per-type breakdown) |
-
-**Proposals:**
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/proposals` | List pending proposals (for review digest) |
-| `GET` | `/proposals/{id}` | Get proposal detail with full diff |
-| `POST` | `/proposals/{id}/approve` | Approve a proposal → triggers graph commit |
-| `POST` | `/proposals/{id}/reject` | Reject a proposal with optional reason |
-| `PATCH` | `/proposals/{id}` | Edit a proposal before approving |
-
-**AI Council:**
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/council/query` | Submit query to AI Council (streams response via WebSocket) |
-| `GET` | `/council/briefing` | Get today's daily briefing |
-| `POST` | `/council/critique` | Invoke critic mode on a decision or assumption |
-
-**Networks:**
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/networks` | List all 7 networks with current health status |
-| `GET` | `/networks/{name}` | Get network detail (nodes, health history, alerts) |
-| `GET` | `/networks/bridges` | Get cross-network bridge discoveries |
-
-**Truth Layer:**
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/facts` | Query verified facts with filters |
-| `GET` | `/facts/{id}` | Get fact with full provenance chain |
-| `GET` | `/facts/stale` | List facts due for rechecking |
-
-### 10.3 WebSocket Streaming
-
-**WebSocket** — `WS /api/v1/ws/stream`
-
-Used for real-time streaming of agent responses during council queries. Client receives token-by-token output with metadata (which agent is speaking, confidence, citations).
-
-```json
-{
-    "type": "agent_token",
-    "agent": "strategist",
-    "token": "Based on your ",
-    "metadata": {
-        "confidence": 0.87,
-        "citing_nodes": ["uuid-1", "uuid-2"]
-    }
-}
+    # Registered actions:
+    # COMPLETE_COMMITMENT -- marks commitment as completed, deposits truth layer fact
+    # PROMOTE_IDEA        -- promotes idea to project (changes node type/status)
+    # ARCHIVE_GOAL        -- archives a goal (achieved/abandoned)
+    # ADVANCE_GOAL        -- updates goal progress percentage
+    # RECORD_OUTCOME      -- records outcome for decision/goal/commitment
+    # LINK_ENTITIES       -- creates new edge between two nodes
 ```
 
-### 10.4 Request/Response Examples
+### Action Record Model
 
-**Create Capture:**
-
-```http
-POST /api/v1/captures
-Content-Type: application/json
-
-{
-    "modality": "text",
-    "content": "Had coffee with Sam Chen today. He promised to introduce me to his investor by next Friday. We discussed the Memora pitch deck — he thinks we should emphasize the graph differentiation more.",
-    "metadata": {}
-}
+```python
+class ActionRecord(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    action_type: ActionType
+    status: ActionStatus = ActionStatus.COMPLETED
+    source_node_id: str | None = None
+    target_node_id: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] = Field(default_factory=dict)
+    executed_at: datetime = Field(default_factory=_utcnow)
 ```
 
-```json
-{
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "processing",
-    "pipeline_stage": "preprocessing",
-    "created_at": "2026-02-27T10:30:00Z"
+### Outcome Tracker (`memora/core/outcomes.py`)
+
+Feedback loop that updates node confidence, deposits facts, and manages goal/commitment status:
+
+```python
+# Confidence adjustments per rating
+_CONFIDENCE_DELTA = {
+    "positive": 0.1,
+    "negative": -0.15,
+    "mixed": 0.0,
+    "neutral": 0.0,
 }
+
+_TRUTH_CONFIDENCE = {
+    "positive": 0.9,
+    "neutral": 0.7,
+    "negative": 0.5,
+    "mixed": 0.6,
+}
+
+class OutcomeTracker:
+    def __init__(self, repo, truth_layer=None) -> None: ...
+    def record_outcome(self, node_id: str, text: str, rating: str, evidence_ids: list[str] | None) -> str: ...
+    def get_pending_outcomes(self) -> list[dict]: ...
+    def get_outcome_stats(self) -> dict: ...
+    def generate_outcome_prompts(self) -> list[dict]: ...
 ```
 
-**Council Query:**
+### Outcome Model
 
-```http
-POST /api/v1/council/query
-Content-Type: application/json
-
-{
-    "query": "Should I follow up with Sam about the investor intro, or wait for him to reach out?",
-    "mode": "council",
-    "include_critique": true
-}
+```python
+class Outcome(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    node_id: str
+    node_type: str
+    outcome_text: str
+    rating: OutcomeRating
+    evidence: list[str] = Field(default_factory=list)
+    recorded_at: datetime = Field(default_factory=_utcnow)
 ```
-
-Response streams via WebSocket with agent contributions, citations, and final synthesis.
 
 ---
 
-## 11. Deployment Architecture
+## 10. Investigation & Timeline
 
-### 11.1 Local-First Architecture
+### Investigation Engine (`memora/core/investigation.py`)
 
-Everything runs on the user's machine. The only external dependency is the OpenAI API (BYOK).
+Deep link analysis and path-finding with context enrichment:
 
-```mermaid
-graph TB
-    subgraph Local["User's Machine"]
-        subgraph BE["Backend (localhost:8000)"]
-            FastAPI["FastAPI + Uvicorn"]
-            Scheduler["APScheduler<br/>(Background Jobs)"]
-            LG["LangGraph<br/>Orchestrator"]
-        end
-
-        subgraph Data["Embedded Storage"]
-            RG[("DuckDB")]
-            LDB[("LanceDB")]
-            BGE["all-mpnet-base-v2<br/>(Local Model)"]
-        end
-
-        subgraph MCP["MCP Servers (local processes)"]
-            PW["Playwright"]
-            SS["Semantic Scholar"]
-            GH["GitHub"]
-        end
-
-        FastAPI --> LG
-        FastAPI --> RG
-        FastAPI --> LDB
-        LG --> MCP
-        Scheduler --> RG
-        Scheduler --> LDB
-    end
-
-    OpenAI["☁️ OpenAI API (BYOK)"]
-    LG --> OpenAI
+```python
+class InvestigationEngine:
+    def __init__(self, repo, truth_layer=None) -> None: ...
+    def expand(self, node_id: str, hops: int = 1,
+               node_types: list[str] | None = None,
+               edge_types: list[str] | None = None,
+               networks: list[str] | None = None) -> dict: ...
+    def search(self, query: str, **filters) -> list[dict]: ...
+    def find_path(self, source_id: str, target_id: str) -> list[dict]: ...
+    def find_common(self, node_ids: list[str]) -> dict: ...
+    def highlight_bridges(self, network_a: str, network_b: str) -> list[dict]: ...
+    def get_node_summary(self, node_id: str) -> dict: ...
 ```
 
-### 11.2 File System Layout
+### Timeline Engine (`memora/core/timeline.py`)
+
+Temporal reconstruction and causal chain tracing:
+
+```python
+class TimelineEngine:
+    def __init__(self, repo) -> None: ...
+    def get_timeline(self, start: str | None = None, end: str | None = None,
+                     networks: list[str] | None = None,
+                     node_types: list[str] | None = None,
+                     limit: int = 100,
+                     include_actions: bool = True) -> list[dict]: ...
+    def trace_causal_chain(self, node_id: str) -> list[dict]: ...
+    def find_concurrent(self, node_id: str, window_days: int = 7) -> list[dict]: ...
+    def detect_activity_bursts(self, days: int = 90) -> list[dict]: ...
+    def get_weekly_digest(self) -> dict: ...
+```
+
+Timeline entries interleave nodes and actions, sorted by best-available date (event_date, due_date, decision_date, etc. take priority over created_at).
+
+---
+
+## 11. People Intelligence
+
+### People Intel Engine (`memora/core/people_intel.py`)
+
+Palantir-style people directory with ranked connections and network statistics:
+
+```python
+SIGNAL_WEIGHTS = {
+    "edge_weight": 0.25,
+    "edge_confidence": 0.15,
+    "edge_type_importance": 0.20,
+    "recency": 0.25,
+    "shared_connections": 0.15,
+}
+
+RECENCY_HALF_LIFE_DAYS = 35.0
+
+EDGE_TYPE_IMPORTANCE = {
+    "COLLABORATES_WITH": 1.0,
+    "REPORTS_TO": 0.9,
+    "COMMITTED_TO": 0.85,
+    "RESPONSIBLE_FOR": 0.8,
+    "DECIDED": 0.75,
+    "INTRODUCED_BY": 0.7,
+    "KNOWS": 0.6,
+    "RELATED_TO": 0.5,
+    "BRIDGES": 0.5,
+    "MEMBER_OF": 0.45,
+    "PART_OF": 0.4,
+    "SIMILAR_TO": 0.35,
+    "DERIVED_FROM": 0.3,
+}
+```
+
+Recency scoring uses exponential decay with a 35-day half-life.
+
+### Relationship Decay Detector (`memora/core/relationship_decay.py`)
+
+Configurable thresholds for detecting neglected relationships:
+
+```python
+DEFAULT_THRESHOLDS = {
+    "close": 7,        # days
+    "regular": 14,
+    "acquaintance": 30,
+}
+
+class RelationshipDecayDetector:
+    def __init__(self, repo: GraphRepository) -> None: ...
+    def scan(self) -> list[dict[str, Any]]: ...
+    # Returns: person_name, days_since_interaction, relationship_type,
+    #          threshold, node_id, outstanding_commitments
+```
+
+---
+
+## 12. Pattern Detection
+
+Implemented in `memora/core/patterns.py`. The `PatternEngine` runs 11 behavioral pattern detectors with a consistent confidence model.
+
+### Confidence Model
+
+```python
+_CONFIDENCE_BASE_MIN = 0.25
+_CONFIDENCE_BASE_MAX = 0.55
+_CONFIDENCE_VOLUME_CAP = 20
+
+def _compute_confidence(data_points: int, signal_strength: float) -> float:
+    volume_ratio = min(data_points / _CONFIDENCE_VOLUME_CAP, 1.0)
+    base = _CONFIDENCE_BASE_MIN + (_CONFIDENCE_BASE_MAX - _CONFIDENCE_BASE_MIN) * volume_ratio
+    return min(0.95, base + signal_strength * 0.4)
+```
+
+### Pattern Engine
+
+```python
+class PatternEngine:
+    PATTERN_TTL_DAYS = 30
+
+    def __init__(self, repo) -> None: ...
+    def detect_all(self) -> list[dict]: ...
+```
+
+### 11 Pattern Detectors
+
+| Detector Method | PatternType | Description |
+|---|---|---|
+| `detect_commitment_patterns` | `COMMITMENT_PATTERN` | Completion rates, overdue frequency |
+| `detect_goal_lifecycle_patterns` | `GOAL_LIFECYCLE` | Abandonment rates, progress stalls |
+| `detect_temporal_patterns` | `TEMPORAL_PATTERN` | Activity time-of-day and day-of-week patterns |
+| `detect_cross_network_correlations` | `CROSS_NETWORK` | Co-occurrence between networks |
+| `detect_relationship_patterns` | `RELATIONSHIP_PATTERN` | Social interaction frequency, decay trends |
+| `detect_outcome_patterns` | `OUTCOME_PATTERN` | Outcome rating distributions |
+| `detect_decision_quality_patterns` | `DECISION_QUALITY` | Decision outcome quality over time |
+| `detect_goal_alignment_patterns` | `GOAL_ALIGNMENT` | Goals across networks, coverage gaps |
+| `detect_commitment_scope_patterns` | `COMMITMENT_SCOPE` | Over-commitment detection |
+| `detect_idea_maturity_patterns` | `IDEA_MATURITY` | Idea promotion/archival rates |
+| `detect_network_balance_patterns` | `NETWORK_BALANCE` | Node count imbalance across networks |
+
+### Pattern Model
+
+```python
+class Pattern(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    pattern_type: PatternType
+    description: str
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    severity: PatternSeverity = PatternSeverity.INFO
+    suggested_action: str = ""
+    networks: list[str] = Field(default_factory=list)
+    first_detected: datetime = Field(default_factory=_utcnow)
+    last_confirmed: datetime = Field(default_factory=_utcnow)
+    status: str = "active"
+    previous_value: float | None = None
+    current_value: float | None = None
+    created_at: datetime = Field(default_factory=_utcnow)
+```
+
+---
+
+## 13. Notification & Briefing System
+
+### Notification Types
+
+Defined in `memora/core/notifications.py`:
+
+```python
+DEADLINE_APPROACHING = "deadline_approaching"
+RELATIONSHIP_DECAY = "relationship_decay"
+STALE_COMMITMENT = "stale_commitment"
+HEALTH_DROP = "health_drop"
+BRIDGE_DISCOVERED = "bridge_discovered"
+GOAL_DRIFT = "goal_drift"
+REVIEW_DUE = "review_due"
+```
+
+Priority ordering: `critical > high > medium > low`.
+
+### Notification Manager
+
+```python
+class NotificationManager:
+    def __init__(self, conn) -> None: ...
+    def create_notification(
+        self, type: str, message: str,
+        related_node_ids: list[str] = None,
+        priority: str = "medium",
+        trigger_condition: str = "",
+    ) -> str: ...
+    def get_unread(self, limit: int = 50) -> list[dict]: ...
+    def mark_read(self, notification_id: str) -> None: ...
+    def get_by_type(self, type: str, limit: int = 20) -> list[dict]: ...
+```
+
+### Briefing Collector (`memora/core/briefing.py`)
+
+Aggregates data from all subsystems for the daily briefing:
+
+- Open commitments and approaching deadlines
+- Network health scores and momentum changes
+- Relationship decay alerts
+- Recent bridges discovered
+- Pending proposals for review
+- Pattern detection highlights
+- Spaced repetition items due for review
+- Unread notifications
+
+`get_last_briefing_time()` checks actions and notifications tables to determine when the last briefing was generated.
+
+---
+
+## 14. CLI Interface
+
+The CLI is a REPL-based terminal application with ANSI rendering, implemented across `cli/app.py`, `cli/rendering.py`, `cli/tracker.py`, and `cli/commands/`.
+
+### Architecture
+
+```python
+# cli/app.py
+class MemoraApp:
+    def __init__(self): ...
+    def boot(self): ...              # Staged boot sequence with subsystem status
+    def run(self): ...               # Main REPL loop
+    def _get_embedding_engine(self):  # Lazy initialization
+    def _get_vector_store(self):      # Lazy initialization
+    def _get_pipeline(self):          # Lazy initialization
+    def _get_orchestrator(self):      # Lazy initialization
+    def _get_strategist(self):        # Lazy initialization
+    def _gather_telemetry(self) -> dict:  # Live stats for command deck
+```
+
+### Rendering System (`cli/rendering.py`)
+
+Palantir Gotham-inspired design with 256-color ANSI palette:
+
+- `C` class: ANSI color codes (full 256-color palette)
+- `boot_sequence()`: Staged subsystem initialization display
+- `command_deck()`: Main menu with live telemetry (node count, edge count, density, network health bars)
+- `goodbye_card()`: Exit display
+- `divider()`, `horizontal_bar()`, `menu_option()`, `prompt()`, `spinner()`: UI primitives
+- `subcommand_header()`: Consistent subcommand headers with box drawing
+
+### Pipeline Tracker (`cli/tracker.py`)
+
+Real-time visualization of the 9-stage pipeline progress in the terminal:
+
+```python
+_STAGE_ICONS = {
+    "pending":  "   ",
+    "running":  " > ",
+    "done":     " + ",
+    "failed":   " x ",
+    "skipped":  " - ",
+}
+```
+
+### Commands (20)
+
+| Key | Command | Module | Description |
+|---|---|---|---|
+| `c` | Capture | `cli/commands/capture.py` | Ingest text through the extraction pipeline |
+| `p` | Profile | `cli/commands/profile.py` | View/edit user profile (You node) |
+| `r` | Proposals | `cli/commands/proposals.py` | Review pending graph proposals |
+| `d` | Dossier | `cli/commands/dossier.py` | Deep-dive on any node with full context |
+| `i` | Investigate | `cli/commands/investigate.py` | Interactive graph exploration mode |
+| `w` | Browse | `cli/commands/browse.py` | Browse nodes by type/network with pagination |
+| `s` | Search | (routes to dossier) | Semantic search across the graph |
+| `b` | Briefing | `cli/commands/briefing.py` | Daily briefing with aggregated intelligence |
+| `k` | Critique | `cli/commands/critique.py` | Strategist critique of a thesis/assumption |
+| `u` | Council | `cli/commands/council.py` | Multi-agent AI council deliberation |
+| `t` | Timeline | `cli/commands/timeline.py` | Chronological event/action view |
+| `o` | Outcomes | `cli/commands/outcomes.py` | Record and view outcomes for decisions/goals |
+| `a` | Patterns | `cli/commands/patterns.py` | View detected behavioral patterns |
+| `g` | Stats | `cli/commands/stats.py` | Graph statistics and health dashboard |
+| `n` | Networks | `cli/commands/networks.py` | Per-network health, nodes, and bridges |
+| `e` | People | `cli/commands/people.py` | People directory with relationship strength |
+| `j` | Actions | `cli/commands/actions.py` | Execute typed graph actions |
+| `0` | Settings | (inline in app.py) | Display current configuration |
+| `x` | Clear Data | `cli/commands/clear_data.py` | Reset graph data |
+| `q` | Quit | (inline in app.py) | Exit the application |
+
+### Boot Sequence
+
+On startup, `MemoraApp.boot()` initializes subsystems and reports status:
+
+```
+Subsystem Status:
+  graph:     ONLINE | OFFLINE
+  vector:    ONLINE | OFFLINE
+  embedding: STANDBY (lazy-loaded on first use)
+  council:   ONLINE | STANDBY (depends on API key)
+  scheduler: ONLINE
+```
+
+---
+
+## 15. MCP Servers
+
+Six Model Context Protocol tool servers in `memora/mcp/`, all using `httpx` for HTTP transport:
+
+### GoogleSearchMCP (`memora/mcp/google_search.py`)
+
+```python
+class GoogleSearchMCP:
+    def __init__(self, api_key: str | None = None, search_engine_id: str | None = None) -> None: ...
+    def get_tool_definition(self) -> dict[str, Any]: ...
+    def search(self, query: str, num_results: int = 5) -> list[dict]: ...
+```
+- Rate limit: 100 queries/day (free tier)
+- Env vars: `GOOGLE_API_KEY`, `GOOGLE_SEARCH_ENGINE_ID`
+
+### BraveSearchMCP (`memora/mcp/brave_search.py`)
+
+```python
+class BraveSearchMCP:
+    def __init__(self, api_key: str | None = None) -> None: ...
+    def search(self, query: str, count: int = 5) -> list[dict]: ...
+```
+- Rate limit: 2,000 queries/month (free tier)
+- Env var: `BRAVE_API_KEY`
+
+### SemanticScholarMCP (`memora/mcp/semantic_scholar.py`)
+
+```python
+class SemanticScholarMCP:
+    def __init__(self, api_key: str | None = None) -> None: ...
+    def search_papers(self, query: str, limit: int = 5) -> list[dict]: ...
+    def get_paper(self, paper_id: str) -> dict: ...
+    def get_citations(self, paper_id: str) -> list[dict]: ...
+```
+- API: Semantic Scholar Graph API v1
+
+### PlaywrightScraperMCP (`memora/mcp/playwright_scraper.py`)
+
+```python
+class PlaywrightScraperMCP:
+    def __init__(self, timeout: float = 15.0) -> None: ...
+    def scrape(self, url: str) -> dict: ...
+```
+- Uses `httpx` for lightweight HTTP scraping (Playwright optional for JS-heavy sites)
+
+### GitHubMCP (`memora/mcp/github_mcp.py`)
+
+```python
+class GitHubMCP:
+    def __init__(self, token: str | None = None) -> None: ...
+    def search_repos(self, query: str, limit: int = 5) -> list[dict]: ...
+    def search_code(self, query: str, limit: int = 5) -> list[dict]: ...
+```
+- Env var: `GITHUB_TOKEN`
+
+### GraphMCPServer (`memora/mcp/graph_mcp.py`)
+
+Internal tool server for agents to query their own knowledge graph:
+
+```python
+class GraphMCPServer:
+    def __init__(
+        self,
+        repo: GraphRepository,
+        vector_store: VectorStore | None = None,
+        embedding_engine: EmbeddingEngine | None = None,
+    ) -> None: ...
+    def query_nodes(self, filters: dict) -> list[dict]: ...
+    def semantic_search(self, query: str, top_k: int = 10) -> list[dict]: ...
+    def get_neighborhood(self, node_id: str, hops: int = 1) -> dict: ...
+    def get_truth_facts(self, node_id: str) -> list[dict]: ...
+```
+
+---
+
+## 16. Project Structure
+
+```
+Memora/
+|-- cli/
+|   |-- __init__.py
+|   |-- app.py                     # MemoraApp REPL loop, boot sequence
+|   |-- rendering.py               # ANSI colors, boxes, tables, progress bars
+|   |-- tracker.py                 # Pipeline progress visualization
+|   |-- commands/
+|       |-- __init__.py
+|       |-- actions.py             # Execute typed graph actions
+|       |-- briefing.py            # Daily briefing display
+|       |-- browse.py              # Browse nodes by type/network
+|       |-- capture.py             # Text ingestion pipeline
+|       |-- clear_data.py          # Reset graph data
+|       |-- council.py             # Multi-agent deliberation
+|       |-- critique.py            # Strategist critique
+|       |-- dossier.py             # Deep node inspection
+|       |-- investigate.py         # Interactive graph exploration
+|       |-- networks.py            # Per-network dashboard
+|       |-- outcomes.py            # Outcome recording/viewing
+|       |-- patterns.py            # Behavioral pattern display
+|       |-- people.py              # People directory
+|       |-- profile.py             # User profile management
+|       |-- proposals.py           # Proposal review queue
+|       |-- stats.py               # Graph statistics
+|       |-- timeline.py            # Chronological view
+|
+|-- memora/
+|   |-- __init__.py
+|   |-- config.py                  # Settings (Pydantic BaseSettings + YAML)
+|   |
+|   |-- agents/
+|   |   |-- __init__.py
+|   |   |-- archivist.py           # LLM extraction agent
+|   |   |-- orchestrator.py        # LangGraph multi-agent coordinator
+|   |   |-- researcher.py          # External research agent
+|   |   |-- strategist.py          # Analysis/critique agent
+|   |
+|   |-- core/
+|   |   |-- __init__.py
+|   |   |-- actions.py             # ActionEngine (6 typed actions)
+|   |   |-- async_utils.py         # run_async sync/async bridge
+|   |   |-- backup.py              # BackupManager (MAX_BACKUPS=10)
+|   |   |-- bridge_discovery.py    # Cross-network bridge detection
+|   |   |-- briefing.py            # BriefingCollector
+|   |   |-- commitment_scan.py     # Overdue commitment detection
+|   |   |-- decay.py               # Exponential decay scoring
+|   |   |-- entity_resolution.py   # 6-signal entity resolver
+|   |   |-- gap_detection.py       # Information gap finder
+|   |   |-- health_scoring.py      # Network health computation
+|   |   |-- investigation.py       # InvestigationEngine
+|   |   |-- json_utils.py          # extract_json for LLM responses
+|   |   |-- logging_config.py      # JSONFormatter, PipelineTimingLogger, LLMCallLogger
+|   |   |-- notifications.py       # NotificationManager + 7 types
+|   |   |-- outcomes.py            # OutcomeTracker
+|   |   |-- patterns.py            # PatternEngine (11 detectors)
+|   |   |-- people_intel.py        # PeopleIntelEngine
+|   |   |-- pipeline.py            # 9-stage ExtractionPipeline
+|   |   |-- relationship_decay.py  # RelationshipDecayDetector
+|   |   |-- retry.py               # Exponential backoff for API calls
+|   |   |-- spaced_repetition.py   # SM-2 algorithm
+|   |   |-- timeline.py            # TimelineEngine
+|   |   |-- truth_layer.py         # TruthLayer (verified facts)
+|   |
+|   |-- graph/
+|   |   |-- __init__.py
+|   |   |-- migrations.py          # Versioned migrations (v2-v6)
+|   |   |-- models.py              # All Pydantic models & enums
+|   |   |-- ontology.py            # Edge constraints & validation
+|   |   |-- repository.py          # DuckDB GraphRepository
+|   |
+|   |-- mcp/
+|   |   |-- __init__.py
+|   |   |-- brave_search.py        # Brave Search API
+|   |   |-- github_mcp.py          # GitHub API
+|   |   |-- google_search.py       # Google Custom Search API
+|   |   |-- graph_mcp.py           # Internal graph query tool
+|   |   |-- playwright_scraper.py  # Web scraping via httpx
+|   |   |-- semantic_scholar.py    # Academic paper search
+|   |
+|   |-- scheduler/
+|   |   |-- __init__.py
+|   |   |-- jobs.py                # 10 job implementations
+|   |   |-- scheduler.py           # MemoraScheduler (APScheduler wrapper)
+|   |
+|   |-- vector/
+|       |-- __init__.py
+|       |-- embeddings.py          # EmbeddingEngine (sentence-transformers)
+|       |-- store.py               # VectorStore (Weaviate embedded)
+|
+|-- tests/
+|   |-- __init__.py
+|   |-- conftest.py
+|   |-- unit/
+|   |   |-- test_repository.py
+|   |   |-- test_gap_detection.py
+|   |   |-- test_retry.py
+|   |   |-- test_commitment_scan.py
+|   |   |-- test_crag.py
+|   |   |-- test_graph_commit.py
+|   |   |-- test_truth_layer.py
+|   |   |-- test_models.py
+|   |   |-- test_spaced_repetition.py
+|   |   |-- test_health_scoring.py
+|   |   |-- test_bridge_discovery.py
+|   |   |-- test_decay.py
+|   |   |-- test_entity_resolution.py
+|   |   |-- test_ontology.py
+|   |   |-- test_vector_store.py
+|   |   |-- test_pipeline.py
+|   |-- integration/
+|       |-- test_election_graph.py
+|       |-- test_archivist.py
+|       |-- test_rag_pipeline.py
+|       |-- test_council.py
+|
+|-- cli.py                         # Entry point (imports cli/app.py)
+|-- reingest.py                    # Batch re-ingestion utility
+|-- pyproject.toml                 # Build config & dependencies
+|-- requirements.txt               # Pinned dependencies
+|-- .env.example                   # Environment variable template
+|-- .gitignore
+|-- LICENSE
+```
+
+---
+
+## 17. Configuration & Environment
+
+### Settings Class (`memora/config.py`)
+
+```python
+DEFAULT_DATA_DIR = Path.home() / ".memora"
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_prefix="MEMORA_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # API keys
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+
+    # Paths
+    data_dir: Path = Field(default=DEFAULT_DATA_DIR)
+
+    # Embedding
+    embedding_model: str = "all-mpnet-base-v2"
+
+    # Confidence & governance
+    auto_approve_threshold: float = 0.85
+
+    # Decay parameters
+    decay_lambda: float = 0.01
+    decay_lambda_overrides: dict[str, float]  # per-network
+
+    # Relationship decay thresholds (days)
+    relationship_decay_thresholds: dict[str, int]  # close: 7, regular: 14, acquaintance: 30
+
+    # Spaced repetition
+    sm2_default_easiness: float = 2.5
+
+    # Bridge discovery
+    bridge_similarity_threshold: float = 0.75
+
+    # LLM retry settings
+    llm_max_retries: int = 3
+    llm_retry_base_delay: float = 1.0
+    llm_retry_max_delay: float = 30.0
+
+    # CRAG settings
+    crag_relevance_threshold: float = 0.5
+    crag_min_results: int = 3
+    crag_term_coverage_threshold: float = 0.3
+
+    # Logging
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
+    # Derived paths
+    @property
+    def graph_dir(self) -> Path: ...    # data_dir / "graph"
+    @property
+    def vector_dir(self) -> Path: ...   # data_dir / "vectors"
+    @property
+    def models_dir(self) -> Path: ...   # data_dir / "models"
+    @property
+    def db_path(self) -> Path: ...      # graph_dir / "memora.duckdb"
+    @property
+    def config_yaml_path(self) -> Path: ...  # data_dir / "config.yaml"
+    @property
+    def log_dir(self) -> Path: ...      # data_dir / "logs"
+    @property
+    def backups_dir(self) -> Path: ...  # data_dir / "backups"
+```
+
+### Data Directory Structure
 
 ```
 ~/.memora/
-├── config.yaml              # User configuration + API key
-├── graph/                   # DuckDB files
-│   ├── memora.duckdb        # Main graph database
-│   └── wal/                 # Write-ahead log
-├── vectors/                 # LanceDB files
-│   └── node_embeddings/     # Vector index
-├── models/                  # Local model cache
-│   └── all-mpnet-base-v2/   # Sentence-transformers embedding model
-├── captures/                # Raw capture storage
-├── backups/                 # Periodic graph snapshots
-│   └── 2026-02-27.snapshot
-└── logs/                    # Application logs
+|-- config.yaml          # User configuration overrides
+|-- graph/
+|   |-- memora.duckdb    # Main database
+|-- vectors/             # Weaviate embedded persistence
+|-- models/              # Cached sentence-transformer models
+|-- backups/             # Database snapshots (max 10)
+|-- logs/                # Structured JSON logs
 ```
 
-### 11.3 Infrastructure Cost
+### Default config.yaml
 
-| Component | Cost | Notes |
+```yaml
+version: 1
+auto_approve_threshold: 0.85
+decay_lambda:
+  academic: 0.05
+  professional: 0.03
+  financial: 0.02
+  health: 0.05
+  personal_growth: 0.04
+  social: 0.07
+  ventures: 0.03
+relationship_decay_thresholds:
+  close: 7
+  regular: 14
+  acquaintance: 30
+sm2_default_easiness: 2.5
+bridge_similarity_threshold: 0.75
+embedding_model: all-mpnet-base-v2
+data_dir: ~/.memora
+log_level: INFO
+```
+
+### Environment Variables
+
+| Variable | Description | Required |
 |---|---|---|
-| Graph DB (DuckDB) | $0/month | Embedded, runs in-process |
-| Vector DB (LanceDB) | $0/month | Embedded, runs in-process |
-| Embedding Model (all-mpnet-base-v2) | $0/month | Local model, runs on CPU/GPU |
-| MCP Servers | $0/month | Local processes, free API tiers |
-| Background Engine | $0/month | APScheduler in-process |
-| **Total Infrastructure** | **$0/month** | |
-| OpenAI API (GPT-5-nano) | $10–15/month | BYOK, user pays directly |
+| `OPENAI_API_KEY` | OpenAI API key for gpt-5-nano | Yes (for AI features) |
+| `GOOGLE_API_KEY` | Google Custom Search API key | No |
+| `GOOGLE_SEARCH_ENGINE_ID` | Google CSE ID | No |
+| `BRAVE_API_KEY` | Brave Search API key | No |
+| `GITHUB_TOKEN` | GitHub personal access token | No |
+| `MEMORA_LOG_LEVEL` | Override log level | No |
+| `MEMORA_DATA_DIR` | Override data directory | No |
 
----
+### Logging (`memora/core/logging_config.py`)
 
-## 12. Project Structure
+```python
+class JSONFormatter(logging.Formatter):
+    # Outputs single-line JSON with: timestamp, level, logger, message
+    # Plus optional structured fields: stage, capture_id, duration_ms,
+    # tokens, cost, job_name, node_count, model, component
 
+class PipelineTimingLogger:
+    def start_stage(self, stage_name: str, capture_id: str) -> float: ...
+    def end_stage(self, stage_name: str, capture_id: str, start_time: float) -> None: ...
+
+class LLMCallLogger:
+    # Logs model, tokens, cost per call
 ```
-memora/
-├── memora/
-│   ├── api/                       # FastAPI application
-│   │   ├── routes/
-│   │   │   ├── captures.py
-│   │   │   ├── graph.py
-│   │   │   ├── proposals.py
-│   │   │   ├── council.py
-│   │   │   ├── networks.py
-│   │   │   └── facts.py
-│   │   ├── middleware/
-│   │   ├── schemas/               # Pydantic request/response models
-│   │   │   ├── capture_schemas.py
-│   │   │   ├── graph_schemas.py
-│   │   │   ├── proposal_schemas.py
-│   │   │   └── council_schemas.py
-│   │   ├── websocket.py           # WebSocket handler
-│   │   └── app.py                 # FastAPI app factory
-│   │
-│   ├── agents/                    # AI Council
-│   │   ├── archivist.py           # Graph writer agent
-│   │   ├── strategist.py          # Graph reader + analyst
-│   │   ├── researcher.py          # Internet bridge agent
-│   │   ├── orchestrator.py        # LangGraph coordination
-│   │   └── prompts/               # System prompt templates
-│   │       ├── archivist_system.md
-│   │       ├── strategist_system.md
-│   │       └── researcher_system.md
-│   │
-│   ├── core/                      # Core Engine (deterministic)
-│   │   ├── pipeline.py            # 9-stage pipeline orchestration
-│   │   ├── entity_resolution.py   # Multi-signal entity matching
-│   │   ├── decay.py               # Exponential decay scoring
-│   │   ├── bridge_discovery.py    # Cross-network bridge detection
-│   │   ├── health_scoring.py      # Network health computation
-│   │   ├── spaced_repetition.py   # SM-2 algorithm
-│   │   ├── gap_detection.py       # Structural weakness analysis
-│   │   ├── commitment_scan.py     # Deadline monitoring
-│   │   ├── relationship_decay.py  # Interaction window analysis
-│   │   └── truth_layer.py         # Fact verification pipeline
-│   │
-│   ├── graph/                     # Graph DB interface
-│   │   ├── models.py             # Pydantic domain models (NodeType, EdgeType, etc.)
-│   │   ├── repository.py         # CRUD operations
-│   │   ├── ontology.py           # Node/edge type definitions + validation
-│   │   └── migrations.py         # Schema migration utilities
-│   │
-│   ├── vector/                    # LanceDB interface
-│   │   ├── store.py              # Vector CRUD + search
-│   │   └── embeddings.py         # sentence-transformers wrapper
-│   │
-│   ├── mcp/                       # MCP server configurations
-│   │   ├── google_search.py
-│   │   ├── brave_search.py
-│   │   ├── playwright_scraper.py
-│   │   ├── semantic_scholar.py
-│   │   ├── github_mcp.py
-│   │   └── graph_mcp.py          # Internal graph as MCP tool
-│   │
-│   ├── scheduler/                 # APScheduler job definitions
-│   │   ├── jobs.py               # Job registry
-│   │   └── scheduler.py          # APScheduler setup
-│   │
-│   └── config.py                 # Configuration management
-│
-├── tests/
-│   ├── unit/
-│   │   ├── test_pipeline.py
-│   │   ├── test_entity_resolution.py
-│   │   ├── test_decay.py
-│   │   ├── test_bridge_discovery.py
-│   │   ├── test_health_scoring.py
-│   │   └── test_spaced_repetition.py
-│   ├── integration/
-│   │   ├── test_archivist.py
-│   │   ├── test_council.py
-│   │   └── test_rag_pipeline.py
-│   └── conftest.py
-│
-├── cli.py                         # Rich terminal interface
-├── pyproject.toml
-├── requirements.txt
-├── .env.example                       # Environment template
-├── docker-compose.yml                 # Optional containerized dev setup
-└── README.md
+
+### Backup (`memora/core/backup.py`)
+
+```python
+class BackupManager:
+    MAX_BACKUPS = 10
+
+    def __init__(self, db_path: Path, backups_dir: Path) -> None: ...
+    def create_snapshot(self) -> Path | None: ...
+    def restore_snapshot(self, snapshot_path: Path) -> bool: ...
+    def list_snapshots(self) -> list[Path]: ...
+    def prune_old_snapshots(self) -> int: ...
+```
+
+### Retry (`memora/core/retry.py`)
+
+```python
+# Retryable exceptions
+_RETRYABLE_OPENAI = (RateLimitError, InternalServerError, APIConnectionError, APITimeoutError)
+_RETRYABLE_HTTP = (ConnectTimeout, ReadTimeout, WriteTimeout, ConnectError)
+
+def is_retryable(exc: Exception) -> bool: ...
+def retry_on_transient(func: F) -> F: ...           # Decorator
+async def async_call_with_retry(func, *args, **kwargs): ...  # Async helper
+def call_with_retry(func, *args, **kwargs): ...      # Sync helper
+```
+
+### Re-ingestion Utility (`reingest.py`)
+
+```python
+# Batch re-ingestion of captures from JSON file
+# Reads from /tmp/memora_captures.json
+# Runs each capture through the full ExtractionPipeline sequentially
 ```
 
 ---
 
-## 13. Implementation Roadmap
+## 18. Test Suite Overview
 
-### 13.1 Phase 0–1: Foundation (Weeks 1–5)
+Test configuration in `pyproject.toml`:
 
-**Scope:** Core graph, extraction pipeline, fact verification
+```toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+```
 
-| Week | Deliverables |
+### Unit Tests (17)
+
+| Test File | Covers |
 |---|---|
-| W1–2 | Graph DB setup (DuckDB), LanceDB setup, all-mpnet-base-v2 integration, Pydantic domain models (all node/edge types), basic capture ingestion (text only) |
-| W3 | Archivist agent (LLM extraction → Pydantic-constrained output), entity resolution v1 (exact match + embedding similarity) |
-| W4 | Validation gate, proposal system (create/approve/reject), graph commit with atomic transactions, entity resolution v2 (full multi-signal) |
-| W5 | Truth Layer (schema + basic fact storage), post-commit processing (embeddings, basic bridge detection), unit tests for all core algorithms |
+| `test_repository.py` | GraphRepository CRUD, node/edge operations, query filters |
+| `test_gap_detection.py` | Gap detection engine |
+| `test_retry.py` | Retry logic, backoff, exception classification |
+| `test_commitment_scan.py` | Overdue commitment detection and notification |
+| `test_crag.py` | CRAG relevance grading and correction flow |
+| `test_graph_commit.py` | Atomic proposal commit, temp_id resolution |
+| `test_truth_layer.py` | Fact deposit, contradiction detection, lifecycle |
+| `test_models.py` | Pydantic model validation, serialization |
+| `test_spaced_repetition.py` | SM-2 algorithm, interval calculations |
+| `test_health_scoring.py` | Network health computation, status thresholds |
+| `test_bridge_discovery.py` | Cross-network bridge detection |
+| `test_decay.py` | Exponential decay scoring, per-network lambdas |
+| `test_entity_resolution.py` | Multi-signal matching, merge/create/link decisions |
+| `test_ontology.py` | Edge constraint validation, network suggestion |
+| `test_vector_store.py` | Weaviate upsert, search, batch operations |
+| `test_pipeline.py` | Pipeline stage execution, error handling |
 
-**Milestone:** Text capture → Archivist extraction → graph proposal → review → commit working end-to-end.
+### Integration Tests (4)
 
-### 13.2 Phase 2: Intelligence (Weeks 6–9)
-
-**Scope:** Cross-network analysis, internet research, briefings
-
-| Week | Deliverables |
+| Test File | Covers |
 |---|---|
-| W6 | LangGraph orchestrator, Strategist agent (daily briefing generation, network health reading) |
-| W7 | Researcher agent with MCP servers (Semantic Scholar, Playwright, GitHub), query anonymization, Truth Layer integration |
-| W8 | Council decision pattern (multi-agent deliberation), bridge discovery (incremental + daily batch), background job scheduling (APScheduler) |
-| W9 | Health scoring, commitment scan, relationship decay, notification triggers, spaced repetition (SM-2) |
+| `test_election_graph.py` | End-to-end graph building from election domain data |
+| `test_archivist.py` | Archivist LLM extraction with real API calls |
+| `test_rag_pipeline.py` | Full RAG pipeline from query to synthesis |
+| `test_council.py` | Multi-agent council deliberation |
 
-**Milestone:** Full AI Council operational, daily briefing generated, cross-network bridges discovered.
+### Entity Resolution Details
 
-### 13.3 Gantt Chart
+Six weighted signals:
 
-```mermaid
-gantt
-    title Memora MVP Roadmap (12–16 Weeks)
-    dateFormat YYYY-MM-DD
-    axisFormat %b %d
+```python
+WEIGHTS = {
+    "exact_name": 0.95,
+    "embedding_similarity": 0.80,
+    "same_network": 0.15,
+    "temporal_proximity": 0.10,
+    "shared_relationships": 0.20,
+    "llm_adjudication": 0.90,
+}
 
-    section Phase 0-1: Foundation
-    Graph DB + Vector DB + Models           :a1, 2026-03-02, 14d
-    Archivist Agent + Entity Resolution     :a2, after a1, 7d
-    Validation Gate + Graph Commit          :a3, after a2, 7d
-    Truth Layer + Post-Commit Processing    :a4, after a3, 7d
-
-    section Phase 2: Intelligence
-    LangGraph Orchestrator + Strategist     :b1, after a4, 7d
-    Researcher + MCP Servers                :b2, after b1, 7d
-    Council Pattern + Bridge Discovery      :b3, after b2, 7d
-    Health Scoring + Background Jobs        :b4, after b3, 7d
-
+EMBEDDING_THRESHOLD = 0.92
+MERGE_THRESHOLD = 0.85
+CREATE_THRESHOLD = 0.40
+TEMPORAL_WINDOW_DAYS = 7
 ```
+
+Resolution outcomes: `MERGE`, `CREATE`, `LINK`, `DEFER`.
 
 ---
 
-## 14. Success Metrics
+## 19. Implementation Status
 
-| Metric | Target | Why It Matters |
-|---|---|---|
-| Auto-approve correction rate | < 5% | System earns user trust without review fatigue |
-| Daily capture rate | ≥ 5 captures/day | Users actively feeding the graph |
-| Bridge discovery accuracy | ≥ 70% useful | Cross-network connections are the primary value |
-| Daily briefing engagement | ≥ 60% open rate | Users rely on the system for situational awareness |
-| Truth Layer coverage | ≥ 50% of recommendations cite verified facts | Intelligence is grounded, not hallucinated |
-| Graph node revisit rate | > 33% | Breaking the "67% never revisited" baseline |
-| User LLM cost | < $15/month blended | Sustainable BYOK model |
+### Fully Implemented
 
----
+- 9-stage extraction pipeline with all sub-stages
+- DuckDB graph repository with full CRUD and atomic transactions
+- Weaviate vector store (embedded) with dense/hybrid search
+- Entity resolution with 6 weighted signals
+- 12 node types with Pydantic v2 models
+- 29 edge types in 7 categories with ontology constraints
+- 3 AI agents (Archivist, Strategist, Researcher) + LangGraph Orchestrator
+- Truth Layer with contradiction detection and fact lifecycle
+- 10 background scheduler jobs via APScheduler
+- Action Engine with 6 typed actions
+- Outcome Tracker with confidence feedback loop
+- Pattern Engine with 11 behavioral detectors
+- People Intelligence with relationship strength scoring
+- Investigation Engine with path-finding and neighborhood expansion
+- Timeline Engine with causal chain tracing and activity burst detection
+- Notification system with 7 types and priority ordering
+- Briefing Collector aggregating all subsystems
+- CLI with 20 commands and Palantir-inspired ANSI rendering
+- 6 MCP tool servers (Google, Brave, Semantic Scholar, Playwright/httpx, GitHub, Graph)
+- Migration system (v1-v6) with rollback support
+- Backup/restore with WAL mode (max 10 snapshots)
+- Structured JSON logging with pipeline timing and LLM cost tracking
+- Retry with exponential backoff and jitter for OpenAI/HTTP calls
+- Batch re-ingestion utility
 
-## 15. Risk Assessment
+### Known Limitations
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Entity resolution complexity exceeds estimates (3–4 weeks alone) | High | High | Phase 0–1 includes explicit entity resolution scope; prototype early with synthetic data |
-| Auto-approve threshold poorly calibrated, eroding trust | Medium | High | Track correction rate (< 5% target); allow user to adjust threshold; daily review digest as safety net |
-| DuckDB performance at scale | Low | Medium | DuckDB handles analytical workloads well; abstract graph interface allows future migration if needed |
-| LLM cost higher than projected | Medium | Medium | GPT-5-nano for all ops; monitor per-user cost metrics |
-| Bridge discovery produces too many false positives | Medium | Medium | LLM batch validation filters candidates; user feedback loop to tune similarity threshold |
-| User doesn't develop capture habit | High | High | Zero-friction capture (< 2s), text input via capture bar / command palette / CLI, never show blank page |
-
----
-
-## 16. Open Questions & Decisions
-
-1. **Auto-approve threshold tuning** — How aggressive should the default 0.85 threshold be? Need to learn from user correction patterns over time. Should the threshold be per-network or global?
-
-2. **Privacy model for MCP research** — When the Researcher agent searches the web, what context does it send? Graph context must be anonymized before external queries. Need to define the exact anonymization rules.
-
-3. **Obsidian vault import** — Importing existing `.md` vaults as a starting point would be a strong adoption hook. Deferred from MVP but should be prioritized early post-MVP.
-
-4. **Preventing the collector's fallacy** — Decay mechanics + "when did you last reference this?" nudges + synthesis challenges. The system must discourage hoarding and encourage active engagement.
-
----
-
-## Appendix A: Complete Node Type Property Reference
-
-### Life Context Nodes
-
-**EVENT**
-```
-event_date:     Timestamp       # when the event occurred or will occur
-location:       String | null   # where it happened
-participants:   List[String]    # people involved
-event_type:     String          # meeting, conference, milestone, social, etc.
-duration:       Integer | null  # duration in minutes
-sentiment:      String | null   # positive, negative, neutral
-recurring:      Boolean         # is this a recurring event?
-```
-
-**PERSON**
-```
-name:               String          # full name (canonical)
-aliases:            List[String]    # alternative names, nicknames
-role:               String | null   # their role relative to user
-relationship_to_user: String        # friend, colleague, investor, professor, etc.
-contact_info:       Dict            # email, phone, social handles
-organization:       String | null   # where they work
-last_interaction:   Timestamp       # when you last mentioned or interacted
-```
-
-**COMMITMENT**
-```
-due_date:       Timestamp | null    # when it's due
-status:         Enum                # open, completed, overdue, cancelled
-committed_by:   String              # who made the commitment
-committed_to:   String              # who it was made to
-priority:       Enum                # low, medium, high, critical
-description:    String              # what was committed
-```
-
-**DECISION**
-```
-decision_date:      Timestamp       # when the decision was made
-options_considered: List[String]    # what alternatives were weighed
-chosen_option:      String          # what was chosen
-rationale:          String          # why this option
-outcome:            String | null   # what happened (filled later)
-reversible:         Boolean         # can this be undone?
-```
-
-**GOAL**
-```
-target_date:    Timestamp | null    # target completion date
-progress:       Float               # 0.0 - 1.0
-milestones:     List[Dict]          # sub-goals with status
-status:         Enum                # active, paused, achieved, abandoned
-priority:       Enum                # low, medium, high
-success_criteria: String            # how you'll know it's done
-```
-
-**FINANCIAL_ITEM**
-```
-amount:         Float               # monetary amount
-currency:       String              # USD, EUR, etc.
-direction:      Enum                # inflow, outflow
-category:       String              # salary, investment, expense, etc.
-recurring:      Boolean             # is this recurring?
-frequency:      String | null       # monthly, weekly, one-time
-counterparty:   String | null       # who is the other party
-```
-
-### Knowledge Nodes
-
-**NOTE**
-```
-source_context: String | null       # what prompted this note
-note_type:      Enum                # observation, reflection, summary, quote
-```
-
-**IDEA**
-```
-maturity:           Enum            # seed, developing, mature, archived
-domain:             String          # what field this idea belongs to
-potential_impact:   String | null   # estimated significance
-```
-
-**PROJECT**
-```
-status:         Enum                # active, paused, completed, abandoned
-start_date:     Timestamp | null
-target_date:    Timestamp | null
-team:           List[String]        # people involved
-deliverables:   List[String]        # expected outputs
-repository_url: String | null       # link to code repo
-```
-
-**CONCEPT**
-```
-definition:         String          # what this concept means
-domain:             String          # field or discipline
-related_concepts:   List[String]    # linked concepts
-complexity_level:   Enum            # basic, intermediate, advanced
-```
-
-**REFERENCE**
-```
-url:                String | null   # web link
-author:             String | null
-publication_date:   Timestamp | null
-source_type:        String          # article, paper, book, video, etc.
-citation:           String | null   # formatted citation
-archived:           Boolean         # has the content been saved locally?
-```
-
-**INSIGHT**
-```
-derived_from:   List[String]        # node IDs that led to this insight
-actionable:     Boolean             # can you act on this?
-cross_network:  Boolean             # does this span multiple networks?
-strength:       Float               # how strong is the evidence (0-1)
-```
+- CLI-only interface (no web frontend, no REST API server)
+- Single-user, local-first architecture
+- Embedding model loaded lazily on first use (initial latency on first capture)
+- MCP servers require separate API keys for full functionality
+- Weaviate embedded process starts with the vector store
+- Pattern detection confidence requires sufficient data volume (20+ observations for full confidence)
+- Language detection is heuristic-only (ASCII ratio); no multilingual model
 
 ---
 
-## Appendix B: Complete Edge Type Reference
-
-### STRUCTURAL (Hierarchy and Composition)
-
-| Edge Type | Valid Source → Target | Description |
-|---|---|---|
-| `PART_OF` | Any → PROJECT, GOAL, EVENT | Node is a component of a larger entity |
-| `CONTAINS` | PROJECT, GOAL → Any | Parent contains child |
-| `SUBTASK_OF` | COMMITMENT → COMMITMENT, GOAL | Sub-task within a larger commitment |
-
-### ASSOCIATIVE (Semantic Relationships)
-
-| Edge Type | Valid Source → Target | Description |
-|---|---|---|
-| `RELATED_TO` | Any → Any | General semantic connection |
-| `INSPIRED_BY` | IDEA, DECISION → Any | Source of inspiration |
-| `CONTRADICTS` | Any → Any | Conflicting information |
-| `SIMILAR_TO` | Any → Any (same type) | Similar entities |
-| `COMPLEMENTS` | Any → Any | Entities that enhance each other |
-
-### PROVENANCE (Information Origin)
-
-| Edge Type | Valid Source → Target | Description |
-|---|---|---|
-| `DERIVED_FROM` | INSIGHT, NOTE → Any | Where an insight came from |
-| `VERIFIED_BY` | Any → REFERENCE | Fact verified by a source |
-| `SOURCE_OF` | REFERENCE → Any | Source document for information |
-| `EXTRACTED_FROM` | Any → Capture | Which capture generated this node |
-
-### TEMPORAL (Time-Ordered Causation)
-
-| Edge Type | Valid Source → Target | Description |
-|---|---|---|
-| `PRECEDED_BY` | Any → Any | Temporal ordering |
-| `EVOLVED_INTO` | IDEA, CONCEPT, GOAL → Same type | How something changed over time |
-| `TRIGGERED` | EVENT, DECISION → Any | Causal trigger |
-| `CONCURRENT_WITH` | EVENT → EVENT | Simultaneous events |
-
-### PERSONAL (Stakes and Emotions)
-
-| Edge Type | Valid Source → Target | Description |
-|---|---|---|
-| `COMMITTED_TO` | PERSON → COMMITMENT | Who is committed |
-| `DECIDED` | PERSON → DECISION | Who made the decision |
-| `FELT_ABOUT` | PERSON → Any | Emotional attachment |
-| `RESPONSIBLE_FOR` | PERSON → PROJECT, GOAL | Ownership |
-
-### SOCIAL (People and Social Dynamics)
-
-| Edge Type | Valid Source → Target | Description |
-|---|---|---|
-| `KNOWS` | PERSON → PERSON | Mutual acquaintance |
-| `INTRODUCED_BY` | PERSON → PERSON | Who introduced whom |
-| `OWES_FAVOR` | PERSON → PERSON | Favor debt tracking |
-| `COLLABORATES_WITH` | PERSON → PERSON | Working together |
-| `REPORTS_TO` | PERSON → PERSON | Hierarchical relationship |
-
-### NETWORK (Cross-Network Connections)
-
-| Edge Type | Valid Source → Target | Description |
-|---|---|---|
-| `BRIDGES` | Any → Any (different networks) | Cross-network connection (gold) |
-| `MEMBER_OF` | Any → Network context | Network membership |
-| `IMPACTS` | Any → Any (different networks) | Cross-domain impact |
-| `CORRELATES_WITH` | Any → Any (different networks) | Statistical or observed correlation |
-
----
-
-## Appendix C: Archivist System Prompt Template
-
-The Archivist's system prompt is carefully engineered with five components. The first four components are **static** (cacheable at 0.1x cost), and only the fifth is dynamic:
-
-```markdown
-# Component 1: Graph Schema (STATIC — cacheable)
-You are the Archivist agent for Memora, a personal knowledge graph system.
-Your role is to extract structured graph operations from natural language input.
-
-## Node Types
-[Complete list of 12 node types with all properties]
-
-## Edge Types
-[Complete list of 7 categories with 28 subtypes and valid source/target constraints]
-
-## Valid Combinations
-[Rules for which edge types connect which node types]
-
----
-
-# Component 2: Network Definitions (STATIC — cacheable)
-The graph is organized into 7 context networks:
-- ACADEMIC: Courses, grades, research, study commitments
-- PROFESSIONAL: Work projects, clients, colleagues, deliverables
-- FINANCIAL: Transactions, budgets, investments
-- HEALTH: Exercise, sleep, stress, medical appointments
-- PERSONAL_GROWTH: Learning goals, skills, habits
-- SOCIAL: Friends, family, social events
-- VENTURES: Side projects, entrepreneurial activities
-
-A single entity can belong to MULTIPLE networks.
-
----
-
-# Component 3: Extraction Rules (STATIC — cacheable)
-1. If a person is mentioned by first name only and a matching PERSON node exists,
-   reference the existing node rather than creating a new one
-2. Always extract temporal anchors — when did this happen? When is it due?
-3. Rate your confidence honestly — 0.9+ for explicit statements, 0.6-0.8 for
-   inferences, below 0.6 flag for review
-4. If the input is ambiguous, set clarification_needed=true instead of guessing
-[Additional extraction rules...]
-
----
-
-# Component 4: Output Format (STATIC — cacheable)
-Respond with a valid GraphProposal JSON object matching this schema:
-[Pydantic schema definition]
-
----
-
-# Component 5: Dynamic Context (VARIABLE — not cached)
-## Existing Entities (RAG Context)
-The following nodes were recently created or may be referenced:
-[Top-K similar existing nodes from vector search]
-
-## User's Capture
-[The actual user input to process]
-```
-
-**Token budget:**
-- Components 1–4 (static): ~2,000–4,000 tokens → cached at 0.1x cost
-- Component 5 (dynamic): ~500–2,000 tokens → full cost
-- **Effective cost reduction: 60–70%**
-
----
-
-## Appendix D: Glossary
-
-| Term | Definition |
-|---|---|
-| **Bridge** | A cross-network connection discovered by embedding similarity — the highest-value intelligence in the system |
-| **BYOK** | Bring Your Own Key — user provides their own OpenAI API key |
-| **Capture** | A single piece of user input (text) entering the system |
-| **Context Network** | One of seven living subgraphs (Academic, Professional, Financial, Health, Personal Growth, Social, Ventures) |
-| **Council** | The three-agent AI system (Archivist + Strategist + Researcher) coordinated by a LangGraph orchestrator |
-| **CRAG** | Corrective RAG — if retrieval quality is poor, fall back to web search via the Researcher |
-| **Decay Score** | Exponential decay value (0–1) indicating how recently a node was accessed |
-| **Graph Proposal** | An atomic, reviewable set of proposed changes to the knowledge graph |
-| **HNSW** | Hierarchical Navigable Small World — approximate nearest neighbor index used in LanceDB |
-| **MCP** | Model Context Protocol — standard for connecting AI agents to external tools |
-| **SM-2** | SuperMemo 2 — spaced repetition algorithm used to schedule knowledge review |
-| **Truth Layer** | Verified fact store with source typing, staleness detection, and contradiction resolution |
-| **Validation Gate** | Confidence-based routing that determines whether a proposal is auto-approved, batched for review, or requires explicit confirmation |
-
----
-
-*End of Document — Memora System Architecture v1.0*
+*This document reflects the implemented Memora codebase as of March 2, 2026.*
