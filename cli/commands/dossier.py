@@ -442,20 +442,53 @@ def _render_answer(query: str, entity, traversal: dict, synthesis: str | None):
 # ── Enhanced Intelligence Profile ─────────────────────────────────
 
 def _render_intelligence_profile(app, entity):
-    """Render the full enhanced entity profile with timeline, patterns, outcomes, bridges."""
+    """Render the full enhanced entity profile using ObjectViewBuilder."""
+    from memora.core.object_view import ObjectViewBuilder
+
     entity_str = str(entity.id)
 
-    # Entity card (existing)
+    # Build ObjectView with graph intelligence if available
+    algorithms = None
+    try:
+        from memora.core.graph_algorithms import GraphAlgorithms
+        algorithms = GraphAlgorithms(app.repo)
+    except Exception:
+        pass
+
+    builder = ObjectViewBuilder(app.repo, algorithms=algorithms)
+    view = builder.build(
+        entity,
+        neighborhood_hops=DOSSIER_CONFIG["neighborhood_hops"],
+        facts_limit=DOSSIER_CONFIG["facts_limit"],
+        patterns_limit=DOSSIER_CONFIG["patterns_limit"],
+        outcomes_limit=DOSSIER_CONFIG["outcomes_limit"],
+        bridges_limit=DOSSIER_CONFIG["bridges_limit"],
+    )
+
+    # Entity card
     print()
     render_node_detail(entity)
 
-    # Neighborhood + connections (existing)
+    # ── Graph Position (NEW — from Enhancement 1) ─────────────
+    if view.centrality_rank or view.communities or view.pagerank_score:
+        print(f"\n{divider('─', C.INTEL)}")
+        print(f"  {C.BOLD}{C.INTEL}GRAPH POSITION{C.RESET}  {C.DIM}centrality & community analysis{C.RESET}")
+        print(divider())
+        if view.centrality_rank:
+            print(f"  {C.INTEL}#{C.RESET} PageRank: #{view.centrality_rank}  "
+                  f"{C.DIM}score={view.pagerank_score:.4f}{C.RESET}")
+        if view.communities:
+            comm_str = ", ".join(str(c) for c in view.communities)
+            print(f"  {C.INTEL}⊂{C.RESET} Communities: {comm_str}")
+        print(f"  {C.INTEL}°{C.RESET} Degree: {view.degree} direct connections")
+
+    # Connections (from ObjectView)
     subgraph = app.repo.get_neighborhood(entity.id, hops=DOSSIER_CONFIG["neighborhood_hops"])
     min_strength = DOSSIER_CONFIG["connection_min_strength"]
     connections = _compute_connections(entity_str, subgraph)
     top_connections = _render_connections(connections, entity_str, min_strength)
 
-    # Related entities (existing)
+    # Related entities
     neighborhood_ids = {str(n.id) for n in subgraph.nodes}
     related = _find_related(app, entity, neighborhood_ids)
     if related:
@@ -469,13 +502,22 @@ def _render_intelligence_profile(app, entity):
             print(f"  {C.MAGENTA}~{C.RESET} {icon} {C.BOLD}{rel_node.title[:35]:<35}{C.RESET} "
                   f"{nets}  {C.DIM}similarity {pct}{C.RESET}")
 
-    # Facts (existing)
-    facts = _get_facts(app, entity_str)
-    if facts:
-        print(f"\n{divider('─', C.GREEN)}")
-        print(f"  {C.BOLD}{C.GREEN}VERIFIED FACTS ({len(facts)}){C.RESET}")
+    # ── Predicted Links (NEW — from Enhancement 1) ────────────
+    if view.predicted_links:
+        print(f"\n{divider('─', C.SIGNAL)}")
+        print(f"  {C.BOLD}{C.SIGNAL}PREDICTED LINKS ({len(view.predicted_links)}){C.RESET}  {C.DIM}suggested missing connections{C.RESET}")
         print(divider())
-        for fact in facts[:15]:
+        for pred in view.predicted_links[:5]:
+            other_title = pred["target_title"] if pred["source_id"] == entity_str else pred["source_title"]
+            print(f"  {C.SIGNAL}···{C.RESET} {C.BOLD}{other_title[:40]}{C.RESET}  "
+                  f"{C.DIM}score={pred['score']:.3f}  common={pred['common_neighbors']}{C.RESET}")
+
+    # Facts
+    if view.facts:
+        print(f"\n{divider('─', C.GREEN)}")
+        print(f"  {C.BOLD}{C.GREEN}VERIFIED FACTS ({len(view.facts)}){C.RESET}")
+        print(divider())
+        for fact in view.facts[:15]:
             conf = fact.get("confidence", 0)
             lifecycle = fact.get("lifecycle", "")
             lc_color = C.GREEN if lifecycle == "static" else C.YELLOW
@@ -483,106 +525,85 @@ def _render_intelligence_profile(app, entity):
             print(f"  {C.GREEN}✓{C.RESET} {statement[:70]}")
             print(f"    {horizontal_bar(conf, 10, C.GREEN)}  "
                   f"{lc_color}{lifecycle}{C.RESET}")
-        if len(facts) > 15:
-            print(f"    {C.DIM}... and {len(facts) - 15} more{C.RESET}")
+        if len(view.facts) > 15:
+            print(f"    {C.DIM}... and {len(view.facts) - 15} more{C.RESET}")
     else:
         print(f"\n  {C.DIM}No verified facts for this entity.{C.RESET}")
 
-    # ── NEW: Timeline ─────────────────────────────────────────
-    try:
-        temporal = app.repo.get_temporal_neighbors(entity_str)
-        if temporal:
-            print(f"\n{divider('─', C.SIGNAL)}")
-            print(f"  {C.BOLD}{C.SIGNAL}TIMELINE ({len(temporal)}){C.RESET}  {C.DIM}temporal connections{C.RESET}")
-            print(divider())
-            for item in temporal[:10]:
-                etype = item.get("edge_type", "")
-                title = item.get("title", "unknown")[:40]
-                ntype = item.get("node_type", "")
-                created = item.get("created_at", "")
-                icon = NODE_ICONS.get(ntype, " ")
-                date_str = str(created)[:10] if created else ""
-                print(f"  {C.SIGNAL}>{C.RESET} {icon} {C.BOLD}{title}{C.RESET}  "
-                      f"{C.DIM}[{etype}]  {date_str}{C.RESET}")
-    except Exception:
-        pass
+    # Timeline
+    if view.timeline:
+        print(f"\n{divider('─', C.SIGNAL)}")
+        print(f"  {C.BOLD}{C.SIGNAL}TIMELINE ({len(view.timeline)}){C.RESET}  {C.DIM}temporal connections{C.RESET}")
+        print(divider())
+        for item in view.timeline[:10]:
+            icon = NODE_ICONS.get(item.node_type, " ")
+            print(f"  {C.SIGNAL}>{C.RESET} {icon} {C.BOLD}{item.title[:40]}{C.RESET}  "
+                  f"{C.DIM}[{item.edge_type}]  {item.date}{C.RESET}")
 
-    # ── NEW: Patterns ─────────────────────────────────────────
-    try:
-        patterns = app.repo.get_patterns_for_node(entity_str, limit=DOSSIER_CONFIG["patterns_limit"])
-        if patterns:
-            print(f"\n{divider('─', C.INTEL)}")
-            print(f"  {C.BOLD}{C.INTEL}PATTERNS ({len(patterns)}){C.RESET}  {C.DIM}detected behavioral patterns{C.RESET}")
-            print(divider())
-            for pat in patterns:
-                desc = pat.get("description", "")[:65]
-                conf = pat.get("confidence", 0)
-                ptype = pat.get("pattern_type", "")
-                action = pat.get("suggested_action", "")
-                print(f"  {C.INTEL}~{C.RESET} {desc}")
-                detail_parts = []
-                if ptype:
-                    detail_parts.append(ptype)
-                detail_parts.append(f"conf={conf:.0%}")
-                if action:
-                    detail_parts.append(f"action: {action[:30]}")
-                print(f"    {C.DIM}{' | '.join(detail_parts)}{C.RESET}")
-    except Exception:
-        pass
+    # Patterns
+    if view.patterns:
+        print(f"\n{divider('─', C.INTEL)}")
+        print(f"  {C.BOLD}{C.INTEL}PATTERNS ({len(view.patterns)}){C.RESET}  {C.DIM}detected behavioral patterns{C.RESET}")
+        print(divider())
+        for pat in view.patterns:
+            desc = pat.get("description", "")[:65]
+            conf = pat.get("confidence", 0)
+            ptype = pat.get("pattern_type", "")
+            action = pat.get("suggested_action", "")
+            print(f"  {C.INTEL}~{C.RESET} {desc}")
+            detail_parts = []
+            if ptype:
+                detail_parts.append(ptype)
+            detail_parts.append(f"conf={conf:.0%}")
+            if action:
+                detail_parts.append(f"action: {action[:30]}")
+            print(f"    {C.DIM}{' | '.join(detail_parts)}{C.RESET}")
 
-    # ── NEW: Outcomes ─────────────────────────────────────────
-    try:
-        outcomes = app.repo.get_outcomes_for_node(entity_str)
-        if outcomes:
-            display_outcomes = outcomes[:DOSSIER_CONFIG["outcomes_limit"]]
-            print(f"\n{divider('─', C.CONFIRM)}")
-            print(f"  {C.BOLD}{C.CONFIRM}OUTCOMES ({len(outcomes)}){C.RESET}  {C.DIM}recorded results & consequences{C.RESET}")
-            print(divider())
-            for outcome in display_outcomes:
-                text = outcome.get("outcome_text", "")[:65]
-                rating = outcome.get("rating", "")
-                recorded = outcome.get("recorded_at", "")
-                date_str = str(recorded)[:10] if recorded else ""
-                rating_color = C.CONFIRM if rating in ("positive", "success") else C.SIGNAL if rating in ("mixed", "neutral") else C.DANGER if rating in ("negative", "failure") else C.DIM
-                print(f"  {C.CONFIRM}>{C.RESET} {text}")
-                detail_parts = []
-                if rating:
-                    detail_parts.append(f"{rating_color}{rating}{C.RESET}")
-                if date_str:
-                    detail_parts.append(f"{C.DIM}{date_str}{C.RESET}")
-                if detail_parts:
-                    print(f"    {'  '.join(detail_parts)}")
-            if len(outcomes) > DOSSIER_CONFIG["outcomes_limit"]:
-                print(f"    {C.DIM}... and {len(outcomes) - DOSSIER_CONFIG['outcomes_limit']} more{C.RESET}")
-    except Exception:
-        pass
+    # Outcomes
+    if view.outcomes:
+        print(f"\n{divider('─', C.CONFIRM)}")
+        print(f"  {C.BOLD}{C.CONFIRM}OUTCOMES ({len(view.outcomes)}){C.RESET}  {C.DIM}recorded results & consequences{C.RESET}")
+        print(divider())
+        for outcome in view.outcomes:
+            text = outcome.get("outcome_text", "")[:65]
+            rating = outcome.get("rating", "")
+            recorded = outcome.get("recorded_at", "")
+            date_str = str(recorded)[:10] if recorded else ""
+            rating_color = C.CONFIRM if rating in ("positive", "success") else C.SIGNAL if rating in ("mixed", "neutral") else C.DANGER if rating in ("negative", "failure") else C.DIM
+            print(f"  {C.CONFIRM}>{C.RESET} {text}")
+            detail_parts = []
+            if rating:
+                detail_parts.append(f"{rating_color}{rating}{C.RESET}")
+            if date_str:
+                detail_parts.append(f"{C.DIM}{date_str}{C.RESET}")
+            if detail_parts:
+                print(f"    {'  '.join(detail_parts)}")
 
-    # ── NEW: Bridges ──────────────────────────────────────────
-    try:
-        bridges = app.repo.get_bridges_for_nodes([entity_str], limit=DOSSIER_CONFIG["bridges_limit"])
-        if bridges:
-            print(f"\n{divider('─', C.WARM)}")
-            print(f"  {C.BOLD}{C.WARM}BRIDGES ({len(bridges)}){C.RESET}  {C.DIM}cross-network connections{C.RESET}")
-            print(divider())
-            for bridge in bridges:
-                src_net = bridge.get("source_network", "?")
-                tgt_net = bridge.get("target_network", "?")
-                desc = bridge.get("description", "")[:55]
-                sim = bridge.get("similarity", 0)
-                validated = bridge.get("llm_validated", False)
-                check = f"{C.CONFIRM}✓{C.RESET}" if validated else f"{C.DIM}?{C.RESET}"
-                print(f"  {C.WARM}◇{C.RESET} {desc}")
-                print(f"    {check}  {C.DIM}{src_net} → {tgt_net}  similarity={sim:.0%}{C.RESET}")
-    except Exception:
-        pass
+    # Bridges
+    if view.bridges:
+        print(f"\n{divider('─', C.WARM)}")
+        print(f"  {C.BOLD}{C.WARM}BRIDGES ({len(view.bridges)}){C.RESET}  {C.DIM}cross-network connections{C.RESET}")
+        print(divider())
+        for bridge in view.bridges:
+            src_net = bridge.get("source_network", "?")
+            tgt_net = bridge.get("target_network", "?")
+            desc = bridge.get("description", "")[:55]
+            sim = bridge.get("similarity", 0)
+            validated = bridge.get("llm_validated", False)
+            check = f"{C.CONFIRM}✓{C.RESET}" if validated else f"{C.DIM}?{C.RESET}"
+            print(f"  {C.WARM}◇{C.RESET} {desc}")
+            print(f"    {check}  {C.DIM}{src_net} → {tgt_net}  similarity={sim:.0%}{C.RESET}")
+
+    # ── Data Sources (NEW — from Enhancement 2) ──────────────
+    if view.data_sources:
+        print(f"\n{divider('─', C.DIM)}")
+        print(f"  {C.BOLD}DATA SOURCES{C.RESET}  {C.DIM}{', '.join(view.data_sources)}{C.RESET}")
 
     # Graph summary
     print(f"\n{divider('─', C.BLUE)}")
-    n_nodes = len(subgraph.nodes)
-    n_edges = len(subgraph.edges)
     print(f"  {C.BOLD}{C.BLUE}SUBGRAPH{C.RESET}  "
-          f"{C.BOLD}{n_nodes}{C.RESET} nodes  {C.DIM}|{C.RESET}  "
-          f"{C.BOLD}{n_edges}{C.RESET} edges  {C.DIM}(2-hop neighborhood){C.RESET}")
+          f"{C.BOLD}{view.subgraph_nodes}{C.RESET} nodes  {C.DIM}|{C.RESET}  "
+          f"{C.BOLD}{view.subgraph_edges}{C.RESET} edges  {C.DIM}(2-hop neighborhood){C.RESET}")
 
     return subgraph, connections, top_connections
 
@@ -595,7 +616,7 @@ def _interactive_actions(app, entity, subgraph, connections, top_connections):
     min_strength = DOSSIER_CONFIG["connection_min_strength"]
 
     drill_hint = f"[1-{len(top_connections)}] Drill  " if top_connections else ""
-    print(f"\n  {C.DIM}{drill_hint}[t] Timeline  [p] Patterns  [o] Outcomes  [v] Visualize  [i] Investigate  [q] Back{C.RESET}")
+    print(f"\n  {C.DIM}{drill_hint}[t] Timeline  [p] Patterns  [o] Outcomes  [v] Visualize  [i] Investigate  [m] Compare  [q] Back{C.RESET}")
     action = prompt("dossier> ").strip()
 
     if action == "v":
@@ -609,6 +630,8 @@ def _interactive_actions(app, entity, subgraph, connections, top_connections):
         _drill_patterns(app, entity_str)
     elif action == "o":
         _drill_outcomes(app, entity_str)
+    elif action == "m":
+        _compare_mode(app, entity)
     elif action.isdigit() and top_connections:
         idx = int(action) - 1
         if 0 <= idx < len(top_connections):
@@ -703,6 +726,58 @@ def _drill_outcomes(app, entity_str: str):
                 print(f"    {'  '.join(detail_parts)}")
     except Exception as e:
         print(f"  {C.DIM}(outcomes unavailable: {e}){C.RESET}")
+
+
+def _compare_mode(app, entity_a):
+    """Compare two entities side by side."""
+    query = prompt(f"  Compare '{entity_a.title}' with: ").strip()
+    if not query:
+        return
+
+    entity_b = _resolve_entity(app, query)
+    if not entity_b:
+        return
+
+    from memora.core.object_view import ObjectViewBuilder, compare_entities
+
+    algorithms = None
+    try:
+        from memora.core.graph_algorithms import GraphAlgorithms
+        algorithms = GraphAlgorithms(app.repo)
+    except Exception:
+        pass
+
+    builder = ObjectViewBuilder(app.repo, algorithms=algorithms)
+    comparison = compare_entities(builder, entity_a, entity_b)
+
+    view_a = comparison["entity_a"]
+    view_b = comparison["entity_b"]
+
+    print(f"\n{divider('═', C.ACCENT)}")
+    print(f"  {C.BOLD}{C.ACCENT}ENTITY COMPARISON{C.RESET}")
+    print(divider('─', C.ACCENT))
+
+    # Side by side metrics
+    a_title = entity_a.title[:25]
+    b_title = entity_b.title[:25]
+
+    print(f"\n  {'Metric':<25} {a_title:<25} {b_title:<25}")
+    print(f"  {'─' * 75}")
+    print(f"  {'Connections':<25} {view_a.degree:<25} {view_b.degree:<25}")
+    print(f"  {'Facts':<25} {len(view_a.facts):<25} {len(view_b.facts):<25}")
+    print(f"  {'Patterns':<25} {len(view_a.patterns):<25} {len(view_b.patterns):<25}")
+    print(f"  {'Outcomes':<25} {len(view_a.outcomes):<25} {len(view_b.outcomes):<25}")
+    print(f"  {'Bridges':<25} {len(view_a.bridges):<25} {len(view_b.bridges):<25}")
+
+    if view_a.centrality_rank and view_b.centrality_rank:
+        print(f"  {'PageRank':<25} {'#' + str(view_a.centrality_rank):<25} {'#' + str(view_b.centrality_rank):<25}")
+
+    print(f"\n  {C.BOLD}Overlap:{C.RESET}")
+    print(f"    Shared connections: {comparison['shared_connections']}")
+    print(f"    Unique to {a_title}: {comparison['a_unique_connections']}")
+    print(f"    Unique to {b_title}: {comparison['b_unique_connections']}")
+    if comparison['shared_communities']:
+        print(f"    Shared communities: {comparison['shared_communities']}")
 
 
 # ── Main Flow ─────────────────────────────────────────────────────

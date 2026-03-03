@@ -130,6 +130,19 @@ CREATE TABLE IF NOT EXISTS schema_version (
     version         INTEGER PRIMARY KEY,
     applied_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS sync_records (
+    id              VARCHAR PRIMARY KEY,
+    connector_name  VARCHAR NOT NULL,
+    connector_type  VARCHAR NOT NULL,
+    last_sync       TIMESTAMP,
+    items_synced    INTEGER DEFAULT 0,
+    errors          INTEGER DEFAULT 0,
+    cursor          VARCHAR,
+    config          JSON,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 

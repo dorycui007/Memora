@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
+    # Connectors
+    connectors: dict[str, dict] = Field(default_factory=dict)
+    connector_sync_interval_minutes: int = Field(default=60, ge=1)
+
     # Server
     api_host: str = "127.0.0.1"
     api_port: int = 8000
@@ -196,6 +200,10 @@ def load_settings() -> Settings:
             settings.bridge_similarity_threshold = yaml_config["bridge_similarity_threshold"]
         if "embedding_model" in yaml_config:
             settings.embedding_model = yaml_config["embedding_model"]
+        if "connectors" in yaml_config and isinstance(yaml_config["connectors"], dict):
+            settings.connectors = yaml_config["connectors"]
+        if "connector_sync_interval_minutes" in yaml_config:
+            settings.connector_sync_interval_minutes = yaml_config["connector_sync_interval_minutes"]
 
     # Configure structured logging
     from memora.core.logging_config import configure_logging

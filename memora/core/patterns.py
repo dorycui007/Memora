@@ -61,6 +61,8 @@ class PatternEngine:
             self.detect_commitment_scope_patterns,
             self.detect_idea_maturity_patterns,
             self.detect_network_balance_patterns,
+            self.detect_community_patterns,
+            self.detect_centrality_anomalies,
         ]
 
         for detector in detectors:
@@ -978,6 +980,127 @@ class PatternEngine:
                 ),
                 networks=[net],
             ))
+
+        return patterns
+
+    # ── Graph Algorithm-Based Detectors ─────────────────────────────
+
+    def detect_community_patterns(self) -> list[dict]:
+        """Detect patterns in graph community structure.
+
+        Flags: single-entity communities (isolated clusters), dominant communities
+        (one community holding >60% of nodes), and cross-network communities.
+        """
+        patterns = []
+        try:
+            from memora.core.graph_algorithms import GraphAlgorithms
+            algo = GraphAlgorithms(self.repo)
+            communities = algo.label_propagation_communities()
+        except Exception:
+            logger.debug("Graph algorithms unavailable for community detection")
+            return patterns
+
+        if not communities:
+            return patterns
+
+        total_nodes = sum(c["size"] for c in communities)
+        if total_nodes == 0:
+            return patterns
+
+        # Singleton communities (isolated nodes in their own cluster)
+        singletons = [c for c in communities if c["size"] == 1]
+        if len(singletons) >= 3:
+            names = [c["members"][0]["title"] for c in singletons[:5]]
+            patterns.append(self._make_pattern(
+                PatternType.CROSS_NETWORK,
+                f"{len(singletons)} entity(ies) form isolated communities: {', '.join(names)}",
+                confidence=_compute_confidence(len(singletons), 0.4),
+                severity="info",
+                suggested_action="Consider connecting these isolated entities to related nodes",
+            ))
+
+        # Dominant community (>60% of all nodes)
+        for comm in communities:
+            ratio = comm["size"] / total_nodes
+            if ratio > 0.6 and comm["size"] >= 5:
+                type_counts = {}
+                for m in comm["members"]:
+                    type_counts[m["type"]] = type_counts.get(m["type"], 0) + 1
+                dominant_type = max(type_counts, key=type_counts.get)
+                patterns.append(self._make_pattern(
+                    PatternType.CROSS_NETWORK,
+                    f"Dominant community holds {ratio:.0%} of nodes ({comm['size']}/{total_nodes}), mostly {dominant_type}",
+                    confidence=_compute_confidence(total_nodes, ratio),
+                    severity="warning" if ratio > 0.8 else "info",
+                    suggested_action="Graph may lack diversity — capture data across more domains",
+                    current_value=ratio,
+                ))
+
+        # Community count as a health indicator
+        if len(communities) >= 2:
+            patterns.append(self._make_pattern(
+                PatternType.CROSS_NETWORK,
+                f"Graph has {len(communities)} natural communities across {total_nodes} nodes",
+                confidence=_compute_confidence(total_nodes, 0.3),
+                severity="info",
+                current_value=float(len(communities)),
+            ))
+
+        return patterns
+
+    def detect_centrality_anomalies(self) -> list[dict]:
+        """Detect anomalies in centrality distribution.
+
+        Flags: hub-and-spoke patterns (single node with extreme centrality),
+        high-importance nodes with low connectivity, and bridge entities
+        (high betweenness, low degree).
+        """
+        patterns = []
+        try:
+            from memora.core.graph_algorithms import GraphAlgorithms
+            algo = GraphAlgorithms(self.repo)
+            degree = algo.degree_centrality()
+            pr = algo.pagerank()
+        except Exception:
+            logger.debug("Graph algorithms unavailable for centrality analysis")
+            return patterns
+
+        if len(degree) < 3:
+            return patterns
+
+        # Hub-and-spoke: top entity has >3x the degree of the median
+        degrees = [d["total_degree"] for d in degree if d["total_degree"] > 0]
+        if degrees:
+            top_degree = degrees[0]
+            median_idx = len(degrees) // 2
+            median_degree = degrees[median_idx] if median_idx < len(degrees) else 1
+            if median_degree > 0 and top_degree > median_degree * 3:
+                top_entity = degree[0]
+                patterns.append(self._make_pattern(
+                    PatternType.CROSS_NETWORK,
+                    f"Hub-and-spoke: '{top_entity['title']}' has {top_entity['total_degree']} connections ({top_degree / median_degree:.1f}x median)",
+                    confidence=_compute_confidence(len(degrees), min(top_degree / max(median_degree * 3, 1), 1.0)),
+                    severity="info",
+                    suggested_action=f"'{top_entity['title']}' is a central hub — ensure connections are well-typed",
+                    current_value=float(top_degree),
+                ))
+
+        # PageRank outliers — top entity has >5x the average PR
+        if pr:
+            scores = [p["pagerank"] for p in pr]
+            avg_pr = sum(scores) / len(scores)
+            if avg_pr > 0:
+                top_pr = pr[0]
+                ratio = top_pr["pagerank"] / avg_pr
+                if ratio > 5:
+                    patterns.append(self._make_pattern(
+                        PatternType.CROSS_NETWORK,
+                        f"PageRank outlier: '{top_pr['title']}' is {ratio:.1f}x more influential than average",
+                        confidence=_compute_confidence(len(pr), min(ratio / 10, 1.0)),
+                        severity="info",
+                        suggested_action=f"'{top_pr['title']}' dominates graph influence — review if this matches importance",
+                        current_value=top_pr["pagerank"],
+                    ))
 
         return patterns
 

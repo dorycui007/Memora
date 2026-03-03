@@ -143,9 +143,7 @@ class BriefingCollector:
         if self._truth_layer:
             try:
                 stale = self._truth_layer.get_stale_facts()
-                result["stale_facts"] = [
-                    f for f in stale if f.get("confidence", 1.0) < 0.5
-                ]
+                result["stale_facts"] = stale
                 if result["stale_facts"]:
                     self._sources_used.append("truth_layer")
             except Exception:

@@ -61,19 +61,38 @@ CREATE INDEX IF NOT EXISTS idx_facts_node ON verified_facts(node_id);
 CREATE INDEX IF NOT EXISTS idx_facts_status ON verified_facts(status);
 """
 
+# Source-specific confidence calibration weights (P5).
+# Applied as a multiplier to raw confidence when depositing facts.
+# A weight of 1.0 means no adjustment; < 1.0 discounts the source.
+SOURCE_CONFIDENCE_WEIGHTS: dict[str, float] = {
+    "pipeline_auto": 0.85,
+    "archivist": 0.85,
+    "researcher": 0.75,
+    "outcome_tracker": 1.0,
+    "action_engine": 0.90,
+    "user": 1.0,
+}
+
+# Similarity threshold above which a new fact is considered a duplicate
+DUPLICATE_SIMILARITY_THRESHOLD = 0.92
+
 
 class TruthLayer:
     """Manages verified facts with lifecycle tracking and contradiction detection."""
 
-    def __init__(self, conn, embedding_engine=None) -> None:
+    def __init__(self, conn, embedding_engine=None, *, nli_model=None) -> None:
         """Initialize with a DuckDB connection (from GraphRepository._conn).
 
         Args:
             conn: DuckDB connection.
             embedding_engine: Optional EmbeddingEngine for semantic contradiction detection.
+            nli_model: Optional pre-loaded NLI CrossEncoder model. If not provided,
+                       NLI-based contradiction detection will attempt lazy loading.
         """
         self._conn = conn
         self._embedding_engine = embedding_engine
+        self._nli_model = nli_model
+        self._nli_load_failed = False
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -82,6 +101,20 @@ class TruthLayer:
             stmt = stmt.strip()
             if stmt:
                 self._conn.execute(stmt)
+
+    # ── P5: Source-calibrated confidence ──────────────────────────────
+
+    @staticmethod
+    def calibrate_confidence(raw_confidence: float, source: str) -> float:
+        """Apply source-specific calibration to a raw confidence score.
+
+        Different depositors produce confidence values on incomparable scales.
+        This normalizes them by applying a source-specific weight.
+        """
+        weight = SOURCE_CONFIDENCE_WEIGHTS.get(source, 0.80)
+        return round(min(1.0, max(0.0, raw_confidence * weight)), 4)
+
+    # ── Fact deposit (with P4 duplicate detection & P5 calibration) ──
 
     def deposit_fact(
         self,
@@ -93,8 +126,28 @@ class TruthLayer:
         verified_by: str = "archivist",
         recheck_interval_days: int = 90,
         metadata: dict[str, Any] | None = None,
-    ) -> str:
-        """Create a new verified fact. Returns fact ID."""
+        *,
+        calibrate: bool = True,
+    ) -> str | None:
+        """Create a new verified fact. Returns fact ID, or None if duplicate detected.
+
+        Args:
+            calibrate: If True (default), apply source-specific confidence calibration
+                       using ``verified_by`` as the source key.
+        """
+        # P5: calibrate confidence by source
+        if calibrate:
+            confidence = self.calibrate_confidence(confidence, verified_by)
+
+        # P4: duplicate detection — skip if a near-identical fact already exists
+        duplicate = self._find_duplicate(node_id, statement)
+        if duplicate is not None:
+            logger.info(
+                "Skipping duplicate fact for node %s (matches fact %s)",
+                node_id, duplicate["id"],
+            )
+            return None
+
         fact_id = str(uuid4())
         now = datetime.now(timezone.utc)
 
@@ -129,6 +182,42 @@ class TruthLayer:
         )
         logger.info("Deposited fact %s for node %s", fact_id, node_id)
         return fact_id
+
+    # ── P4: Duplicate detection ──────────────────────────────────────
+
+    def _find_duplicate(
+        self, node_id: str, statement: str
+    ) -> dict[str, Any] | None:
+        """Check if a near-identical fact already exists for this node.
+
+        Returns the existing fact dict if a duplicate is found, else None.
+        """
+        existing = self.query_facts(node_id=node_id, status=FactStatus.ACTIVE.value)
+        if not existing:
+            return None
+
+        # Exact match (case-insensitive)
+        lower = statement.lower().strip()
+        for fact in existing:
+            if fact["statement"].lower().strip() == lower:
+                return fact
+
+        # Semantic similarity check if embedding engine is available
+        if self._embedding_engine:
+            try:
+                from memora.vector.embeddings import cosine_similarity
+
+                new_emb = self._embedding_engine.embed_text(statement)["dense"]
+                for fact in existing:
+                    fact_emb = self._embedding_engine.embed_text(fact["statement"])["dense"]
+                    if cosine_similarity(new_emb, fact_emb) >= DUPLICATE_SIMILARITY_THRESHOLD:
+                        return fact
+            except Exception:
+                logger.debug("Semantic duplicate check failed", exc_info=True)
+
+        return None
+
+    # ── Fact retrieval ───────────────────────────────────────────────
 
     def get_fact(self, fact_id: str) -> dict[str, Any] | None:
         """Retrieve a fact by ID."""
@@ -182,6 +271,8 @@ class TruthLayer:
         ).fetchall()
         return [self._row_to_fact(row) for row in rows]
 
+    # ── P0 + P1: Contradiction detection ─────────────────────────────
+
     # Semantic similarity above this threshold flags a potential contradiction
     CONTRADICTION_SIMILARITY_THRESHOLD = 0.75
 
@@ -189,13 +280,23 @@ class TruthLayer:
         self,
         statement: str,
         node_id: str,
+        *,
+        cross_node: bool = False,
     ) -> list[dict[str, Any]]:
-        """Find existing active facts for the same node that might contradict.
+        """Find existing active facts that might contradict ``statement``.
 
-        Uses embedding cosine similarity when an embedding engine is available,
-        falling back to keyword overlap heuristic.
+        Args:
+            statement: The new claim to check.
+            node_id: The node this fact belongs to.
+            cross_node: If True, search ALL active facts instead of only
+                        those on the same ``node_id``. This catches
+                        contradictions across different entities.
         """
-        existing = self.query_facts(node_id=node_id, status=FactStatus.ACTIVE.value)
+        if cross_node:
+            existing = self.query_facts(status=FactStatus.ACTIVE.value, limit=500)
+        else:
+            existing = self.query_facts(node_id=node_id, status=FactStatus.ACTIVE.value)
+
         if not existing:
             return []
 
@@ -204,12 +305,77 @@ class TruthLayer:
         if not existing:
             return []
 
-        # Try semantic similarity first
+        # P1: try NLI first (most accurate)
+        nli_result = self._check_contradiction_nli(statement, existing)
+        if nli_result is not None:
+            return nli_result
+
+        # Fall back to embedding similarity
         if self._embedding_engine:
             return self._check_contradiction_semantic(statement, existing)
 
-        # Fallback: keyword overlap heuristic
+        # Last resort: keyword overlap heuristic
         return self._check_contradiction_keyword(statement, existing)
+
+    # ── P1: NLI-based contradiction detection ────────────────────────
+
+    def _get_nli_model(self):
+        """Lazy-load the NLI cross-encoder model."""
+        if self._nli_model is not None:
+            return self._nli_model
+        if self._nli_load_failed:
+            return None
+        try:
+            from sentence_transformers import CrossEncoder
+
+            self._nli_model = CrossEncoder("cross-encoder/nli-deberta-v3-small")
+            logger.info("Loaded NLI model cross-encoder/nli-deberta-v3-small")
+            return self._nli_model
+        except Exception:
+            logger.info("NLI model not available, falling back to similarity-based detection")
+            self._nli_load_failed = True
+            return None
+
+    def _check_contradiction_nli(
+        self,
+        statement: str,
+        existing: list[dict[str, Any]],
+    ) -> list[dict[str, Any]] | None:
+        """Use an NLI model to classify statement pairs as contradiction/entailment/neutral.
+
+        Returns a list of contradicting facts, or None if NLI is unavailable.
+        The NLI model outputs scores for [contradiction, entailment, neutral].
+        """
+        model = self._get_nli_model()
+        if model is None:
+            return None
+
+        try:
+            import math
+
+            pairs = [(statement, f["statement"]) for f in existing]
+            scores = model.predict(pairs)
+
+            contradictions = []
+            for i, fact in enumerate(existing):
+                score_row = scores[i]
+                # Label ordering for nli-deberta-v3: [contradiction, entailment, neutral]
+                # Model outputs raw logits; apply softmax to get probabilities
+                logits = [float(s) for s in score_row]
+                max_logit = max(logits)
+                exp_scores = [math.exp(s - max_logit) for s in logits]
+                total = sum(exp_scores)
+                probs = [e / total for e in exp_scores]
+                contradiction_score = probs[0]
+                if contradiction_score > 0.5:
+                    fact_copy = dict(fact)
+                    fact_copy["_contradiction_score"] = round(contradiction_score, 4)
+                    contradictions.append(fact_copy)
+
+            return contradictions
+        except Exception:
+            logger.warning("NLI contradiction check failed", exc_info=True)
+            return None
 
     def _check_contradiction_semantic(
         self,
@@ -263,6 +429,85 @@ class TruthLayer:
                 contradictions.append(fact)
 
         return contradictions
+
+    # ── P3: Confidence decay for stale facts ─────────────────────────
+
+    def decay_stale_confidence(
+        self,
+        decay_rate: float = 0.10,
+        stale_threshold: float = 0.4,
+    ) -> int:
+        """Reduce confidence for dynamic facts that have missed their recheck date.
+
+        For each overdue fact, confidence is reduced by ``decay_rate`` per missed
+        recheck interval. Facts whose confidence drops below ``stale_threshold``
+        are automatically marked STALE.
+
+        Returns the number of facts updated.
+        """
+        stale_facts = self.get_stale_facts()
+        if not stale_facts:
+            return 0
+
+        now = datetime.now(timezone.utc)
+        updated = 0
+
+        for fact in stale_facts:
+            next_check = fact["next_check"]
+            if isinstance(next_check, str):
+                next_check = datetime.fromisoformat(next_check)
+            if next_check.tzinfo is None:
+                next_check = next_check.replace(tzinfo=timezone.utc)
+
+            interval_days = fact.get("recheck_interval_days", 90)
+            if interval_days <= 0:
+                interval_days = 90
+
+            # How many full intervals have been missed
+            overdue_days = (now - next_check).total_seconds() / 86400
+            missed_intervals = max(1, int(overdue_days / interval_days) + 1)
+
+            old_confidence = fact["confidence"]
+            new_confidence = round(
+                max(0.0, old_confidence * ((1 - decay_rate) ** missed_intervals)), 4
+            )
+
+            updates: dict[str, Any] = {
+                "confidence": new_confidence,
+                "updated_at": now.isoformat(),
+            }
+
+            if new_confidence < stale_threshold:
+                updates["status"] = FactStatus.STALE.value
+
+            set_parts = []
+            vals: list[Any] = []
+            for k, v in updates.items():
+                set_parts.append(f"{k} = ?")
+                vals.append(v)
+            vals.append(fact["id"])
+
+            self._conn.execute(
+                f"UPDATE verified_facts SET {', '.join(set_parts)} WHERE id = ?",
+                vals,
+            )
+
+            self.record_check(
+                fact_id=fact["id"],
+                check_type="confidence_decay",
+                result="decayed" if new_confidence >= stale_threshold else "stale",
+                evidence=(
+                    f"Missed {missed_intervals} interval(s). "
+                    f"Confidence {old_confidence:.4f} -> {new_confidence:.4f}"
+                ),
+                checked_by="system",
+            )
+            updated += 1
+
+        logger.info("Confidence decay applied to %d fact(s)", updated)
+        return updated
+
+    # ── Fact checks & lifecycle ──────────────────────────────────────
 
     def record_check(
         self,

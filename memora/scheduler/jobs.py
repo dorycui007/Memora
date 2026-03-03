@@ -484,6 +484,41 @@ async def run_outcome_review(repo) -> None:
         logger.error("Job [outcome_review] failed after %s", _elapsed(start), exc_info=True)
 
 
+# ── Confidence Decay ────────────────────────────────────────────────
+
+async def run_confidence_decay(repo, truth_layer=None) -> None:
+    """Decay confidence for facts that have missed their recheck date.
+
+    Automatically reduces confidence and marks sufficiently degraded facts
+    as STALE so they surface in briefings and alerts.
+    """
+    start = time.time()
+    logger.info("Job [confidence_decay] started")
+    try:
+        if truth_layer is None:
+            from memora.core.truth_layer import TruthLayer
+            truth_layer = TruthLayer(repo.get_truth_layer_conn())
+
+        updated = truth_layer.decay_stale_confidence()
+
+        if updated:
+            nm = _get_notification_manager(repo)
+            nm.create_notification(
+                type="FACT_DECAY",
+                message=f"Confidence decayed for {updated} overdue fact(s). Review recommended.",
+                priority="low",
+                trigger_condition="confidence_decay",
+            )
+
+        logger.info(
+            "Job [confidence_decay] completed in %s — %d facts decayed",
+            _elapsed(start),
+            updated,
+        )
+    except Exception:
+        logger.error("Job [confidence_decay] failed after %s", _elapsed(start), exc_info=True)
+
+
 # ── Pattern Detection ───────────────────────────────────────────────
 
 async def run_pattern_detection(repo) -> None:
@@ -521,3 +556,86 @@ async def run_pattern_detection(repo) -> None:
         )
     except Exception:
         logger.error("Job [pattern_detection] failed after %s", _elapsed(start), exc_info=True)
+
+
+# ── Connector Sync ─────────────────────────────────────────────
+
+async def run_connector_sync(repo, settings=None) -> None:
+    """Sync all configured connectors and process new captures."""
+    start = time.time()
+    logger.info("Job [connector_sync] started")
+    try:
+        connectors_config = getattr(settings, "connectors", {}) if settings else {}
+        if not connectors_config:
+            logger.debug("No connectors configured, skipping sync")
+            return
+
+        from memora.connectors.base import get_default_registry
+
+        registry = get_default_registry()
+
+        # Create connector instances from config
+        for name, cfg in connectors_config.items():
+            ctype = cfg.get("type", "")
+            if ctype and not registry.get(name):
+                try:
+                    registry.create(name, ctype, cfg.get("config", {}))
+                except ValueError:
+                    logger.warning("Unknown connector type '%s' for '%s'", ctype, name)
+                    continue
+
+        # Sync all
+        records = registry.sync_all()
+
+        total_items = 0
+        total_errors = 0
+        for record in records:
+            captures = record.config.pop("captures", [])
+            total_items += len(captures)
+            total_errors += record.errors
+
+            # Store captures (dedup check)
+            for capture in captures:
+                if not repo.check_capture_exists(capture.content_hash):
+                    repo.create_capture(capture)
+
+            # Save sync record
+            try:
+                import json as _json
+                repo.get_truth_layer_conn().execute(
+                    """INSERT INTO sync_records (id, connector_name, connector_type, last_sync,
+                       items_synced, errors, cursor, config, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [
+                        record.id,
+                        record.connector_name,
+                        record.connector_type,
+                        record.last_sync,
+                        record.items_synced,
+                        record.errors,
+                        record.cursor,
+                        _json.dumps({}),
+                        record.created_at,
+                        record.updated_at,
+                    ],
+                )
+            except Exception:
+                logger.debug("Failed to save sync record for %s", record.connector_name)
+
+        if total_items > 0:
+            nm = _get_notification_manager(repo)
+            nm.create_notification(
+                type="CONNECTOR_SYNC",
+                message=f"Connector sync: {total_items} new item(s) from {len(records)} source(s).",
+                priority="low",
+                trigger_condition="connector_sync",
+            )
+
+        logger.info(
+            "Job [connector_sync] completed in %s — %d items, %d errors",
+            _elapsed(start),
+            total_items,
+            total_errors,
+        )
+    except Exception:
+        logger.error("Job [connector_sync] failed after %s", _elapsed(start), exc_info=True)

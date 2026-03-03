@@ -300,13 +300,19 @@ class MemoraApp:
             elif choice == "j":
                 from cli.commands.actions import cmd_actions
                 cmd_actions(self)
+            elif choice == "f":
+                from cli.commands.graph_intel import cmd_graph_intel
+                cmd_graph_intel(self)
+            elif choice == "s":
+                from cli.commands.connectors import cmd_connectors
+                cmd_connectors(self)
             elif choice == "0":
                 self._show_settings()
             elif choice in ("x", "clear"):
                 from cli.commands.clear_data import cmd_clear_data
                 cmd_clear_data(self)
             else:
-                print(f"  {C.DIM}Unknown command. Valid keys: c p r d i w s b k u t o a g n e j 0 x q{C.RESET}")
+                print(f"  {C.DIM}Unknown command. Valid keys: c p r d i w f s b k u t o a g n e j 0 x q{C.RESET}")
 
     def _show_settings(self):
         """Display current settings."""
