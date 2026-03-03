@@ -1,6 +1,13 @@
-"""Dossier command — deep search for everything about an entity."""
+"""Dossier command — intent-aware entity intelligence hub.
+
+Classifies user input into PROFILE / QUESTION / EXPLORE intents,
+then routes to enhanced profile view, graph-traversal Q&A, or investigate mode.
+"""
 
 from __future__ import annotations
+
+import re
+from enum import Enum, auto
 
 from cli.rendering import (
     C, DOSSIER_CONFIG, NETWORK_ICONS, NODE_ICONS,
@@ -9,51 +16,160 @@ from cli.rendering import (
 from cli.commands.browse import render_node_detail, render_ascii_graph
 
 
-def cmd_dossier(app):
-    subcommand_header(
-        title="DOSSIER",
-        symbol="◇",
-        color=C.ACCENT,
-        taglines=["Hybrid search · Vector + full-text", "Multi-signal scoring · Subgraph visualization"],
-        border="simple",
-    )
+# ── Intent Classification ────────────────────────────────────────
 
-    query = prompt(f"  {C.ACCENT}Entity name or keyword{C.RESET}\n  ❯ ")
-    if not query or query == "q":
-        return
+class DossierIntent(Enum):
+    PROFILE = auto()
+    QUESTION = auto()
+    EXPLORE = auto()
 
-    # 1. Hybrid search
-    title_matches = app.repo.search_by_title(query, limit=DOSSIER_CONFIG["title_search_limit"])
-    semantic_matches = _semantic_fallback(app, query)
+
+_QUESTION_WORDS = {"what", "how", "who", "where", "when", "why", "which", "does", "do", "is", "are", "can", "has", "have"}
+
+_EXPLORE_PATTERNS = [
+    re.compile(r"\bpath\s+between\b", re.I),
+    re.compile(r"\bconnection[s]?\s+between\b", re.I),
+    re.compile(r"\bhow\s+(?:are|is)\s+\w+\s+(?:and|&)\s+\w+\s+(?:connected|related|linked)\b", re.I),
+]
+
+_PROFILE_PATTERNS = [
+    re.compile(r"^who\s+is\b", re.I),
+    re.compile(r"^tell\s+me\s+about\b", re.I),
+    re.compile(r"^show\s+me\b", re.I),
+    re.compile(r"^details?\s+(?:on|for|about)\b", re.I),
+]
+
+# Keywords that signal a question about attributes/relationships
+_QUESTION_FOCUS_KEYWORDS = {
+    "status", "investigation", "commitment", "commitments", "decision", "decisions",
+    "goal", "goals", "progress", "outcome", "outcomes", "pattern", "patterns",
+    "responsible", "working", "involved", "budget", "timeline", "deadline",
+    "project", "projects", "task", "tasks", "role", "plan", "plans",
+}
+
+# Maps question focus keywords to expected node types and edge types for traversal
+QUESTION_TYPE_MAP: dict[str, tuple[list[str] | None, list[str] | None]] = {
+    "commitment":    (["COMMITMENT"], ["COMMITTED_TO"]),
+    "commitments":   (["COMMITMENT"], ["COMMITTED_TO"]),
+    "investigation": (["PROJECT", "GOAL"], ["RESPONSIBLE_FOR"]),
+    "decision":      (["DECISION"], ["DECIDED"]),
+    "decisions":     (["DECISION"], ["DECIDED"]),
+    "goal":          (["GOAL"], ["RESPONSIBLE_FOR", "PART_OF"]),
+    "goals":         (["GOAL"], ["RESPONSIBLE_FOR", "PART_OF"]),
+    "project":       (["PROJECT"], ["RESPONSIBLE_FOR", "PART_OF"]),
+    "projects":      (["PROJECT"], ["RESPONSIBLE_FOR", "PART_OF"]),
+    "task":          (["PROJECT", "GOAL", "COMMITMENT"], ["RESPONSIBLE_FOR", "PART_OF", "SUBTASK_OF"]),
+    "tasks":         (["PROJECT", "GOAL", "COMMITMENT"], ["RESPONSIBLE_FOR", "PART_OF", "SUBTASK_OF"]),
+    "budget":        (["FINANCIAL_ITEM"], ["RELATED_TO", "PART_OF"]),
+    "role":          (["PROJECT", "GOAL"], ["RESPONSIBLE_FOR", "MEMBER_OF"]),
+    "plan":          (["PROJECT", "GOAL"], ["PART_OF", "RESPONSIBLE_FOR"]),
+    "plans":         (["PROJECT", "GOAL"], ["PART_OF", "RESPONSIBLE_FOR"]),
+    "outcome":       (None, None),
+    "outcomes":      (None, None),
+    "pattern":       (None, None),
+    "patterns":      (None, None),
+    "status":        (None, None),
+    "progress":      (None, None),
+    "deadline":      (None, None),
+    "timeline":      (None, None),
+}
+
+
+def _classify_intent(query: str) -> tuple[DossierIntent, dict]:
+    """Classify user input into PROFILE/QUESTION/EXPLORE via heuristics.
+
+    Returns (intent, metadata) where metadata contains:
+      - entity_names: list[str] — extracted proper-noun candidates
+      - question_focus: str | None — attribute/relationship focus for QUESTION
+      - raw_query: str — original query
+    """
+    from memora.core.text_utils import extract_entity_candidates, extract_question_focus
+
+    entity_names = extract_entity_candidates(query)
+    question_focus = extract_question_focus(query)
+
+    metadata = {
+        "entity_names": entity_names,
+        "question_focus": question_focus,
+        "raw_query": query,
+    }
+
+    # EXPLORE: two+ entities with path/connection language
+    for pattern in _EXPLORE_PATTERNS:
+        if pattern.search(query):
+            return DossierIntent.EXPLORE, metadata
+
+    # PROFILE: explicit profile phrases
+    for pattern in _PROFILE_PATTERNS:
+        if pattern.search(query):
+            return DossierIntent.PROFILE, metadata
+
+    # QUESTION: question word + focus keyword overlap
+    words_lower = set(query.lower().split())
+    has_question_word = bool(words_lower & _QUESTION_WORDS)
+    has_focus_keyword = bool(words_lower & _QUESTION_FOCUS_KEYWORDS)
+    has_question_mark = "?" in query
+
+    if (has_question_word or has_question_mark) and has_focus_keyword:
+        return DossierIntent.QUESTION, metadata
+
+    # If it looks like a question but no focus keyword, still try QUESTION
+    if has_question_mark and question_focus:
+        return DossierIntent.QUESTION, metadata
+
+    # Default: PROFILE (bare entity name or generic lookup)
+    return DossierIntent.PROFILE, metadata
+
+
+# ── Entity Resolution ────────────────────────────────────────────
+
+def _resolve_entity(app, query: str, entity_names: list[str] | None = None):
+    """Search and score entities, returning the selected entity or None.
+
+    When entity_names are provided (from intent classification), searches for
+    each name individually instead of the full question string.
+    """
+    # 1. Hybrid search — use entity names when available, fall back to full query
+    search_terms = entity_names if entity_names else [query]
 
     seen_ids: dict[str, object] = {}
-    for node in title_matches:
-        seen_ids[str(node.id)] = node
-    for node in semantic_matches:
-        nid = str(node.id)
-        if nid not in seen_ids:
-            seen_ids[nid] = node
+    for term in search_terms:
+        for node in app.repo.search_by_title(term, limit=DOSSIER_CONFIG["title_search_limit"]):
+            seen_ids.setdefault(str(node.id), node)
+
+    # Semantic fallback on the full query
+    for node in _semantic_fallback(app, query):
+        seen_ids.setdefault(str(node.id), node)
+
+    # Proper-noun candidate fallback
+    if not seen_ids:
+        from memora.core.text_utils import extract_entity_candidates
+        for candidate in extract_entity_candidates(query):
+            for node in app.repo.search_by_title(candidate, limit=DOSSIER_CONFIG["title_search_limit"]):
+                seen_ids.setdefault(str(node.id), node)
 
     all_matches = list(seen_ids.values())
     if not all_matches:
         print(f"\n  {C.DIM}No entities matching '{query}'.{C.RESET}")
-        return
+        return None
 
-    # Multi-signal scoring
-    lower_q = query.lower()
+    # Multi-signal scoring — compare against individual entity candidates
+    from memora.core.text_utils import extract_entity_candidates as _extract
+    candidates = entity_names or _extract(query)
+    lower_candidates = [c.lower() for c in candidates] if candidates else [query.lower()]
     scored: list[tuple[float, object]] = []
     for node in all_matches:
         lt = node.title.lower()
-        if lt == lower_q:
-            title_score = 0.50
-        elif lt.startswith(lower_q):
-            title_score = 0.40
-        elif lower_q.startswith(lt):
-            title_score = 0.35
-        elif lower_q in lt:
-            title_score = 0.25
-        else:
-            title_score = 0.0
+        title_score = 0.0
+        for lc in lower_candidates:
+            if lt == lc:
+                title_score = max(title_score, 0.50)
+            elif lt.startswith(lc):
+                title_score = max(title_score, 0.40)
+            elif lc.startswith(lt):
+                title_score = max(title_score, 0.35)
+            elif lc in lt:
+                title_score = max(title_score, 0.25)
         conf_score = node.confidence * 0.25
         decay_score = (node.decay_score or 0.5) * 0.15
         access_score = min(node.access_count / 100, 1.0) * 0.10
@@ -77,18 +193,269 @@ def cmd_dossier(app):
     else:
         entity = scored[0][1]
 
+    return entity
+
+
+# ── Graph Traversal Q&A ──────────────────────────────────────────
+
+def _answer_entity_question(app, entity, metadata: dict) -> dict | None:
+    """Deterministic graph traversal to answer a question about an entity.
+
+    Returns a structured result dict or None if no relevant data found:
+      {
+        "relevant_nodes": [...],
+        "relevant_edges": [...],
+        "outcomes": [...],
+        "patterns": [...],
+        "facts": [...],
+      }
+    """
+    question_focus = metadata.get("question_focus", "") or ""
+    focus_words = set(question_focus.lower().split())
+
+    # Determine target node/edge types from question focus
+    target_node_types: set[str] = set()
+    target_edge_types: set[str] = set()
+    check_properties = False
+
+    for word in focus_words:
+        if word in QUESTION_TYPE_MAP:
+            node_types, edge_types = QUESTION_TYPE_MAP[word]
+            if node_types is None:
+                check_properties = True
+            else:
+                target_node_types.update(node_types)
+            if edge_types:
+                target_edge_types.update(edge_types)
+
+    # Get 2-hop neighborhood
+    subgraph = app.repo.get_neighborhood(entity.id, hops=DOSSIER_CONFIG["neighborhood_hops"])
+    entity_str = str(entity.id)
+    nodes_by_id = {str(n.id): n for n in subgraph.nodes}
+
+    # Filter neighbors
+    relevant_nodes = []
+    relevant_edges = []
+
+    for edge in subgraph.edges:
+        src, tgt = str(edge.source_id), str(edge.target_id)
+        neighbor_id = tgt if src == entity_str else src
+        neighbor = nodes_by_id.get(neighbor_id)
+        if not neighbor:
+            continue
+
+        etype = edge.edge_type.value if hasattr(edge.edge_type, "value") else str(edge.edge_type)
+        ntype = neighbor.node_type.value if hasattr(neighbor.node_type, "value") else str(neighbor.node_type)
+
+        score = 0.0
+
+        # Type matching
+        if target_node_types and ntype in target_node_types:
+            score += 0.4
+        if target_edge_types and etype in target_edge_types:
+            score += 0.3
+
+        # Property matching (for status/progress queries)
+        if check_properties and neighbor.properties:
+            for key in ("status", "progress", "state", "phase"):
+                if key in neighbor.properties:
+                    score += 0.5
+                    break
+
+        # Keyword overlap with title and content
+        neighbor_text = (neighbor.title + " " + (neighbor.content or "")).lower()
+        overlap = sum(1 for w in focus_words if w in neighbor_text)
+        if overlap:
+            score += 0.2 * min(overlap, 3)
+
+        if score > 0:
+            relevant_nodes.append((score, neighbor))
+            relevant_edges.append(edge)
+
+    # Sort by relevance score
+    relevant_nodes.sort(key=lambda x: x[0], reverse=True)
+
+    if not relevant_nodes and not check_properties:
+        return None
+
+    # Enrich top results with outcomes, patterns, facts
+    top_node_ids = [str(n.id) for _, n in relevant_nodes[:10]]
+    all_ids = [entity_str] + top_node_ids
+
+    outcomes = []
+    patterns = []
+    facts = []
+    for nid in all_ids[:5]:
+        outcomes.extend(app.repo.get_outcomes_for_node(nid))
+        patterns.extend(app.repo.get_patterns_for_node(nid, limit=DOSSIER_CONFIG["patterns_limit"]))
+
+    facts = _get_facts(app, entity_str)
+
+    # Filter outcomes/patterns by keyword relevance
+    if focus_words:
+        outcomes = [o for o in outcomes if any(w in (o.get("outcome_text", "") or "").lower() for w in focus_words)] or outcomes[:5]
+        patterns = [p for p in patterns if any(w in (p.get("description", "") or "").lower() for w in focus_words)] or patterns[:5]
+
+    return {
+        "relevant_nodes": [(s, n) for s, n in relevant_nodes[:10]],
+        "relevant_edges": relevant_edges[:10],
+        "outcomes": outcomes[:DOSSIER_CONFIG["outcomes_limit"]],
+        "patterns": patterns[:DOSSIER_CONFIG["patterns_limit"]],
+        "facts": [f for f in facts if any(w in (f.get("statement", "") or "").lower() for w in focus_words)][:5] if focus_words else facts[:5],
+    }
+
+
+# ── LLM Answer Synthesis ─────────────────────────────────────────
+
+def _synthesize_answer(app, query: str, entity, traversal: dict) -> str | None:
+    """Use LLM to synthesize a natural language answer from traversal results.
+
+    Falls back to None if no API key available, letting caller render structured data.
+    """
+    if not app._has_api_key:
+        return None
+
+    try:
+        import openai
+        from memora.core.retry import call_with_retry
+
+        # Build context from traversal results
+        context_parts = []
+        context_parts.append(f"Entity: {entity.title} (type: {entity.node_type.value})")
+        if entity.content:
+            context_parts.append(f"Description: {entity.content[:200]}")
+
+        for score, node in traversal["relevant_nodes"][:5]:
+            ntype = node.node_type.value if hasattr(node.node_type, "value") else str(node.node_type)
+            line = f"- {node.title} ({ntype})"
+            if node.content:
+                line += f": {node.content[:150]}"
+            if node.properties:
+                props = ", ".join(f"{k}={v}" for k, v in node.properties.items())
+                line += f" [{props}]"
+            context_parts.append(line)
+
+        for outcome in traversal["outcomes"][:3]:
+            context_parts.append(f"- Outcome: {outcome.get('outcome_text', '')}")
+
+        for pattern in traversal["patterns"][:3]:
+            context_parts.append(f"- Pattern: {pattern.get('description', '')}")
+
+        for fact in traversal["facts"][:3]:
+            context_parts.append(f"- Fact: {fact.get('statement', '')}")
+
+        context = "\n".join(context_parts)
+
+        system_prompt = (
+            "You answer questions about entities in a personal knowledge graph. "
+            "Be concise and direct. Cite specific data from the context. "
+            "If the data is insufficient, say so clearly."
+        )
+        user_content = f"Question: {query}\n\nContext from knowledge graph:\n{context}"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ]
+
+        client = openai.OpenAI(api_key=app.settings.openai_api_key)
+
+        # gpt-5-nano is a reasoning model — give generous token budget
+        response = call_with_retry(
+            client.chat.completions.create,
+            model="gpt-5-nano",
+            messages=messages,
+            max_completion_tokens=2048,
+            max_retries=2,
+        )
+        choice = response.choices[0]
+        raw_content = choice.message.content
+        finish = choice.finish_reason
+
+        # If reasoning exhausted tokens with no visible output, retry with more
+        if finish == "length" and not (raw_content or "").strip():
+            response = call_with_retry(
+                client.chat.completions.create,
+                model="gpt-5-nano",
+                messages=messages,
+                max_completion_tokens=4096,
+                max_retries=2,
+            )
+            raw_content = response.choices[0].message.content
+
+        answer = (raw_content or "").strip()
+        return answer if answer else None
+    except Exception as e:
+        print(f"  {C.DIM}(synthesis unavailable: {e}){C.RESET}")
+        return None
+
+
+def _render_answer(query: str, entity, traversal: dict, synthesis: str | None):
+    """Render the Q&A answer — synthesized text or structured fallback."""
+    print(f"\n{divider('═', C.INTEL)}")
+    print(f"  {C.BOLD}{C.INTEL}ANSWER{C.RESET}  {C.DIM}re: {entity.title}{C.RESET}")
+    print(divider('─', C.INTEL))
+
+    if synthesis:
+        # Wrap and print synthesized answer
+        import textwrap
+        for line in textwrap.wrap(synthesis, min(76, __import__('shutil').get_terminal_size((80, 24)).columns - 6)):
+            print(f"  {C.BASE}{line}{C.RESET}")
+    else:
+        print(f"  {C.DIM}(No LLM available — showing structured results){C.RESET}")
+
+    # Always show supporting evidence
+    if traversal["relevant_nodes"]:
+        print(f"\n  {C.BOLD}Relevant entities:{C.RESET}")
+        for score, node in traversal["relevant_nodes"][:5]:
+            icon = NODE_ICONS.get(node.node_type.value, " ")
+            ntype = node.node_type.value if hasattr(node.node_type, "value") else str(node.node_type)
+            title = node.title[:40]
+            extras = []
+            if node.properties:
+                for key in ("status", "progress", "state", "phase"):
+                    if key in node.properties:
+                        extras.append(f"{key}={node.properties[key]}")
+            extra_str = f"  {C.DIM}{', '.join(extras)}{C.RESET}" if extras else ""
+            print(f"    {icon} {C.BOLD}{title}{C.RESET}  {C.DIM}[{ntype}]{C.RESET}{extra_str}")
+
+    if traversal["outcomes"]:
+        print(f"\n  {C.BOLD}Outcomes:{C.RESET}")
+        for outcome in traversal["outcomes"][:3]:
+            text = outcome.get("outcome_text", "")[:70]
+            rating = outcome.get("rating", "")
+            rating_str = f"  {C.DIM}({rating}){C.RESET}" if rating else ""
+            print(f"    {C.SIGNAL}>{C.RESET} {text}{rating_str}")
+
+    if traversal["patterns"]:
+        print(f"\n  {C.BOLD}Patterns:{C.RESET}")
+        for pattern in traversal["patterns"][:3]:
+            desc = pattern.get("description", "")[:70]
+            conf = pattern.get("confidence", 0)
+            print(f"    {C.INTEL}~{C.RESET} {desc}  {C.DIM}conf={conf:.0%}{C.RESET}")
+
+    if traversal["facts"]:
+        print(f"\n  {C.BOLD}Supporting facts:{C.RESET}")
+        for fact in traversal["facts"][:3]:
+            print(f"    {C.GREEN}✓{C.RESET} {fact.get('statement', '')[:70]}")
+
+
+# ── Enhanced Intelligence Profile ─────────────────────────────────
+
+def _render_intelligence_profile(app, entity):
+    """Render the full enhanced entity profile with timeline, patterns, outcomes, bridges."""
+    entity_str = str(entity.id)
+
+    # Entity card (existing)
     print()
     render_node_detail(entity)
 
-    # 2. Neighborhood
+    # Neighborhood + connections (existing)
     subgraph = app.repo.get_neighborhood(entity.id, hops=DOSSIER_CONFIG["neighborhood_hops"])
-
-    entity_str = str(entity.id)
     min_strength = DOSSIER_CONFIG["connection_min_strength"]
     connections = _compute_connections(entity_str, subgraph)
     top_connections = _render_connections(connections, entity_str, min_strength)
 
-    # 3. Vector-similar entities
+    # Related entities (existing)
     neighborhood_ids = {str(n.id) for n in subgraph.nodes}
     related = _find_related(app, entity, neighborhood_ids)
     if related:
@@ -102,7 +469,7 @@ def cmd_dossier(app):
             print(f"  {C.MAGENTA}~{C.RESET} {icon} {C.BOLD}{rel_node.title[:35]:<35}{C.RESET} "
                   f"{nets}  {C.DIM}similarity {pct}{C.RESET}")
 
-    # 4. Facts
+    # Facts (existing)
     facts = _get_facts(app, entity_str)
     if facts:
         print(f"\n{divider('─', C.GREEN)}")
@@ -121,7 +488,95 @@ def cmd_dossier(app):
     else:
         print(f"\n  {C.DIM}No verified facts for this entity.{C.RESET}")
 
-    # 5. Graph summary
+    # ── NEW: Timeline ─────────────────────────────────────────
+    try:
+        temporal = app.repo.get_temporal_neighbors(entity_str)
+        if temporal:
+            print(f"\n{divider('─', C.SIGNAL)}")
+            print(f"  {C.BOLD}{C.SIGNAL}TIMELINE ({len(temporal)}){C.RESET}  {C.DIM}temporal connections{C.RESET}")
+            print(divider())
+            for item in temporal[:10]:
+                etype = item.get("edge_type", "")
+                title = item.get("title", "unknown")[:40]
+                ntype = item.get("node_type", "")
+                created = item.get("created_at", "")
+                icon = NODE_ICONS.get(ntype, " ")
+                date_str = str(created)[:10] if created else ""
+                print(f"  {C.SIGNAL}>{C.RESET} {icon} {C.BOLD}{title}{C.RESET}  "
+                      f"{C.DIM}[{etype}]  {date_str}{C.RESET}")
+    except Exception:
+        pass
+
+    # ── NEW: Patterns ─────────────────────────────────────────
+    try:
+        patterns = app.repo.get_patterns_for_node(entity_str, limit=DOSSIER_CONFIG["patterns_limit"])
+        if patterns:
+            print(f"\n{divider('─', C.INTEL)}")
+            print(f"  {C.BOLD}{C.INTEL}PATTERNS ({len(patterns)}){C.RESET}  {C.DIM}detected behavioral patterns{C.RESET}")
+            print(divider())
+            for pat in patterns:
+                desc = pat.get("description", "")[:65]
+                conf = pat.get("confidence", 0)
+                ptype = pat.get("pattern_type", "")
+                action = pat.get("suggested_action", "")
+                print(f"  {C.INTEL}~{C.RESET} {desc}")
+                detail_parts = []
+                if ptype:
+                    detail_parts.append(ptype)
+                detail_parts.append(f"conf={conf:.0%}")
+                if action:
+                    detail_parts.append(f"action: {action[:30]}")
+                print(f"    {C.DIM}{' | '.join(detail_parts)}{C.RESET}")
+    except Exception:
+        pass
+
+    # ── NEW: Outcomes ─────────────────────────────────────────
+    try:
+        outcomes = app.repo.get_outcomes_for_node(entity_str)
+        if outcomes:
+            display_outcomes = outcomes[:DOSSIER_CONFIG["outcomes_limit"]]
+            print(f"\n{divider('─', C.CONFIRM)}")
+            print(f"  {C.BOLD}{C.CONFIRM}OUTCOMES ({len(outcomes)}){C.RESET}  {C.DIM}recorded results & consequences{C.RESET}")
+            print(divider())
+            for outcome in display_outcomes:
+                text = outcome.get("outcome_text", "")[:65]
+                rating = outcome.get("rating", "")
+                recorded = outcome.get("recorded_at", "")
+                date_str = str(recorded)[:10] if recorded else ""
+                rating_color = C.CONFIRM if rating in ("positive", "success") else C.SIGNAL if rating in ("mixed", "neutral") else C.DANGER if rating in ("negative", "failure") else C.DIM
+                print(f"  {C.CONFIRM}>{C.RESET} {text}")
+                detail_parts = []
+                if rating:
+                    detail_parts.append(f"{rating_color}{rating}{C.RESET}")
+                if date_str:
+                    detail_parts.append(f"{C.DIM}{date_str}{C.RESET}")
+                if detail_parts:
+                    print(f"    {'  '.join(detail_parts)}")
+            if len(outcomes) > DOSSIER_CONFIG["outcomes_limit"]:
+                print(f"    {C.DIM}... and {len(outcomes) - DOSSIER_CONFIG['outcomes_limit']} more{C.RESET}")
+    except Exception:
+        pass
+
+    # ── NEW: Bridges ──────────────────────────────────────────
+    try:
+        bridges = app.repo.get_bridges_for_nodes([entity_str], limit=DOSSIER_CONFIG["bridges_limit"])
+        if bridges:
+            print(f"\n{divider('─', C.WARM)}")
+            print(f"  {C.BOLD}{C.WARM}BRIDGES ({len(bridges)}){C.RESET}  {C.DIM}cross-network connections{C.RESET}")
+            print(divider())
+            for bridge in bridges:
+                src_net = bridge.get("source_network", "?")
+                tgt_net = bridge.get("target_network", "?")
+                desc = bridge.get("description", "")[:55]
+                sim = bridge.get("similarity", 0)
+                validated = bridge.get("llm_validated", False)
+                check = f"{C.CONFIRM}✓{C.RESET}" if validated else f"{C.DIM}?{C.RESET}"
+                print(f"  {C.WARM}◇{C.RESET} {desc}")
+                print(f"    {check}  {C.DIM}{src_net} → {tgt_net}  similarity={sim:.0%}{C.RESET}")
+    except Exception:
+        pass
+
+    # Graph summary
     print(f"\n{divider('─', C.BLUE)}")
     n_nodes = len(subgraph.nodes)
     n_edges = len(subgraph.edges)
@@ -129,12 +584,32 @@ def cmd_dossier(app):
           f"{C.BOLD}{n_nodes}{C.RESET} nodes  {C.DIM}|{C.RESET}  "
           f"{C.BOLD}{n_edges}{C.RESET} edges  {C.DIM}(2-hop neighborhood){C.RESET}")
 
-    drill_hint = f"[1-{len(top_connections)}] Drill into connection  " if connections else ""
-    print(f"\n  {C.DIM}{drill_hint}[v] Visualize graph map  [b] Back{C.RESET}")
+    return subgraph, connections, top_connections
+
+
+# ── Interactive Actions ───────────────────────────────────────────
+
+def _interactive_actions(app, entity, subgraph, connections, top_connections):
+    """Enhanced interactive action menu."""
+    entity_str = str(entity.id)
+    min_strength = DOSSIER_CONFIG["connection_min_strength"]
+
+    drill_hint = f"[1-{len(top_connections)}] Drill  " if top_connections else ""
+    print(f"\n  {C.DIM}{drill_hint}[t] Timeline  [p] Patterns  [o] Outcomes  [v] Visualize  [i] Investigate  [q] Back{C.RESET}")
     action = prompt("dossier> ").strip()
+
     if action == "v":
         render_ascii_graph(subgraph, center_id=entity.id)
-    elif action.isdigit() and connections:
+    elif action == "i":
+        from cli.commands.investigate import cmd_investigate
+        cmd_investigate(app, prefill_query=f"tell me about {entity.title}")
+    elif action == "t":
+        _drill_timeline(app, entity_str)
+    elif action == "p":
+        _drill_patterns(app, entity_str)
+    elif action == "o":
+        _drill_outcomes(app, entity_str)
+    elif action.isdigit() and top_connections:
         idx = int(action) - 1
         if 0 <= idx < len(top_connections):
             _, _, drill_node = top_connections[idx]
@@ -148,6 +623,147 @@ def cmd_dossier(app):
         else:
             print(f"  {C.DIM}Invalid selection.{C.RESET}")
 
+
+def _drill_timeline(app, entity_str: str):
+    """Show expanded timeline view."""
+    try:
+        temporal = app.repo.get_temporal_neighbors(entity_str)
+        if not temporal:
+            print(f"\n  {C.DIM}No timeline data.{C.RESET}")
+            return
+        print(f"\n{divider('═', C.SIGNAL)}")
+        print(f"  {C.BOLD}{C.SIGNAL}FULL TIMELINE ({len(temporal)}){C.RESET}")
+        print(divider('─', C.SIGNAL))
+        for item in temporal:
+            etype = item.get("edge_type", "")
+            title = item.get("title", "unknown")[:50]
+            ntype = item.get("node_type", "")
+            created = item.get("created_at", "")
+            icon = NODE_ICONS.get(ntype, " ")
+            date_str = str(created)[:10] if created else ""
+            print(f"  {C.SIGNAL}>{C.RESET} {icon} {C.BOLD}{title}{C.RESET}  "
+                  f"{C.DIM}[{etype}]  {date_str}{C.RESET}")
+    except Exception as e:
+        print(f"  {C.DIM}(timeline unavailable: {e}){C.RESET}")
+
+
+def _drill_patterns(app, entity_str: str):
+    """Show expanded patterns view."""
+    try:
+        patterns = app.repo.get_patterns_for_node(entity_str, limit=20)
+        if not patterns:
+            print(f"\n  {C.DIM}No patterns detected.{C.RESET}")
+            return
+        print(f"\n{divider('═', C.INTEL)}")
+        print(f"  {C.BOLD}{C.INTEL}ALL PATTERNS ({len(patterns)}){C.RESET}")
+        print(divider('─', C.INTEL))
+        for pat in patterns:
+            desc = pat.get("description", "")
+            conf = pat.get("confidence", 0)
+            ptype = pat.get("pattern_type", "")
+            action = pat.get("suggested_action", "")
+            status = pat.get("status", "")
+            print(f"  {C.INTEL}~{C.RESET} {desc[:70]}")
+            detail_parts = []
+            if ptype:
+                detail_parts.append(ptype)
+            detail_parts.append(f"conf={conf:.0%}")
+            if status:
+                detail_parts.append(status)
+            if action:
+                detail_parts.append(f"action: {action[:40]}")
+            print(f"    {C.DIM}{' | '.join(detail_parts)}{C.RESET}")
+    except Exception as e:
+        print(f"  {C.DIM}(patterns unavailable: {e}){C.RESET}")
+
+
+def _drill_outcomes(app, entity_str: str):
+    """Show expanded outcomes view."""
+    try:
+        outcomes = app.repo.get_outcomes_for_node(entity_str)
+        if not outcomes:
+            print(f"\n  {C.DIM}No outcomes recorded.{C.RESET}")
+            return
+        print(f"\n{divider('═', C.CONFIRM)}")
+        print(f"  {C.BOLD}{C.CONFIRM}ALL OUTCOMES ({len(outcomes)}){C.RESET}")
+        print(divider('─', C.CONFIRM))
+        for outcome in outcomes:
+            text = outcome.get("outcome_text", "")
+            rating = outcome.get("rating", "")
+            recorded = outcome.get("recorded_at", "")
+            date_str = str(recorded)[:10] if recorded else ""
+            rating_color = C.CONFIRM if rating in ("positive", "success") else C.SIGNAL if rating in ("mixed", "neutral") else C.DANGER if rating in ("negative", "failure") else C.DIM
+            print(f"  {C.CONFIRM}>{C.RESET} {text[:70]}")
+            detail_parts = []
+            if rating:
+                detail_parts.append(f"{rating_color}{rating}{C.RESET}")
+            if date_str:
+                detail_parts.append(f"{C.DIM}{date_str}{C.RESET}")
+            if detail_parts:
+                print(f"    {'  '.join(detail_parts)}")
+    except Exception as e:
+        print(f"  {C.DIM}(outcomes unavailable: {e}){C.RESET}")
+
+
+# ── Main Flow ─────────────────────────────────────────────────────
+
+def cmd_dossier(app):
+    subcommand_header(
+        title="DOSSIER",
+        symbol="◇",
+        color=C.ACCENT,
+        taglines=["Intent-aware entity intelligence", "Graph traversal · Pattern analysis · Q&A"],
+        border="simple",
+    )
+
+    query = prompt(f"  {C.ACCENT}Entity name or question{C.RESET}\n  ❯ ")
+    if not query or query == "q":
+        return
+
+    # 1. Classify intent
+    intent, metadata = _classify_intent(query)
+
+    # 2. Route EXPLORE to investigate
+    if intent == DossierIntent.EXPLORE:
+        print(f"\n  {C.DIM}Routing to investigation mode...{C.RESET}")
+        from cli.commands.investigate import cmd_investigate
+        cmd_investigate(app, prefill_query=query)
+        return
+
+    # 3. Resolve entity
+    entity = _resolve_entity(app, query, metadata["entity_names"])
+    if not entity:
+        return
+
+    # 4. Branch on intent
+    if intent == DossierIntent.QUESTION:
+        # Graph traversal Q&A
+        traversal = _answer_entity_question(app, entity, metadata)
+        if traversal and (traversal["relevant_nodes"] or traversal["outcomes"] or traversal["patterns"]):
+            synthesis = _synthesize_answer(app, query, entity, traversal)
+            _render_answer(query, entity, traversal, synthesis)
+
+            # Offer to see full profile or investigate deeper
+            print(f"\n  {C.DIM}[f] Full profile  [i] Investigate deeper  [q] Back{C.RESET}")
+            action = prompt("dossier> ").strip()
+            if action == "f":
+                subgraph, connections, top_connections = _render_intelligence_profile(app, entity)
+                _interactive_actions(app, entity, subgraph, connections, top_connections)
+            elif action == "i":
+                from cli.commands.investigate import cmd_investigate
+                cmd_investigate(app, prefill_query=query)
+        else:
+            # No traversal results — fall back to enhanced profile
+            print(f"\n  {C.DIM}No direct answer found — showing full profile.{C.RESET}")
+            subgraph, connections, top_connections = _render_intelligence_profile(app, entity)
+            _interactive_actions(app, entity, subgraph, connections, top_connections)
+    else:
+        # PROFILE intent — enhanced profile
+        subgraph, connections, top_connections = _render_intelligence_profile(app, entity)
+        _interactive_actions(app, entity, subgraph, connections, top_connections)
+
+
+# ── Existing Helpers (preserved) ──────────────────────────────────
 
 def _compute_connections(node_id_str, subgraph, exclude_id=None):
     direct_edges = [e for e in subgraph.edges

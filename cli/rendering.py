@@ -631,6 +631,11 @@ DOSSIER_CONFIG = {
     "connection_min_strength": 0.55,
     "facts_limit": 20,
     "neighborhood_hops": 2,
+    "timeline_days": 90,
+    "patterns_limit": 5,
+    "outcomes_limit": 10,
+    "bridges_limit": 10,
+    "answer_max_tokens": 512,
 }
 
 

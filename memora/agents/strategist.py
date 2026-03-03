@@ -315,24 +315,8 @@ class StrategistAgent:
         if not self._repo:
             return
 
-        # Extract candidate entity names: capitalized words that aren't
-        # common English words at the start of a sentence.
-        _skip = {
-            "What", "How", "Who", "Where", "When", "Why", "Which",
-            "Is", "Are", "Was", "Were", "Do", "Does", "Did", "Can",
-            "Could", "Should", "Would", "Will", "The", "A", "An",
-            "My", "His", "Her", "Their", "Our", "Its", "That", "This",
-            "Tell", "Show", "Give", "Get", "Has", "Have", "Had",
-        }
-        words = query.split()
-        entity_candidates: list[str] = []
-        for word in words:
-            # Strip trailing punctuation and possessive 's
-            clean = word.rstrip(".,;:!?'\"")
-            if clean.endswith("'s") or clean.endswith("\u2019s"):
-                clean = clean[:-2]
-            if clean and clean[0].isupper() and clean not in _skip and len(clean) > 1:
-                entity_candidates.append(clean)
+        from memora.core.text_utils import extract_entity_candidates
+        entity_candidates = extract_entity_candidates(query)
 
         if not entity_candidates:
             return

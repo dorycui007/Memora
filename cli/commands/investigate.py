@@ -57,7 +57,7 @@ Conversation continuity:
 """
 
 
-def cmd_investigate(app):
+def cmd_investigate(app, prefill_query: str | None = None):
     """Free-form natural language investigation mode."""
     if not app._has_api_key:
         print(f"  {C.YELLOW}Investigation mode requires an OpenAI API key.{C.RESET}")
@@ -72,8 +72,14 @@ def cmd_investigate(app):
 
     _print_header()
 
+    first_query = prefill_query
     while True:
-        raw = prompt("investigate> ")
+        if first_query:
+            raw = first_query
+            print(f"\n{C.BOLD}{C.ACCENT}investigate> {C.RESET}{raw}")
+            first_query = None
+        else:
+            raw = prompt("investigate> ")
         if raw in ("b", "back", "q", "quit"):
             return
         if not raw:
