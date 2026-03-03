@@ -4,19 +4,14 @@ from __future__ import annotations
 
 from cli.rendering import (
     C, NETWORK_ICONS, NODE_ICONS, divider, horizontal_bar,
-    menu_option, prompt, render_profile_card, subcommand_header,
+    menu_option, people_header, prompt, render_profile_card, subcommand_header,
 )
 
 
 def cmd_people(app):
     """People intelligence sub-menu."""
     while True:
-        subcommand_header(
-            title="PEOPLE INTEL",
-            symbol="◉",
-            color=C.ACCENT,
-            border="simple",
-        )
+        people_header()
         print(menu_option("1", "Directory",   "Paginated people list"))
         print(menu_option("2", "Profile",     "Individual relationship view"))
         print(menu_option("3", "Statistics",  "People analytics dashboard"))
@@ -174,7 +169,6 @@ def _directory_view(app):
         elif choice == "<" and page > 0:
             page -= 1
         elif choice == "s":
-            _change_sort(sort_by, order)
             print(f"  {C.DIM}Sort options: name, connections, last_activity, decay, confidence{C.RESET}")
             s = prompt("sort by> ")
             if s in ("name", "title"):
@@ -202,10 +196,6 @@ def _directory_view(app):
             except (ValueError, IndexError):
                 pass
 
-
-def _change_sort(current_sort, current_order):
-    """Just a label helper."""
-    pass
 
 
 # ── Profile View ──────────────────────────────────────────────

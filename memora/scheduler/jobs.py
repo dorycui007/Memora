@@ -135,8 +135,9 @@ def _validate_bridges_with_llm(repo, bridges: list[dict], settings=None) -> int:
             "Bridges:\n" + "\n".join(bridge_descriptions)
         )
 
+        from memora.config import DEFAULT_LLM_MODEL
         response = client.responses.create(
-            model="gpt-5-nano",
+            model=DEFAULT_LLM_MODEL,
             input=prompt,
             max_output_tokens=2048,
         )

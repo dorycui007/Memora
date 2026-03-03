@@ -27,7 +27,10 @@ def cmd_proposals(app):
         title="PROPOSALS",
         symbol="◆",
         color=C.ACCENT,
-        taglines=[f"Review queue{count_str}"],
+        taglines=[
+            f"Review and approve AI-extracted graph changes{count_str}",
+            "Accept or reject before they enter your knowledge graph",
+        ],
         border="simple",
     )
 

@@ -263,12 +263,12 @@ def command_deck(
 
     # Command groups — flat layout
     groups = [
-        ("INGEST", [("c", "Capture"), ("p", "Profile"), ("r", f"Proposals{proposals_extra}")]),
+        ("INGEST", [("c", "Capture"), ("s", "Connectors"), ("r", f"Proposals{proposals_extra}")]),
         ("QUERY", [("d", "Dossier"), ("i", "Investigate"), ("w", "Browse")]),
-        ("INTEL", [("b", "Briefing"), ("k", "Critique"), ("u", "Council")]),
+        ("INTEL", [("h", "Horizon"), ("b", "Briefing"), ("f", "Graph Intel"), ("u", "Council")]),
         ("ANALYSIS", [("t", "Timeline"), ("o", "Outcomes"), ("a", "Patterns"), ("g", "Stats")]),
         ("NETWORK", [("n", "Networks"), ("e", "People"), ("j", "Actions")]),
-        ("SYSTEM", [("0", "Settings"), ("x", "Clear data"), ("q", "Quit")]),
+        ("SYSTEM", [("p", "Profile"), ("k", "Critique"), ("0", "Settings"), ("q", "Quit")]),
     ]
 
     if is_wide:
@@ -481,6 +481,255 @@ def subcommand_header(
         print()
 
 
+def capture_header():
+    """Render the capture command ASCII header."""
+    A = C.ACCENT
+    G = C.GHOST
+    B = C.BASE
+    D = C.DIM
+    R = C.RESET
+
+    print(f"""
+ {A}╔══════════════════════════════════════════════════════════╗{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {A}◆  C A P T U R E{R}                                     {A}║{R}
+ {A}║{R}   {G}──────────────────{R}                                    {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {G}░░░░░░░░░░░{R}     {B}┌─────────┐{R}     {B}┌─────────┐{R}          {A}║{R}
+ {A}║{R}   {G}░ RAW TEXT ░{R} ──▶ {B}│ EXTRACT │{R} ──▶ {B}│ PROPOSE │{R}          {A}║{R}
+ {A}║{R}   {G}░░░░░░░░░░░{R}     {B}└─────────┘{R}     {B}└─────────┘{R}          {A}║{R}
+ {A}║{R}                     {D}AI Pipeline{R}     {D}Graph Delta{R}          {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {D}Record a thought, event, decision, or observation.{R}    {A}║{R}
+ {A}║{R}   {D}Multi-line input · 2,000 char · Ctrl+C to cancel{R}      {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
+def dossier_header():
+    """Render the dossier command ASCII header."""
+    I = C.INTEL
+    A = C.ACCENT
+    F = C.FRAME
+    D = C.DIM
+    R = C.RESET
+
+    print(f"""
+ {I}╔══════════════════════════════════════════════════════════╗{R}
+ {I}║{R}                                                         {I}║{R}
+ {I}║{R}   {I}◈  D O S S I E R{R}                                     {I}║{R}
+ {I}║{R}   {F}────────────────{R}                                      {I}║{R}
+ {I}║{R}                                                         {I}║{R}
+ {I}║{R}   {F}┌──────────────────────────┐{R}                          {I}║{R}
+ {I}║{R}   {F}│{R} {A}████████{R}  {F}ENTITY FILE{R}    {F}│{R}                          {I}║{R}
+ {I}║{R}   {F}│{R} {F}┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄{R} {F}│{R}                          {I}║{R}
+ {I}║{R}   {F}│{R} {F}▸{R} Connections  {F}▸{R} Facts   {F}│{R}                          {I}║{R}
+ {I}║{R}   {F}│{R} {F}▸{R} Timeline    {F}▸{R} Patterns {F}│{R}                          {I}║{R}
+ {I}║{R}   {F}│{R} {F}▸{R} Outcomes     {F}▸{R} Bridges {F}│{R}                          {I}║{R}
+ {I}║{R}   {F}└──────────────────────────┘{R}                          {I}║{R}
+ {I}║{R}                                                         {I}║{R}
+ {I}║{R}   {D}Type a name, question, or topic to investigate.{R}       {I}║{R}
+ {I}║{R}   {D}Supports PROFILE · QUESTION · EXPLORE intents.{R}        {I}║{R}
+ {I}║{R}                                                         {I}║{R}
+ {I}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
+def investigate_header():
+    """Render the investigate command ASCII header."""
+    A = C.ACCENT
+    D = C.DIM
+    S = C.SIGNAL
+    CF = C.CONFIRM
+    G = C.GHOST
+    R = C.RESET
+
+    print(f"""
+ {A}╔══════════════════════════════════════════════════════════╗{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {A}◈  I N V E S T I G A T E{R}                             {A}║{R}
+ {A}║{R}   {D}────────────────────────{R}                              {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}          {A}╱{R}  {D}· ·{R}  {A}╲{R}                                      {A}║{R}
+ {A}║{R}        {A}╱{R}  {D}·    ·{R}  {A}╲{R}                                     {A}║{R}
+ {A}║{R}       {A}│{R} {D}·{R}    {A}◎{R}   {D}·{R} {A}│{R}          {S}SCANNING{R}                  {A}║{R}
+ {A}║{R}        {A}╲{R}  {D}·    ·{R}  {A}╱{R}          {CF}▓▓▓▓▓▓▓{G}░░░{R}                {A}║{R}
+ {A}║{R}          {A}╲{R}  {D}· ·{R}  {A}╱{R}                                      {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {D}Natural language graph exploration.{R}                   {A}║{R}
+ {A}║{R}   {D}Ask anything — who, what, how are things connected.{R}   {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
+def graph_intel_header():
+    """Render the graph intelligence command ASCII header."""
+    I = C.INTEL
+    A = C.ACCENT
+    F = C.FRAME
+    R = C.RESET
+
+    print(f"""
+ {I}╔══════════════════════════════════════════════════════════╗{R}
+ {I}║{R}                                                         {I}║{R}
+ {I}║{R}   {I}◆  G R A P H   I N T E L L I G E N C E{R}              {I}║{R}
+ {I}║{R}   {F}──────────────────────────────────────{R}                {I}║{R}
+ {I}║{R}                                                         {I}║{R}
+ {I}║{R}       {A}◉{F}━━━━━━{A}◉{R}            {A}◉{R}                             {I}║{R}
+ {I}║{R}      {F}╱ ╲{R}      {F}╲{R}          {F}╱│╲{R}                             {I}║{R}
+ {I}║{R}     {A}◉{R}   {A}◉{R}      {A}◉{F}━━━━━━{A}◉{R} {A}◉{R} {A}◉{R} {A}◉{R}                           {I}║{R}
+ {I}║{R}      {F}╲ ╱{R}      {F}╱{R}                                          {I}║{R}
+ {I}║{R}       {A}◉{F}━━━━━━{A}◉{R}                                          {I}║{R}
+ {I}║{R}                                                         {I}║{R}
+ {I}║{R}   {F}Centrality · Communities · Pathfinding · Anomalies{R}    {I}║{R}
+ {I}║{R}                                                         {I}║{R}
+ {I}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
+def connectors_header():
+    """Render the connectors command ASCII header."""
+    W = C.WARM
+    A = C.ACCENT
+    D = C.DIM
+    R = C.RESET
+
+    print(f"""
+ {W}╔══════════════════════════════════════════════════════════╗{R}
+ {W}║{R}                                                         {W}║{R}
+ {W}║{R}   {W}⟐  C O N N E C T O R S{R}                              {W}║{R}
+ {W}║{R}   {D}──────────────────────{R}                                {W}║{R}
+ {W}║{R}                                                         {W}║{R}
+ {W}║{R}   {D}┌─────┐{R}         {A}┌─────────┐{R}         {D}┌──────┐{R}          {W}║{R}
+ {W}║{R}   {D}│ CAL │{W}━━━━━━▶{R}  {A}│  ◆───── │{R}  {W}◀━━━━━{R} {D}│  MD  │{R}          {W}║{R}
+ {W}║{R}   {D}└─────┘{R}         {A}│  GRAPH  │{R}         {D}└──────┘{R}          {W}║{R}
+ {W}║{R}   {D}┌─────┐{R}         {A}│  ─────◆ │{R}                           {W}║{R}
+ {W}║{R}   {D}│ ··· │{W}━━━━━━▶{R}  {A}└─────────┘{R}                           {W}║{R}
+ {W}║{R}   {D}└─────┘{R}                                               {W}║{R}
+ {W}║{R}                                                         {W}║{R}
+ {W}║{R}   {D}Multi-source data fusion · Calendar · Markdown{R}        {W}║{R}
+ {W}║{R}                                                         {W}║{R}
+ {W}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
+def people_header():
+    """Render the people intel command ASCII header."""
+    A = C.ACCENT
+    F = C.FRAME
+    D = C.DIM
+    R = C.RESET
+
+    print(f"""
+ {A}╔══════════════════════════════════════════════════════════╗{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {A}◉  P E O P L E   I N T E L{R}                           {A}║{R}
+ {A}║{R}   {F}──────────────────────────{R}                            {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}            {A}◉{F}━━━━━━━{A}◉{R}                                   {A}║{R}
+ {A}║{R}           {F}╱ ╲     ╱ ╲{R}                                   {A}║{R}
+ {A}║{R}          {A}◉{R}   {A}◉{F}━━━{A}◉{R}   {A}◉{R}                                 {A}║{R}
+ {A}║{R}           {F}╲ ╱     ╲ ╱{R}                                   {A}║{R}
+ {A}║{R}            {A}◉{F}━━━━━━━{A}◉{R}                                   {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {D}Relationship directory · Strength scoring · Decay{R}     {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
+def patterns_header():
+    """Render the patterns command ASCII header."""
+    S = C.SIGNAL
+    F = C.FRAME
+    D = C.DIM
+    R = C.RESET
+
+    print(f"""
+ {S}╔══════════════════════════════════════════════════════════╗{R}
+ {S}║{R}                                                         {S}║{R}
+ {S}║{R}   {S}▣  P A T T E R N S{R}                                   {S}║{R}
+ {S}║{R}   {F}──────────────────{R}                                    {S}║{R}
+ {S}║{R}                                                         {S}║{R}
+ {S}║{R}   {S}╭──╮ ╭───╮      ╭──╮╭───╮  ╭╮{R}                       {S}║{R}
+ {S}║{R}   {S}│  ╰─╯   ╰───╮╭─╯  ╰╯   ╰──╯│{R}                       {S}║{R}
+ {S}║{R}   {S}╯             ╰╯              ╰{R}                       {S}║{R}
+ {S}║{R}   {F}▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔{R}                      {S}║{R}
+ {S}║{R}                                                         {S}║{R}
+ {S}║{R}   {D}Behavioral trends · Commitments · Goals · Decisions{R}   {S}║{R}
+ {S}║{R}                                                         {S}║{R}
+ {S}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
+def stats_header():
+    """Render the stats command ASCII header."""
+    A = C.ACCENT
+    G = C.GHOST
+    D = C.DIM
+    F = C.FRAME
+    R = C.RESET
+
+    print(f"""
+ {A}╔══════════════════════════════════════════════════════════╗{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {A}▣  S T A T S{R}                                         {A}║{R}
+ {A}║{R}   {F}────────────{R}                                          {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}        {A}██{G}▓░░░░░{R}  {D}EVENT{R}                                  {A}║{R}
+ {A}║{R}      {A}████{G}▓░░░░░{R}  {D}PERSON{R}                                 {A}║{R}
+ {A}║{R}    {A}██████{G}▓░░░░░{R}  {D}DECISION{R}                               {A}║{R}
+ {A}║{R}   {A}████████{G}▓░░░░{R}  {D}GOAL{R}                                   {A}║{R}
+ {A}║{R}   {F}▔▔▔▔▔▔▔▔▔▔▔▔{R}                                         {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {D}Graph metrics · Type distribution · Network health{R}    {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
+def outcomes_header():
+    """Render the outcomes command ASCII header."""
+    A = C.ACCENT
+    CF = C.CONFIRM
+    DG = C.DANGER
+    D = C.DIM
+    R = C.RESET
+
+    print(f"""
+ {A}╔══════════════════════════════════════════════════════════╗{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {A}▣  O U T C O M E S{R}                                   {A}║{R}
+ {A}║{R}   {D}──────────────────{R}                                    {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}              {A}◆{R} Decision                                 {A}║{R}
+ {A}║{R}             {D}╱ ╲{R}                                         {A}║{R}
+ {A}║{R}           {D}╱     ╲{R}                                       {A}║{R}
+ {A}║{R}         {CF}✓ Win{R}     {DG}✕ Loss{R}                                {A}║{R}
+ {A}║{R}         {D}│{R}         {D}│{R}                                     {A}║{R}
+ {A}║{R}         {A}◆{R}         {A}◆{R}                                     {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {D}Decision tracker · Outcome recording · Win/loss{R}       {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
+def actions_header():
+    """Render the actions command ASCII header."""
+    A = C.ACCENT
+    CF = C.CONFIRM
+    D = C.DIM
+    R = C.RESET
+
+    print(f"""
+ {A}╔══════════════════════════════════════════════════════════╗{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {A}◉  A C T I O N S{R}                                     {A}║{R}
+ {A}║{R}   {D}────────────────{R}                                      {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {A}◆{R} Select {A}━━▶{R} {A}◆{R} Configure {A}━━▶{R} {A}◆{R} Execute {A}━━▶{R} {CF}✓{R} Done     {A}║{R}
+ {A}║{R}   {D}│{R}            {D}│{R}               {D}│{R}             {D}│{R}          {A}║{R}
+ {A}║{R}   {D}Node{R}         {D}Params{R}          {D}Effects{R}       {D}Audit{R}      {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}║{R}   {D}Kinetic graph operations · Execute and track{R}          {A}║{R}
+ {A}║{R}                                                         {A}║{R}
+ {A}╚══════════════════════════════════════════════════════════╝{R}""")
+
+
 def council_header():
     """Render the compact council agent-tree header."""
     I = C.INTEL
@@ -492,9 +741,37 @@ def council_header():
     print(f"\n    {A}{C.BOLD}C O U N C I L{R}")
     print(f"    ═════════════════")
     print(f"    {I}ARCHIVIST{R} {F}─┬─{R} {I}STRATEGIST{R} {F}─┬─{R} {I}RESEARCHER{R}")
-    print(f"              {F}└──────{R} {A}{C.BOLD}▼{R} {F}──────┘{R}")
+    print(f"               {F}└──────{R} {A}{C.BOLD}▼{R} {F}──────┘{R}")
     print(f"    {D}Multi-agent deliberation · Confidence scoring · Citations{R}")
     print()
+
+
+def horizon_header():
+    """Render the Horizon operational awareness header."""
+    S = C.SIGNAL
+    G = C.GHOST
+    D = C.DIM
+    F = C.FRAME
+    R = C.RESET
+    DA = C.DANGER
+    W = C.WARM
+    A = C.ACCENT
+
+    print(f"""
+ {S}╔══════════════════════════════════════════════════════════╗{R}
+ {S}║{R}                                                         {S}║{R}
+ {S}║{R}   {S}▣  H O R I Z O N{R}                                     {S}║{R}
+ {S}║{R}   {G}──────────────────{R}                                    {S}║{R}
+ {S}║{R}                                                         {S}║{R}
+ {S}║{R}   {DA}▓▓▓▓▓▓▓▓▓{S}▓▓▓▓▓▓▓▓▓{W}▓▓▓▓▓▓▓▓▓▓▓▓▓{A}▓▓▓▓▓▓▓▓{G}░░░░░░░░░{R}  {S}║{R}
+ {S}║{R}   {DA}OVERDUE{R}    {S}TODAY{R}     {W}THIS WEEK{R}     {A}MONTH{R}      {D}LATER{R}   {S}║{R}
+ {S}║{R}                                                         {S}║{R}
+ {S}║{R}    {C.CONFIRM}[x]{R} {F}────{R} {DA}[!]{R} {F}────{R} {F}[ ]{R} {F}────{R} {F}[ ]{R} {F}────{R} {F}[ ]{R} {F}────▶{R}       {S}║{R}
+ {S}║{R}                                                         {S}║{R}
+ {S}║{R}   {D}Operational awareness · Graph-weighted priority{R}       {S}║{R}
+ {S}║{R}   {D}Time buckets · Impact radius · Pattern alerts{R}        {S}║{R}
+ {S}║{R}                                                         {S}║{R}
+ {S}╚══════════════════════════════════════════════════════════╝{R}""")
 
 
 def briefing_header(operator_name: str = ""):
@@ -530,12 +807,6 @@ def timeline_header():
     print(f"    {F}──{A}●{F}────────{A}●{F}──────{A}●{F}───────{A}●{F}────{A}●{F}────{A}●{F}──────{A}●{F}──── {A}▶{R}")
     print()
 
-
-def networks_header():
-    """Render the network health header."""
-    print(f"\n    {C.CONFIRM}◉{C.RESET}  {C.ACCENT}{C.BOLD}N E T W O R K   H E A L T H{C.RESET}")
-    print(f"    ═══════════════════════════")
-    print()
 
 
 # ── Goodbye Card ──────────────────────────────────────────────────

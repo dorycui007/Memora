@@ -100,6 +100,7 @@ def cmd_profile(app):
         symbol="◆",
     )
 
+    print(f"\n  {C.DIM}Your identity node · Role, location, interests, networks{C.RESET}")
     print(f"\n{divider()}")
     print(menu_option("1", "Update profile",  "Tell Memora about yourself"))
     print(menu_option("2", "View galaxy",     "See your galaxy graph"))

@@ -9,8 +9,8 @@ import sys
 import textwrap
 
 from cli.rendering import (
-    C, NODE_ICONS, NETWORK_ICONS, box, divider, horizontal_bar, prompt, spinner, term_width,
-    subcommand_header,
+    C, NODE_ICONS, NETWORK_ICONS, box, capture_header, divider, horizontal_bar,
+    prompt, spinner, term_width, subcommand_header,
 )
 from cli.tracker import PipelineTracker
 
@@ -31,16 +31,7 @@ _PIPELINE_ERROR_HINTS = {
 
 def cmd_capture(app, force: bool = False):
     limit = CAPTURE_CHAR_LIMIT
-    subcommand_header(
-        title="CAPTURE",
-        symbol="◆",
-        color=C.ACCENT,
-        taglines=[
-            "Record a thought, event, decision, or observation.",
-            f"Multi-line input · {limit:,} char recommended · Ctrl+C to cancel",
-        ],
-        border="simple",
-    )
+    capture_header()
     print(f"  {C.DIM}Type your text below. Press Enter twice to submit, or 'cancel' to abort.{C.RESET}")
     print(f"  {C.DIM}{'─' * 60}{C.RESET}")
 

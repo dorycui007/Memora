@@ -8,35 +8,29 @@ from __future__ import annotations
 
 from cli.rendering import (
     C, NODE_ICONS,
-    divider, horizontal_bar, prompt, subcommand_header,
+    divider, graph_intel_header, horizontal_bar, menu_option, prompt, subcommand_header,
 )
 
 
 def cmd_graph_intel(app):
     """Interactive graph intelligence command."""
-    subcommand_header(
-        title="GRAPH INTELLIGENCE",
-        symbol="◆",
-        color=C.INTEL,
-        taglines=["Centrality · Communities · Pathfinding · Anomalies · Link Prediction"],
-        border="simple",
-    )
+    graph_intel_header()
 
     from memora.core.graph_algorithms import GraphAlgorithms
     algo = GraphAlgorithms(app.repo)
 
     while True:
         print(f"\n  {C.BOLD}Analysis Options:{C.RESET}")
-        print(f"    {C.INTEL}1{C.RESET}  Centrality Rankings (PageRank)")
-        print(f"    {C.INTEL}2{C.RESET}  Degree Centrality")
-        print(f"    {C.INTEL}3{C.RESET}  Betweenness Centrality (Bridge Entities)")
-        print(f"    {C.INTEL}4{C.RESET}  Community Detection")
-        print(f"    {C.INTEL}5{C.RESET}  Shortest Path")
-        print(f"    {C.INTEL}6{C.RESET}  Link Prediction")
-        print(f"    {C.INTEL}7{C.RESET}  Structural Anomalies")
-        print(f"    {C.INTEL}8{C.RESET}  Temporal Anomalies")
-        print(f"    {C.INTEL}9{C.RESET}  Full Intelligence Summary")
-        print(f"    {C.DIM}q{C.RESET}  Back")
+        print(menu_option("1", "PageRank Centrality",      "Most influential entities by importance"))
+        print(menu_option("2", "Degree Centrality",         "Most connected entities by edge count"))
+        print(menu_option("3", "Betweenness Centrality",    "Bridge entities linking clusters"))
+        print(menu_option("4", "Community Detection",        "Discover entity clusters"))
+        print(menu_option("5", "Shortest Path",              "Find path between two entities"))
+        print(menu_option("6", "Link Prediction",            "Suggest missing connections"))
+        print(menu_option("7", "Structural Anomalies",       "Orphans, density issues, outliers"))
+        print(menu_option("8", "Temporal Anomalies",         "Activity bursts and sudden silence"))
+        print(menu_option("9", "Full Summary",               "Comprehensive intelligence report"))
+        print(menu_option("q", "Back",                       ""))
 
         choice = prompt("graph-intel> ").strip()
         if choice in ("q", "quit", ""):
@@ -186,7 +180,11 @@ def _render_shortest_path(app, algo):
 
     print(f"\n  Finding paths: {C.BOLD}{source.title}{C.RESET} → {C.BOLD}{target.title}{C.RESET}")
 
-    paths = algo.k_shortest_paths(str(source.id), str(target.id), k=3)
+    # Exclude the "You" hub node — it connects to everything and trivializes paths
+    from memora.graph.repository import YOU_NODE_ID
+    excluded = {YOU_NODE_ID} - {str(source.id), str(target.id)}
+
+    paths = algo.k_shortest_paths(str(source.id), str(target.id), k=3, excluded_nodes=excluded)
     if not paths:
         print(f"  {C.SIGNAL}No path found between these entities.{C.RESET}")
         return

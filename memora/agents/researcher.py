@@ -21,7 +21,9 @@ from memora.core.truth_layer import FactLifecycle, TruthLayer
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gpt-5-nano"
+from memora.config import DEFAULT_LLM_MODEL
+
+DEFAULT_MODEL = DEFAULT_LLM_MODEL
 
 # PII patterns for anonymization
 _EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")

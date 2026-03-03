@@ -29,6 +29,7 @@ from .models import (
     ProposalStatus,
     Subgraph,
     NODE_TYPE_MODEL_MAP,
+    parse_properties,
 )
 
 logger = logging.getLogger(__name__)
@@ -1806,8 +1807,7 @@ class GraphRepository:
         result = []
         for row in rows:
             d = dict(zip(cols, row))
-            if isinstance(d["properties"], str):
-                d["properties"] = json.loads(d["properties"])
+            d["properties"] = parse_properties(d["properties"])
             result.append(d)
         return result
 
@@ -2056,8 +2056,7 @@ class GraphRepository:
         result = []
         for row in rows:
             d = dict(zip(cols, row))
-            if isinstance(d["properties"], str):
-                d["properties"] = json.loads(d["properties"])
+            d["properties"] = parse_properties(d["properties"])
             result.append(d)
         return result
 
@@ -2320,8 +2319,7 @@ class GraphRepository:
         result = []
         for row in rows:
             d = dict(zip(cols, row))
-            if isinstance(d["properties"], str):
-                d["properties"] = json.loads(d["properties"])
+            d["properties"] = parse_properties(d["properties"])
             result.append(d)
         return result
 
@@ -2798,6 +2796,32 @@ class GraphRepository:
             return {"total_people": 0, "network_distribution": {}, "most_connected": [],
                     "most_recent": [], "avg_connections": 0.0, "edge_type_distribution": [],
                     "disconnected_count": 0}
+
+    def get_strongest_person_ties(self, limit: int = 5) -> list[dict[str, Any]]:
+        """Return the strongest person-to-person edges by weight and confidence."""
+        try:
+            rows = self._conn.execute(
+                """SELECT e.source_id, e.target_id, e.edge_type,
+                          e.weight, e.confidence, e.updated_at,
+                          s.title AS source_title, t.title AS target_title
+                   FROM edges e
+                   JOIN nodes s ON s.id = e.source_id AND s.node_type = 'PERSON' AND s.deleted = FALSE
+                   JOIN nodes t ON t.id = e.target_id AND t.node_type = 'PERSON' AND t.deleted = FALSE
+                   ORDER BY e.weight DESC, e.confidence DESC
+                   LIMIT ?""",
+                [limit],
+            ).fetchall()
+            return [
+                {
+                    "source_id": r[0], "target_id": r[1], "edge_type": r[2],
+                    "weight": r[3], "confidence": r[4], "updated_at": r[5],
+                    "source_title": r[6], "target_title": r[7],
+                }
+                for r in rows
+            ]
+        except Exception:
+            logger.warning("get_strongest_person_ties failed", exc_info=True)
+            return []
 
     def get_mutual_connections(self, person_a_id: str, person_b_id: str) -> list[dict[str, Any]]:
         """Find nodes connected to both persons with edge context for each side."""

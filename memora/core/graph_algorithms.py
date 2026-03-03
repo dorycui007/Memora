@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 import math
 from collections import defaultdict
+
+from memora.graph.models import enum_val
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -59,12 +61,12 @@ class GraphAlgorithms:
         for node in all_nodes:
             nid = str(node.id)
             node_data[nid] = {
-                "type": node.node_type.value if hasattr(node.node_type, "value") else str(node.node_type),
+                "type": enum_val(node.node_type),
                 "title": node.title,
                 "confidence": node.confidence,
                 "decay_score": node.decay_score or 0.5,
                 "access_count": node.access_count,
-                "networks": [n.value if hasattr(n, "value") else str(n) for n in node.networks],
+                "networks": [enum_val(n) for n in node.networks],
                 "created_at": node.created_at,
                 "updated_at": node.updated_at,
                 "tags": node.tags or [],
@@ -87,7 +89,7 @@ class GraphAlgorithms:
                 if src not in node_data or tgt not in node_data:
                     continue
 
-                etype = edge.edge_type.value if hasattr(edge.edge_type, "value") else str(edge.edge_type)
+                etype = enum_val(edge.edge_type)
                 attrs = {
                     "weight": edge.weight,
                     "confidence": edge.confidence,
@@ -424,7 +426,8 @@ class GraphAlgorithms:
     # ── Shortest Path (Dijkstra) ──────────────────────────────────
 
     def shortest_path(
-        self, source_id: str, target_id: str, weighted: bool = True
+        self, source_id: str, target_id: str, weighted: bool = True,
+        excluded_nodes: set[str] | None = None,
     ) -> dict | None:
         """Find shortest path between two nodes using Dijkstra.
 
@@ -432,12 +435,14 @@ class GraphAlgorithms:
             source_id: Source node ID.
             target_id: Target node ID.
             weighted: Use edge weights (True) or hop count (False).
+            excluded_nodes: Node IDs to exclude from paths (e.g. the "You" hub node).
 
         Returns:
             {path: [{node_id, title, type}], total_weight, hops} or None.
         """
         g = self._build_graph()
         adj = g["adj"]
+        excluded = excluded_nodes or set()
 
         if source_id not in g["nodes"] or target_id not in g["nodes"]:
             return None
@@ -464,6 +469,8 @@ class GraphAlgorithms:
                 continue
 
             for v, attrs in undirected.get(u, {}).items():
+                if v in excluded:
+                    continue
                 w = (1.0 / max(attrs.get("weight", 1.0), 0.01)) if weighted else 1.0
                 new_dist = d + w
                 if new_dist < dist.get(v, float("inf")):
@@ -500,13 +507,17 @@ class GraphAlgorithms:
     # ── K-Shortest Paths ──────────────────────────────────────────
 
     def k_shortest_paths(
-        self, source_id: str, target_id: str, k: int = 3
+        self, source_id: str, target_id: str, k: int = 3,
+        excluded_nodes: set[str] | None = None,
     ) -> list[dict]:
         """Find k shortest paths using Yen's algorithm.
 
+        Args:
+            excluded_nodes: Node IDs to exclude from paths (e.g. the "You" hub node).
+
         Returns list of {path, total_weight, hops}.
         """
-        first = self.shortest_path(source_id, target_id)
+        first = self.shortest_path(source_id, target_id, excluded_nodes=excluded_nodes)
         if not first:
             return []
 
@@ -546,8 +557,10 @@ class GraphAlgorithms:
                         if u in undirected.get(v, {}):
                             removed_edges.append((v, u, undirected[v].pop(u)))
 
-                # Remove root path nodes (except spur)
+                # Remove root path nodes (except spur) + globally excluded nodes
                 removed_nodes = set(root_path[:-1])
+                if excluded_nodes:
+                    removed_nodes |= excluded_nodes
 
                 # Find spur path
                 spur_result = self._dijkstra_on(

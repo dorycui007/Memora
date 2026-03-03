@@ -8,7 +8,9 @@ import re
 
 import openai
 
-from cli.rendering import C, NETWORK_ICONS, NODE_ICONS, divider, health_bar, prompt, render_search_card, spinner
+from cli.rendering import C, NETWORK_ICONS, NODE_ICONS, divider, health_bar, investigate_header, prompt, render_search_card, spinner
+from memora.config import DEFAULT_LLM_MODEL
+from memora.graph.models import enum_val
 from memora.core.retry import call_with_retry
 
 logger = logging.getLogger(__name__)
@@ -382,7 +384,7 @@ def _gather_context(app, entities: list[dict], action: str, raw_result: dict) ->
                             other_id = str(e.target_id) if str(e.source_id) == entity["id"] else str(e.source_id)
                             other = connected_nodes.get(other_id)
                             if other:
-                                etype = e.edge_type.value if hasattr(e.edge_type, "value") else str(e.edge_type)
+                                etype = enum_val(e.edge_type)
                                 conn_names.append(f"{other.title} ({etype})")
                         if conn_names:
                             parts.append(f"{entity['title']} is connected to: {', '.join(conn_names[:8])}")
@@ -441,7 +443,7 @@ def _synthesize_answer(
         # so it has room for internal reasoning plus visible output.
         response = call_with_retry(
             client.chat.completions.create,
-            model="gpt-5-nano",
+            model=DEFAULT_LLM_MODEL,
             messages=[
                 {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
@@ -458,7 +460,7 @@ def _synthesize_answer(
         if finish == "length" and not (raw_content or "").strip():
             response = call_with_retry(
                 client.chat.completions.create,
-                model="gpt-5-nano",
+                model=DEFAULT_LLM_MODEL,
                 messages=[
                     {"role": "system", "content": _SYNTHESIS_SYSTEM_PROMPT},
                     {"role": "user", "content": user_content},
@@ -476,14 +478,7 @@ def _synthesize_answer(
 
 
 def _print_header():
-    from cli.rendering import subcommand_header
-    subcommand_header(
-        title="INVESTIGATE",
-        symbol="◇",
-        color=C.ACCENT,
-        taglines=["Link analysis · Path-finding · Natural language queries", "Type 'back' to return."],
-        border="simple",
-    )
+    investigate_header()
 
 
 def _build_context_summary(action: str, entities: list[dict], results: list[dict]) -> str:
@@ -565,7 +560,7 @@ def _interpret_query(client: openai.OpenAI, user_input: str, history: list[dict]
         try:
             response = call_with_retry(
                 client.chat.completions.create,
-                model="gpt-5-nano",
+                model=DEFAULT_LLM_MODEL,
                 messages=messages,
                 max_completion_tokens=attempt_tokens,
             )

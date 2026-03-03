@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from memora.graph.models import parse_properties
 from memora.graph.repository import GraphRepository
 
 logger = logging.getLogger(__name__)
@@ -66,11 +66,7 @@ class GapDetector:
 
         results: list[dict[str, Any]] = []
         for d in rows:
-            if isinstance(d["properties"], str):
-                try:
-                    d["properties"] = json.loads(d["properties"])
-                except (json.JSONDecodeError, TypeError):
-                    d["properties"] = {}
+            d["properties"] = parse_properties(d["properties"])
             d["stall_days"] = stall_days
             results.append(d)
         return results
@@ -86,11 +82,7 @@ class GapDetector:
 
         results: list[dict[str, Any]] = []
         for d in rows:
-            if isinstance(d["properties"], str):
-                try:
-                    d["properties"] = json.loads(d["properties"])
-                except (json.JSONDecodeError, TypeError):
-                    d["properties"] = {}
+            d["properties"] = parse_properties(d["properties"])
             d["stall_days"] = stall_days
             results.append(d)
         return results
@@ -105,11 +97,7 @@ class GapDetector:
 
         results: list[dict[str, Any]] = []
         for d in rows:
-            if isinstance(d["properties"], str):
-                try:
-                    d["properties"] = json.loads(d["properties"])
-                except (json.JSONDecodeError, TypeError):
-                    d["properties"] = {}
+            d["properties"] = parse_properties(d["properties"])
             results.append(d)
         return results
 
@@ -123,10 +111,6 @@ class GapDetector:
 
         results: list[dict[str, Any]] = []
         for d in rows:
-            if isinstance(d["properties"], str):
-                try:
-                    d["properties"] = json.loads(d["properties"])
-                except (json.JSONDecodeError, TypeError):
-                    d["properties"] = {}
+            d["properties"] = parse_properties(d["properties"])
             results.append(d)
         return results

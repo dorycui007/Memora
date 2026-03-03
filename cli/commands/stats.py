@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cli.rendering import C, NODE_ICONS, NETWORK_ICONS, horizontal_bar, divider, subcommand_header
+from cli.rendering import C, NODE_ICONS, NETWORK_ICONS, horizontal_bar, divider, stats_header, subcommand_header
 
 _NET_COLORS = {
     "ACADEMIC": C.BLUE, "PROFESSIONAL": C.CYAN,
@@ -20,12 +20,7 @@ def cmd_stats(app):
     nodes_by_type = stats.get("type_breakdown", {})
     nodes_by_net = stats.get("network_breakdown", {})
 
-    subcommand_header(
-        title="STATS",
-        symbol="▣",
-        color=C.ACCENT,
-        border="simple",
-    )
+    stats_header()
 
     print(f"    {C.BOLD}{total_nodes}{C.RESET} {C.DIM}nodes{C.RESET}    {C.BOLD}{total_edges}{C.RESET} {C.DIM}edges{C.RESET}")
     print()

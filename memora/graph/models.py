@@ -21,6 +21,29 @@ def _utcnow() -> datetime:
 
 
 # ============================================================
+# Enum helpers
+# ============================================================
+
+
+def enum_val(v: Any) -> str:
+    """Extract the string value from an enum or pass through a plain string."""
+    return v.value if hasattr(v, "value") else str(v)
+
+
+def parse_properties(props: Any) -> dict:
+    """Normalize a properties field: parse JSON strings, pass dicts through, default to {}."""
+    if isinstance(props, dict):
+        return props
+    if isinstance(props, str):
+        import json
+        try:
+            return json.loads(props)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+# ============================================================
 # Enums
 # ============================================================
 

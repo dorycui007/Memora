@@ -7,6 +7,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from memora.graph.models import parse_properties
 from memora.graph.repository import GraphRepository
 
 logger = logging.getLogger(__name__)
@@ -116,17 +117,29 @@ class SpacedRepetition:
 
         results: list[dict[str, Any]] = []
         for d in rows:
-            if isinstance(d["properties"], str):
-                try:
-                    d["properties"] = json.loads(d["properties"])
-                except (json.JSONDecodeError, TypeError):
-                    d["properties"] = {}
+            d["properties"] = parse_properties(d["properties"])
             results.append(d)
 
-        # Secondary sort: ascending easiness_factor (harder cards first)
-        def sort_key(item: dict[str, Any]) -> float:
+        # Sort by: most overdue first (descending days overdue),
+        # then ascending easiness_factor (harder cards first).
+        now_dt = datetime.now(timezone.utc)
+
+        def sort_key(item: dict[str, Any]) -> tuple[float, float]:
             props = item.get("properties") or {}
-            return props.get("easiness_factor", DEFAULT_EASINESS_FACTOR)
+            review_date_str = props.get("next_review_date")
+            if review_date_str:
+                try:
+                    review_dt = datetime.fromisoformat(str(review_date_str))
+                    if review_dt.tzinfo is None:
+                        review_dt = review_dt.replace(tzinfo=timezone.utc)
+                    days_overdue = (now_dt - review_dt).total_seconds() / 86400
+                except (ValueError, TypeError):
+                    days_overdue = 0.0
+            else:
+                days_overdue = 0.0
+            easiness = props.get("easiness_factor", DEFAULT_EASINESS_FACTOR)
+            # Negate days_overdue so most overdue sorts first (ascending sort)
+            return (-days_overdue, easiness)
 
         results.sort(key=sort_key)
         return results

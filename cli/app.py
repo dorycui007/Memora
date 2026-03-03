@@ -51,8 +51,10 @@ class MemoraApp:
         # Vector store check
         try:
             vector_dir = self.settings.vector_dir
-            if Path(vector_dir).exists() or True:  # always attempt
+            if Path(vector_dir).exists():
                 subsystem_status["vector"] = "ONLINE"
+            else:
+                subsystem_status["vector"] = "OFFLINE"
         except Exception:
             subsystem_status["vector"] = "OFFLINE"
 
@@ -214,8 +216,8 @@ class MemoraApp:
 
         # Network health scores
         try:
-            from memora.core.health_scoring import HealthScorer
-            scorer = HealthScorer(self.repo)
+            from memora.core.health_scoring import HealthScoring
+            scorer = HealthScoring(self.repo)
             for net_name in ["ACADEMIC", "PROFESSIONAL", "FINANCIAL", "HEALTH",
                              "PERSONAL_GROWTH", "SOCIAL", "VENTURES"]:
                 try:
@@ -279,6 +281,9 @@ class MemoraApp:
             elif choice == "u":
                 from cli.commands.council import cmd_council
                 cmd_council(self)
+            elif choice == "h":
+                from cli.commands.horizon import cmd_horizon
+                cmd_horizon(self)
             elif choice == "t":
                 from cli.commands.timeline import cmd_timeline
                 cmd_timeline(self)
@@ -312,7 +317,7 @@ class MemoraApp:
                 from cli.commands.clear_data import cmd_clear_data
                 cmd_clear_data(self)
             else:
-                print(f"  {C.DIM}Unknown command. Valid keys: c p r d i w f s b k u t o a g n e j 0 x q{C.RESET}")
+                print(f"  {C.DIM}Unknown command. Valid keys: c s r d i w h b f u t o a g n e j p k 0 q{C.RESET}")
 
     def _show_settings(self):
         """Display current settings."""

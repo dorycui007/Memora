@@ -21,6 +21,7 @@ from memora.agents.archivist import ArchivistAgent
 from memora.agents.researcher import ResearcherAgent
 from memora.agents.strategist import StrategistAgent
 from memora.config import Settings
+from memora.graph.models import enum_val
 from memora.core.async_utils import run_async as _run_async
 from memora.graph.repository import GraphRepository
 from memora.vector.embeddings import EmbeddingEngine
@@ -742,7 +743,7 @@ class Orchestrator:
                                         "node_type": n.node_type.value
                                             if hasattr(n.node_type, "value") else str(n.node_type),
                                         "networks": [
-                                            net.value if hasattr(net, "value") else str(net)
+                                            enum_val(net)
                                             for net in n.networks
                                         ],
                                     })
@@ -812,7 +813,7 @@ class Orchestrator:
                     "title": node.title,
                     "content": node.content or node.title,
                     "networks": [
-                        net.value if hasattr(net, "value") else str(net)
+                        enum_val(net)
                         for net in node.networks
                     ],
                     "confidence": node.confidence,
@@ -835,7 +836,7 @@ class Orchestrator:
                                 if hasattr(neighbor.node_type, "value")
                                 else str(neighbor.node_type),
                             "networks": [
-                                net.value if hasattr(net, "value") else str(net)
+                                enum_val(net)
                                 for net in neighbor.networks
                             ],
                             "properties": neighbor.properties,
@@ -892,8 +893,9 @@ class Orchestrator:
 
         try:
             client = _openai.OpenAI(api_key=self._api_key)
+            from memora.config import DEFAULT_LLM_MODEL
             response = client.responses.create(
-                model="gpt-5-nano",
+                model=DEFAULT_LLM_MODEL,
                 input=prompt,
                 max_output_tokens=2048,
             )

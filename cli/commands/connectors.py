@@ -7,19 +7,13 @@ from __future__ import annotations
 
 from cli.rendering import (
     C,
-    divider, horizontal_bar, prompt, subcommand_header,
+    connectors_header, divider, horizontal_bar, menu_option, prompt, subcommand_header,
 )
 
 
 def cmd_connectors(app):
     """Connector management CLI."""
-    subcommand_header(
-        title="CONNECTORS",
-        symbol="⟐",
-        color=C.WARM,
-        taglines=["Multi-source data fusion", "Calendar · Markdown · Sync management"],
-        border="simple",
-    )
+    connectors_header()
 
     from memora.connectors.base import get_default_registry
 
@@ -37,13 +31,13 @@ def cmd_connectors(app):
 
     while True:
         print(f"\n  {C.BOLD}Connector Management:{C.RESET}")
-        print(f"    {C.WARM}1{C.RESET}  List connectors")
-        print(f"    {C.WARM}2{C.RESET}  Add connector")
-        print(f"    {C.WARM}3{C.RESET}  Sync connector")
-        print(f"    {C.WARM}4{C.RESET}  Sync all")
-        print(f"    {C.WARM}5{C.RESET}  Status")
-        print(f"    {C.WARM}6{C.RESET}  Remove connector")
-        print(f"    {C.DIM}q{C.RESET}  Back")
+        print(menu_option("1", "List connectors",   "Show all configured sources"))
+        print(menu_option("2", "Add connector",     "Connect a new data source"))
+        print(menu_option("3", "Sync connector",    "Pull latest from one source"))
+        print(menu_option("4", "Sync all",          "Pull latest from all sources"))
+        print(menu_option("5", "Status",            "View sync health and errors"))
+        print(menu_option("6", "Remove connector",  "Disconnect a data source"))
+        print(menu_option("q", "Back",              ""))
 
         choice = prompt("connectors> ").strip()
         if choice in ("q", "quit", ""):

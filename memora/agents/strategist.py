@@ -18,12 +18,14 @@ import openai
 
 from memora.core.json_utils import extract_json
 from memora.core.retry import async_call_with_retry
-from memora.graph.models import NetworkType, NodeFilter, NodeType
+from memora.graph.models import NetworkType, NodeFilter, NodeType, enum_val
 from memora.graph.repository import GraphRepository
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gpt-5-nano"
+from memora.config import DEFAULT_LLM_MODEL
+
+DEFAULT_MODEL = DEFAULT_LLM_MODEL
 
 
 @dataclass
@@ -345,7 +347,7 @@ class StrategistAgent:
                     "title": node.title,
                     "content": node.content or node.title,
                     "networks": [
-                        net.value if hasattr(net, "value") else str(net)
+                        enum_val(net)
                         for net in node.networks
                     ],
                     "confidence": node.confidence,
@@ -368,7 +370,7 @@ class StrategistAgent:
                                 if hasattr(neighbor.node_type, "value")
                                 else str(neighbor.node_type),
                             "networks": [
-                                net.value if hasattr(net, "value") else str(net)
+                                enum_val(net)
                                 for net in neighbor.networks
                             ],
                             "properties": neighbor.properties,

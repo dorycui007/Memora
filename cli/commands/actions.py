@@ -4,19 +4,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from cli.rendering import C, NODE_ICONS, divider, menu_option, prompt, subcommand_header
+from cli.rendering import C, NODE_ICONS, actions_header, divider, menu_option, prompt, subcommand_header
 
 
 def cmd_actions(app):
     """Interactive action executor: select node, see available actions, execute."""
     while True:
-        subcommand_header(
-            title="ACTIONS",
-            symbol="◉",
-            color=C.ACCENT,
-            taglines=["Kinetic graph operations · Execute and track"],
-            border="simple",
-        )
+        actions_header()
         print(menu_option("1", "Execute action",  "Pick a node and run an action"))
         print(menu_option("2", "Action history",  "View past actions"))
         print()

@@ -16,6 +16,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
+from memora.config import DEFAULT_LLM_MODEL
 from memora.core.retry import call_with_retry
 from memora.graph.models import GraphProposal, NodeProposal, NodeUpdate
 from memora.graph.repository import GraphRepository
@@ -583,7 +584,7 @@ class EntityResolver:
         try:
             response = call_with_retry(
                 self._llm_client.responses.create,
-                model="gpt-5-nano",
+                model=DEFAULT_LLM_MODEL,
                 instructions=(
                     "You are an entity resolution judge. Given two database entries, "
                     "determine if they refer to the same real-world entity. "

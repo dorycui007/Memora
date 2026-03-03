@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from memora.graph.models import enum_val
+
 logger = logging.getLogger(__name__)
 
 
@@ -153,8 +155,8 @@ class ObjectViewBuilder:
             if not neighbor:
                 continue
 
-            etype = edge.edge_type.value if hasattr(edge.edge_type, "value") else str(edge.edge_type)
-            ntype = neighbor.node_type.value if hasattr(neighbor.node_type, "value") else str(neighbor.node_type)
+            etype = enum_val(edge.edge_type)
+            ntype = enum_val(neighbor.node_type)
 
             strength = (
                 edge.weight * 0.4

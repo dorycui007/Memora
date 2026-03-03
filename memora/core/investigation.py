@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+from memora.graph.models import enum_val
+
 logger = logging.getLogger(__name__)
 
 
@@ -147,8 +149,8 @@ class InvestigationEngine:
             if not node:
                 continue
 
-            ntype = node.node_type.value if hasattr(node.node_type, "value") else str(node.node_type)
-            networks = [n.value if hasattr(n, "value") else str(n) for n in node.networks]
+            ntype = enum_val(node.node_type)
+            networks = [enum_val(n) for n in node.networks]
 
             # Apply filters (vector store may already filter, but fallback path doesn't)
             if filter_types and ntype.upper() not in filter_types:

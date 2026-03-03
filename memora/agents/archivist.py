@@ -24,7 +24,9 @@ from memora.vector.store import VectorStore
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gpt-5-nano"
+from memora.config import DEFAULT_LLM_MODEL
+
+DEFAULT_MODEL = DEFAULT_LLM_MODEL
 
 
 def _build_graph_proposal_schema() -> dict[str, Any]:

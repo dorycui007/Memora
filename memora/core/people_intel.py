@@ -252,28 +252,19 @@ class PeopleIntelEngine:
 
         # Top 5 strongest person-to-person ties (edges between two PERSON nodes)
         try:
-            rows = self.repo._conn.execute(
-                """SELECT e.source_id, e.target_id, e.edge_type,
-                          e.weight, e.confidence, e.updated_at,
-                          s.title AS source_title, t.title AS target_title
-                   FROM edges e
-                   JOIN nodes s ON s.id = e.source_id AND s.node_type = 'PERSON' AND s.deleted = FALSE
-                   JOIN nodes t ON t.id = e.target_id AND t.node_type = 'PERSON' AND t.deleted = FALSE
-                   ORDER BY e.weight DESC, e.confidence DESC
-                   LIMIT 5"""
-            ).fetchall()
+            rows = self.repo.get_strongest_person_ties(limit=5)
             strongest_ties = []
             for r in rows:
                 strength = compute_relationship_strength(
-                    edge_weight=r[3] or 1.0,
-                    edge_confidence=r[4] or 0.5,
-                    edge_type=r[2],
-                    edge_updated_at=r[5],
+                    edge_weight=r["weight"] or 1.0,
+                    edge_confidence=r["confidence"] or 0.5,
+                    edge_type=r["edge_type"],
+                    edge_updated_at=r["updated_at"],
                 )
                 strongest_ties.append({
-                    "source_id": r[0], "target_id": r[1],
-                    "source_title": r[6], "target_title": r[7],
-                    "edge_type": r[2], "strength": strength,
+                    "source_id": r["source_id"], "target_id": r["target_id"],
+                    "source_title": r["source_title"], "target_title": r["target_title"],
+                    "edge_type": r["edge_type"], "strength": strength,
                 })
             stats["strongest_ties"] = strongest_ties
         except Exception:

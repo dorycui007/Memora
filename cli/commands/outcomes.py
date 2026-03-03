@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-from cli.rendering import C, NODE_ICONS, divider, horizontal_bar, menu_option, prompt, subcommand_header
+from cli.rendering import C, NODE_ICONS, divider, horizontal_bar, menu_option, outcomes_header, prompt, subcommand_header
 
 
 def cmd_outcomes(app):
     """Interactive outcome tracking: review pending, record outcomes, view stats."""
     while True:
-        subcommand_header(
-            title="OUTCOMES",
-            symbol="▣",
-            color=C.ACCENT,
-            taglines=["Decision tracker · Outcome recording · Win/loss analytics"],
-            border="simple",
-        )
+        outcomes_header()
         print(menu_option("1", "What happened?",  "Review pending decisions/goals"))
         print(menu_option("2", "Record outcome",  "Record outcome for a specific node"))
         print(menu_option("3", "Statistics",      "View outcome win/loss stats"))

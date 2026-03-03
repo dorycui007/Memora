@@ -17,6 +17,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 logger = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = Path.home() / ".memora"
+DEFAULT_LLM_MODEL = "gpt-5-nano"
 
 DATA_SUBDIRS = [
     "graph",
@@ -117,10 +118,6 @@ class Settings(BaseSettings):
     # Connectors
     connectors: dict[str, dict] = Field(default_factory=dict)
     connector_sync_interval_minutes: int = Field(default=60, ge=1)
-
-    # Server
-    api_host: str = "127.0.0.1"
-    api_port: int = 8000
 
     @field_validator("data_dir", mode="before")
     @classmethod

@@ -11,9 +11,10 @@ from enum import Enum, auto
 
 from cli.rendering import (
     C, DOSSIER_CONFIG, NETWORK_ICONS, NODE_ICONS,
-    divider, horizontal_bar, prompt, subcommand_header,
+    divider, dossier_header, horizontal_bar, prompt, subcommand_header,
 )
 from cli.commands.browse import render_node_detail, render_ascii_graph
+from memora.graph.models import enum_val
 
 
 # ── Intent Classification ────────────────────────────────────────
@@ -154,8 +155,9 @@ def _resolve_entity(app, query: str, entity_names: list[str] | None = None):
         return None
 
     # Multi-signal scoring — compare against individual entity candidates
-    from memora.core.text_utils import extract_entity_candidates as _extract
-    candidates = entity_names or _extract(query)
+    if not entity_names:
+        from memora.core.text_utils import extract_entity_candidates
+    candidates = entity_names or extract_entity_candidates(query)
     lower_candidates = [c.lower() for c in candidates] if candidates else [query.lower()]
     scored: list[tuple[float, object]] = []
     for node in all_matches:
@@ -244,8 +246,8 @@ def _answer_entity_question(app, entity, metadata: dict) -> dict | None:
         if not neighbor:
             continue
 
-        etype = edge.edge_type.value if hasattr(edge.edge_type, "value") else str(edge.edge_type)
-        ntype = neighbor.node_type.value if hasattr(neighbor.node_type, "value") else str(neighbor.node_type)
+        etype = enum_val(edge.edge_type)
+        ntype = enum_val(neighbor.node_type)
 
         score = 0.0
 
@@ -326,7 +328,7 @@ def _synthesize_answer(app, query: str, entity, traversal: dict) -> str | None:
             context_parts.append(f"Description: {entity.content[:200]}")
 
         for score, node in traversal["relevant_nodes"][:5]:
-            ntype = node.node_type.value if hasattr(node.node_type, "value") else str(node.node_type)
+            ntype = enum_val(node.node_type)
             line = f"- {node.title} ({ntype})"
             if node.content:
                 line += f": {node.content[:150]}"
@@ -359,10 +361,11 @@ def _synthesize_answer(app, query: str, entity, traversal: dict) -> str | None:
 
         client = openai.OpenAI(api_key=app.settings.openai_api_key)
 
-        # gpt-5-nano is a reasoning model — give generous token budget
+        from memora.config import DEFAULT_LLM_MODEL
+        # reasoning model — give generous token budget
         response = call_with_retry(
             client.chat.completions.create,
-            model="gpt-5-nano",
+            model=DEFAULT_LLM_MODEL,
             messages=messages,
             max_completion_tokens=2048,
             max_retries=2,
@@ -375,7 +378,7 @@ def _synthesize_answer(app, query: str, entity, traversal: dict) -> str | None:
         if finish == "length" and not (raw_content or "").strip():
             response = call_with_retry(
                 client.chat.completions.create,
-                model="gpt-5-nano",
+                model=DEFAULT_LLM_MODEL,
                 messages=messages,
                 max_completion_tokens=4096,
                 max_retries=2,
@@ -408,7 +411,7 @@ def _render_answer(query: str, entity, traversal: dict, synthesis: str | None):
         print(f"\n  {C.BOLD}Relevant entities:{C.RESET}")
         for score, node in traversal["relevant_nodes"][:5]:
             icon = NODE_ICONS.get(node.node_type.value, " ")
-            ntype = node.node_type.value if hasattr(node.node_type, "value") else str(node.node_type)
+            ntype = enum_val(node.node_type)
             title = node.title[:40]
             extras = []
             if node.properties:
@@ -783,13 +786,7 @@ def _compare_mode(app, entity_a):
 # ── Main Flow ─────────────────────────────────────────────────────
 
 def cmd_dossier(app):
-    subcommand_header(
-        title="DOSSIER",
-        symbol="◇",
-        color=C.ACCENT,
-        taglines=["Intent-aware entity intelligence", "Graph traversal · Pattern analysis · Q&A"],
-        border="simple",
-    )
+    dossier_header()
 
     query = prompt(f"  {C.ACCENT}Entity name or question{C.RESET}\n  ❯ ")
     if not query or query == "q":
@@ -875,7 +872,7 @@ def _render_connections(connections, node_id_str, min_strength):
     for i, (strength, edge, neighbor) in enumerate(top, 1):
         direction = "→" if str(edge.source_id) == node_id_str else "←"
         icon = NODE_ICONS.get(neighbor.node_type.value, " ")
-        etype = edge.edge_type.value if hasattr(edge.edge_type, 'value') else str(edge.edge_type)
+        etype = enum_val(edge.edge_type)
         bar = horizontal_bar(min(strength, 1.0), 10, C.CYAN)
         print(f"  {C.DIM}{i}.{C.RESET} {C.CYAN}{direction}{C.RESET} {icon} {C.BOLD}{neighbor.title[:35]:<35}{C.RESET} "
               f"{C.DIM}[{etype}]{C.RESET}  {bar}")

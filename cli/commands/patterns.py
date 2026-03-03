@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-from cli.rendering import C, divider, horizontal_bar, menu_option, prompt, subcommand_header
+from cli.rendering import C, divider, horizontal_bar, menu_option, patterns_header, prompt, subcommand_header
 
 
 def cmd_patterns(app):
     """View and trigger pattern detection."""
     while True:
-        subcommand_header(
-            title="PATTERNS",
-            symbol="▣",
-            color=C.ACCENT,
-            taglines=["Behavioral pattern detection · Trend analysis"],
-            border="simple",
-        )
+        patterns_header()
         print(menu_option("1", "View patterns",   "Show detected patterns"))
         print(menu_option("2", "Run detection",   "Trigger pattern analysis now"))
         print()

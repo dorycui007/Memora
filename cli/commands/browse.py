@@ -12,7 +12,7 @@ from cli.rendering import (
     spinner, term_width, subcommand_header,
 )
 
-from memora.graph.models import NetworkType, NodeType
+from memora.graph.models import NetworkType, NodeType, enum_val
 from memora.graph.repository import YOU_NODE_ID
 
 # Keep BRAIN_ART reference for backward compat
@@ -173,7 +173,7 @@ def _browse_node_detail(app):
                         other_title = f" {other_icon} {C.BOLD}{other_node.title[:25]}{C.RESET}"
                 except Exception:
                     pass
-                etype = edge.edge_type.value if hasattr(edge.edge_type, 'value') else str(edge.edge_type)
+                etype = enum_val(edge.edge_type)
                 print(f"    {C.CYAN}{direction}{C.RESET} {C.DIM}{short}{C.RESET}{other_title}  "
                       f"{C.DIM}[{etype}]{C.RESET} conf={edge.confidence:.0%}")
             if len(edges) > 15:

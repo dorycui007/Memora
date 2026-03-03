@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from memora.graph.models import parse_properties
 from memora.graph.repository import GraphRepository
 
 logger = logging.getLogger(__name__)
@@ -50,7 +50,9 @@ class RelationshipDecayDetector:
                 # Also try the node-level last_accessed
                 last_interaction = self._parse_datetime(p.get("last_accessed"))
             if last_interaction is None:
-                # No interaction data — skip rather than false-flag
+                # Fall back to created_at so new people still get decay-scored
+                last_interaction = self._parse_datetime(p.get("created_at"))
+            if last_interaction is None:
                 continue
 
             days_since = (now - last_interaction).days
@@ -82,11 +84,7 @@ class RelationshipDecayDetector:
 
         results: list[dict[str, Any]] = []
         for d in rows:
-            if isinstance(d["properties"], str):
-                try:
-                    d["properties"] = json.loads(d["properties"])
-                except (json.JSONDecodeError, TypeError):
-                    d["properties"] = {}
+            d["properties"] = parse_properties(d["properties"])
             results.append(d)
         return results
 
@@ -124,12 +122,7 @@ class RelationshipDecayDetector:
 
         results: list[dict[str, Any]] = []
         for row in rows:
-            props = row["properties"]
-            if isinstance(props, str):
-                try:
-                    props = json.loads(props)
-                except (json.JSONDecodeError, TypeError):
-                    props = {}
+            props = parse_properties(row["properties"])
             results.append({
                 "node_id": row["id"],
                 "title": row["title"],
