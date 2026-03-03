@@ -86,60 +86,46 @@ def _insert_bridge(
 
 class TestBridgeExists:
     def test_bridge_exists_true(self, repo: GraphRepository):
-        """_bridge_exists should return True when a bridge already exists."""
-        mock_vector = MagicMock()
-        mock_embed = MagicMock()
-        bd = BridgeDiscovery(repo, mock_vector, mock_embed)
-
+        """repo.bridge_exists should return True when a bridge already exists."""
         nid1 = _insert_node(repo, title="Node A", networks=["ACADEMIC"])
         nid2 = _insert_node(repo, title="Node B", networks=["PROFESSIONAL"])
         _insert_bridge(repo, nid1, nid2)
 
-        assert bd._bridge_exists(nid1, nid2) is True
+        assert repo.bridge_exists(nid1, nid2) is True
 
     def test_bridge_exists_false(self, repo: GraphRepository):
-        """_bridge_exists should return False when no bridge exists."""
-        mock_vector = MagicMock()
-        mock_embed = MagicMock()
-        bd = BridgeDiscovery(repo, mock_vector, mock_embed)
-
+        """repo.bridge_exists should return False when no bridge exists."""
         nid1 = _insert_node(repo, title="Node A", networks=["ACADEMIC"])
         nid2 = _insert_node(repo, title="Node B", networks=["PROFESSIONAL"])
 
-        assert bd._bridge_exists(nid1, nid2) is False
+        assert repo.bridge_exists(nid1, nid2) is False
 
     def test_bridge_exists_reverse(self, repo: GraphRepository):
-        """_bridge_exists should detect bridges regardless of direction."""
-        mock_vector = MagicMock()
-        mock_embed = MagicMock()
-        bd = BridgeDiscovery(repo, mock_vector, mock_embed)
-
+        """repo.bridge_exists should detect bridges regardless of direction."""
         nid1 = _insert_node(repo, title="Node A", networks=["ACADEMIC"])
         nid2 = _insert_node(repo, title="Node B", networks=["PROFESSIONAL"])
         _insert_bridge(repo, nid1, nid2)
 
         # Check reverse direction
-        assert bd._bridge_exists(nid2, nid1) is True
+        assert repo.bridge_exists(nid2, nid1) is True
 
 
 class TestStoreBridge:
     def test_store_bridge(self, repo: GraphRepository):
-        """_store_bridge should persist a bridge record."""
-        mock_vector = MagicMock()
-        mock_embed = MagicMock()
-        bd = BridgeDiscovery(repo, mock_vector, mock_embed)
-
+        """repo.store_bridge should persist a bridge record."""
         nid1 = _insert_node(repo, title="Node A", networks=["ACADEMIC"])
         nid2 = _insert_node(repo, title="Node B", networks=["VENTURES"])
 
         bridge = {
+            "id": str(uuid4()),
             "source_node_id": nid1,
             "target_node_id": nid2,
             "source_network": "ACADEMIC",
             "target_network": "VENTURES",
             "similarity": 0.92,
+            "discovered_at": datetime.now(timezone.utc).isoformat(),
         }
-        bd._store_bridge(bridge)
+        repo.store_bridge(bridge)
 
         rows = repo._conn.execute(
             "SELECT source_node_id, target_node_id, similarity FROM bridges"

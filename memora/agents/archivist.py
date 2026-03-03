@@ -31,26 +31,36 @@ DEFAULT_MODEL = DEFAULT_LLM_MODEL
 
 def _build_graph_proposal_schema() -> dict[str, Any]:
     """Generate a JSON Schema from GraphProposal, stripping schema-level `title` annotations
-    and adding `additionalProperties: false` for Responses API compatibility."""
+    and forcing `additionalProperties: false` on all objects for Responses API compatibility.
+
+    OpenAI requires `additionalProperties: false` on every object in the schema,
+    even when `strict: False`. For `dict[str, Any]` fields (which Pydantic emits as
+    `{"type": "object", "additionalProperties": true}`), we force `false` — with
+    `strict: False` the model still outputs keys best-effort.
+    """
     schema = GraphProposal.model_json_schema()
 
-    def _strip_titles(obj: Any, inside_properties: bool = False) -> Any:
+    def _sanitize(obj: Any, inside_properties: bool = False) -> Any:
         if isinstance(obj, dict):
             result = {}
             for k, v in obj.items():
-                # Only strip "title" when it's a schema annotation (not inside "properties")
+                # Strip "title" when it's a schema annotation (not a property name)
                 if k == "title" and not inside_properties:
                     continue
-                result[k] = _strip_titles(v, inside_properties=(k == "properties"))
-            # Add additionalProperties: false to all object types for strict mode
-            if result.get("type") == "object" and "properties" in result:
-                result.setdefault("additionalProperties", False)
+                result[k] = _sanitize(v, inside_properties=(k == "properties"))
+            # Force additionalProperties: false on ALL object types
+            if result.get("type") == "object":
+                result["additionalProperties"] = False
+                # Objects without 'properties' (e.g. dict[str, Any]) need an
+                # empty properties key for the schema to be valid
+                if "properties" not in result:
+                    result["properties"] = {}
             return result
         if isinstance(obj, list):
-            return [_strip_titles(item, inside_properties=False) for item in obj]
+            return [_sanitize(item, inside_properties=False) for item in obj]
         return obj
 
-    return _strip_titles(schema)
+    return _sanitize(schema)
 
 
 GRAPH_PROPOSAL_SCHEMA = _build_graph_proposal_schema()
@@ -244,7 +254,7 @@ class ArchivistAgent:
                 ),
                 text=_RESPONSE_FORMAT,
                 reasoning={"effort": "low"},
-                max_output_tokens=16384,
+                max_output_tokens=8192,
             )
         except openai.APIError as e:
             logger.error("OpenAI API error: %s", e)
@@ -324,14 +334,18 @@ class ArchivistAgent:
                 token_usage=token_usage,
             )
 
-        # 6. Inject capture_id and validate into GraphProposal
+        # 6. Sanitize, inject capture_id, and validate into GraphProposal
+        raw_json = self._sanitize_proposal_json(raw_json)
         raw_json["source_capture_id"] = capture_id
 
         try:
             proposal = GraphProposal(**raw_json)
         except ValidationError as e:
             logger.warning("GraphProposal validation failed, retrying API call: %s", e)
-            retry_response = await self._retry_api_call(system_prompt, text, capture_id, dynamic_context)
+            retry_response = await self._retry_api_call(
+                system_prompt, text, capture_id, dynamic_context,
+                validation_error=str(e),
+            )
             if retry_response is None:
                 return ArchivistResult(
                     raw_response=raw_text,
@@ -345,6 +359,7 @@ class ArchivistAgent:
             }
             try:
                 retry_json = json.loads(retry_text)
+                retry_json = self._sanitize_proposal_json(retry_json)
                 retry_json["source_capture_id"] = capture_id
                 proposal = GraphProposal(**retry_json)
             except (json.JSONDecodeError, ValidationError) as retry_err:
@@ -373,17 +388,91 @@ class ArchivistAgent:
             token_usage=token_usage,
         )
 
+    @staticmethod
+    def _sanitize_proposal_json(raw: dict[str, Any]) -> dict[str, Any]:
+        """Fix common LLM output issues before Pydantic validation.
+
+        Handles missing required fields, wrong types, and empty values
+        that would otherwise trigger an expensive retry LLM call.
+        """
+        # Ensure list fields exist and are lists
+        for list_field in (
+            "nodes_to_create", "nodes_to_update",
+            "edges_to_create", "edges_to_update",
+            "network_assignments",
+        ):
+            val = raw.get(list_field)
+            if val is None:
+                raw[list_field] = []
+            elif not isinstance(val, list):
+                raw[list_field] = [val] if val else []
+
+        # Ensure confidence is a float in [0, 1]
+        conf = raw.get("confidence")
+        if conf is not None:
+            try:
+                conf = float(conf)
+                raw["confidence"] = max(0.0, min(1.0, conf))
+            except (ValueError, TypeError):
+                raw["confidence"] = 0.8
+
+        # Sanitize individual node proposals
+        for node in raw.get("nodes_to_create", []):
+            if not isinstance(node, dict):
+                continue
+            # Ensure networks is a list
+            if not isinstance(node.get("networks"), list):
+                node["networks"] = []
+            # Ensure properties is a dict
+            if not isinstance(node.get("properties"), dict):
+                node["properties"] = {}
+            # Clamp node confidence
+            node_conf = node.get("confidence")
+            if node_conf is not None:
+                try:
+                    node["confidence"] = max(0.0, min(1.0, float(node_conf)))
+                except (ValueError, TypeError):
+                    node["confidence"] = 0.8
+
+        # Sanitize edge proposals
+        for edge in raw.get("edges_to_create", []):
+            if not isinstance(edge, dict):
+                continue
+            if not isinstance(edge.get("properties"), dict):
+                edge["properties"] = {}
+            edge_conf = edge.get("confidence")
+            if edge_conf is not None:
+                try:
+                    edge["confidence"] = max(0.0, min(1.0, float(edge_conf)))
+                except (ValueError, TypeError):
+                    edge["confidence"] = 0.8
+
+        # Default human_summary to empty string
+        if raw.get("human_summary") is None:
+            raw["human_summary"] = ""
+
+        return raw
+
     async def _retry_api_call(
         self,
         system_prompt: str,
         text: str,
         capture_id: str,
         dynamic_context: str = "",
+        validation_error: str = "",
     ) -> Any | None:
-        """Re-issue the same API call once on validation failure.
+        """Re-issue the API call on validation failure, including error feedback.
 
         Returns the raw response object or None on failure.
         """
+        error_hint = ""
+        if validation_error:
+            error_hint = (
+                f"\n\nIMPORTANT: Your previous response failed validation with this error:\n"
+                f"{validation_error}\n"
+                f"Please fix these specific issues in your response."
+            )
+
         try:
             return await async_call_with_retry(
                 self._client.responses.create,
@@ -393,12 +482,12 @@ class ArchivistAgent:
                     f"{dynamic_context}\n\n---\n\n"
                     f"Extract knowledge graph data from this text. "
                     f"Respond with a single JSON object matching the GraphProposal schema. "
-                    f"Use capture ID: {capture_id}\n\n"
+                    f"Use capture ID: {capture_id}{error_hint}\n\n"
                     f"Text:\n{text}"
                 ),
                 text=_RESPONSE_FORMAT,
                 reasoning={"effort": "low"},
-                max_output_tokens=16384,
+                max_output_tokens=8192,
             )
         except Exception:
             logger.error("Retry API call failed", exc_info=True)

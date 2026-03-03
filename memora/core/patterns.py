@@ -469,7 +469,9 @@ class PatternEngine:
                         last = datetime.fromisoformat(last)
                     except (ValueError, TypeError):
                         continue
-                age = (now - last).days if hasattr(last, "days") else 999
+                if isinstance(last, datetime) and last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                age = (now - last).days
                 if age > 30:
                     name = p.get("title") or p.get("name") or "unnamed"
                     stale_people.append((name, age))

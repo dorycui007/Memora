@@ -880,6 +880,16 @@ NETWORK_ICONS = {
     "VENTURES":        f"{C.WARM}[V]{C.RESET}",
 }
 
+NETWORK_LABELS = {
+    "ACADEMIC":        f"{C.ACCENT}[Acad]{C.RESET}",
+    "PROFESSIONAL":    f"{C.ACCENT}[Prof]{C.RESET}",
+    "FINANCIAL":       f"{C.CONFIRM}[Fin$]{C.RESET}",
+    "HEALTH":          f"{C.DANGER}[Hlth]{C.RESET}",
+    "PERSONAL_GROWTH": f"{C.INTEL}[Grow]{C.RESET}",
+    "SOCIAL":          f"{C.SIGNAL}[Socl]{C.RESET}",
+    "VENTURES":        f"{C.WARM}[Vent]{C.RESET}",
+}
+
 NODE_ICONS = {
     "EVENT":           f"{C.SIGNAL}*{C.RESET}",
     "PERSON":          f"{C.ACCENT}@{C.RESET}",

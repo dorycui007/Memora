@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -199,7 +199,7 @@ class GraphRepository:
 
         import hashlib
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         content = "Central node representing the user"
         content_hash = hashlib.sha256(f"You|{content}".encode()).hexdigest()
 
@@ -350,7 +350,7 @@ class GraphRepository:
         # Update access tracking
         self._conn.execute(
             "UPDATE nodes SET access_count = access_count + 1, last_accessed = ? WHERE id = ?",
-            [datetime.utcnow().isoformat(), str(node_id)],
+            [datetime.now(UTC).isoformat(), str(node_id)],
         )
         return self._row_to_node(row)
 
@@ -421,7 +421,7 @@ class GraphRepository:
             params.append(value)
 
         set_clauses.append("updated_at = ?")
-        params.append(datetime.utcnow().isoformat())
+        params.append(datetime.now(UTC).isoformat())
         params.append(str(node_id))
 
         self._conn.execute(
@@ -434,7 +434,7 @@ class GraphRepository:
         """Soft delete a node."""
         result = self._conn.execute(
             "UPDATE nodes SET deleted = TRUE, updated_at = ? WHERE id = ? AND deleted = FALSE",
-            [datetime.utcnow().isoformat(), str(node_id)],
+            [datetime.now(UTC).isoformat(), str(node_id)],
         )
         return result.fetchone() is None  # DuckDB returns None for UPDATE
 
@@ -510,7 +510,7 @@ class GraphRepository:
         """Update the weight of an edge."""
         self._conn.execute(
             "UPDATE edges SET weight = ?, updated_at = ? WHERE id = ?",
-            [weight, datetime.utcnow().isoformat(), edge_id],
+            [weight, datetime.now(UTC).isoformat(), edge_id],
         )
 
     def get_edges(self, node_id: UUID, direction: str = "both") -> list[Edge]:
@@ -601,7 +601,7 @@ class GraphRepository:
                 proposal.confidence,
                 json.dumps(proposal.model_dump(mode="json")),
                 proposal.human_summary,
-                datetime.utcnow().isoformat(),
+                datetime.now(UTC).isoformat(),
             ],
         )
         return proposal_id
@@ -615,7 +615,7 @@ class GraphRepository:
         """Update the status of a proposal."""
         self._conn.execute(
             "UPDATE proposals SET status = ?, reviewed_at = ?, reviewer = ? WHERE id = ?",
-            [status.value, datetime.utcnow().isoformat(), reviewer, str(proposal_id)],
+            [status.value, datetime.now(UTC).isoformat(), reviewer, str(proposal_id)],
         )
 
     def get_pending_proposals(self) -> list[dict[str, Any]]:
@@ -714,7 +714,7 @@ class GraphRepository:
                 temp_to_real[node_data["temp_id"]] = real_id
                 node_type = node_data["node_type"]
                 networks = node_data.get("networks", [])
-                now = datetime.utcnow().isoformat()
+                now = datetime.now(UTC).isoformat()
 
                 import hashlib
                 content_hash = hashlib.sha256(
@@ -787,7 +787,7 @@ class GraphRepository:
                     vals.append(v)
                 if set_parts:
                     set_parts.append("updated_at = ?")
-                    vals.append(datetime.utcnow().isoformat())
+                    vals.append(datetime.now(UTC).isoformat())
                     vals.append(node_id)
                     self._conn.execute(
                         f"UPDATE nodes SET {', '.join(set_parts)} WHERE id = ?",
@@ -802,7 +802,7 @@ class GraphRepository:
                 # Resolve temp IDs
                 src = temp_to_real.get(src, src)
                 tgt = temp_to_real.get(tgt, tgt)
-                now = datetime.utcnow().isoformat()
+                now = datetime.now(UTC).isoformat()
 
                 self._conn.execute(
                     """INSERT INTO edges (id, source_id, target_id, edge_type,
@@ -829,7 +829,7 @@ class GraphRepository:
                 "UPDATE proposals SET status = ?, reviewed_at = ?, reviewer = ? WHERE id = ?",
                 [
                     ProposalStatus.APPROVED.value,
-                    datetime.utcnow().isoformat(),
+                    datetime.now(UTC).isoformat(),
                     "auto",
                     str(proposal_id),
                 ],
@@ -917,7 +917,7 @@ class GraphRepository:
 
     def get_recently_modified_node_ids(self, hours: int = 24) -> list[str]:
         """Return IDs of nodes modified within the given time window."""
-        cutoff = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(hours=hours)).isoformat()
         rows = self._conn.execute(
             "SELECT id FROM nodes WHERE updated_at >= ? AND deleted = FALSE",
             [cutoff],
@@ -1247,7 +1247,7 @@ class GraphRepository:
         - Merges networks
         - Soft-deletes the source node
         """
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
 
         # Load both nodes
         source = self.get_node(UUID(source_id))
@@ -1401,7 +1401,7 @@ class GraphRepository:
 
     def update_node_review_date(self, node_id: str, review_date: str) -> None:
         """Update the review_date and updated_at columns for a node."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         self._conn.execute(
             "UPDATE nodes SET review_date = ?, updated_at = ? WHERE id = ?",
             [review_date, now, node_id],
@@ -1433,7 +1433,7 @@ class GraphRepository:
         """Overwrite a node's properties with a JSON string."""
         self._conn.execute(
             "UPDATE nodes SET properties = ?, updated_at = ? WHERE id = ?",
-            [properties_json, datetime.utcnow().isoformat(), node_id],
+            [properties_json, datetime.now(UTC).isoformat(), node_id],
         )
 
     # ---- Gap detection queries ----
@@ -1525,7 +1525,7 @@ class GraphRepository:
         """Update a node's decay_score."""
         self._conn.execute(
             "UPDATE nodes SET decay_score = ?, updated_at = ? WHERE id = ?",
-            [score, datetime.utcnow().isoformat(), node_id],
+            [score, datetime.now(UTC).isoformat(), node_id],
         )
 
     def get_nodes_below_decay(self, threshold: float) -> list[dict[str, Any]]:
@@ -1695,7 +1695,7 @@ class GraphRepository:
                 action.get("target_node_id"),
                 json.dumps(action.get("params", {})),
                 json.dumps(action.get("result", {})),
-                action.get("executed_at", datetime.utcnow().isoformat()),
+                action.get("executed_at", datetime.now(UTC).isoformat()),
             ],
         )
         return action["id"]
@@ -1766,7 +1766,7 @@ class GraphRepository:
                 outcome["outcome_text"],
                 outcome["rating"],
                 json.dumps(outcome.get("evidence", [])),
-                outcome.get("recorded_at", datetime.utcnow().isoformat()),
+                outcome.get("recorded_at", datetime.now(UTC).isoformat()),
             ],
         )
         return outcome["id"]
@@ -1790,7 +1790,7 @@ class GraphRepository:
 
     def get_pending_outcomes(self, days_threshold: int = 14) -> list[dict[str, Any]]:
         """Get decisions/goals/commitments older than threshold without outcomes."""
-        cutoff = (datetime.utcnow() - timedelta(days=days_threshold)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=days_threshold)).isoformat()
         rows = self._conn.execute(
             """SELECT n.id, n.node_type, n.title, n.properties, n.created_at
                FROM nodes n
@@ -1876,13 +1876,13 @@ class GraphRepository:
                 pattern.get("confidence", 0.5),
                 pattern.get("suggested_action", ""),
                 json.dumps(pattern.get("networks", [])),
-                pattern.get("first_detected", datetime.utcnow().isoformat()),
-                pattern.get("last_confirmed", datetime.utcnow().isoformat()),
+                pattern.get("first_detected", datetime.now(UTC).isoformat()),
+                pattern.get("last_confirmed", datetime.now(UTC).isoformat()),
                 pattern.get("status", "active"),
                 pattern.get("severity", "info"),
                 pattern.get("previous_value"),
                 pattern.get("current_value"),
-                pattern.get("created_at", datetime.utcnow().isoformat()),
+                pattern.get("created_at", datetime.now(UTC).isoformat()),
             ],
         )
         return pattern["id"]
@@ -1921,7 +1921,7 @@ class GraphRepository:
 
     def expire_stale_patterns(self, max_age_days: int = 30) -> int:
         """Auto-expire active patterns not confirmed within max_age_days. Returns count expired."""
-        cutoff = (datetime.utcnow() - timedelta(days=max_age_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat()
         result = self._conn.execute(
             """UPDATE detected_patterns SET status = 'expired'
                WHERE status = 'active' AND last_confirmed < ?""",
@@ -1986,7 +1986,7 @@ class GraphRepository:
     ) -> None:
         """Update a pattern's last_confirmed timestamp and optionally its fields."""
         sets = ["last_confirmed = ?"]
-        params: list[Any] = [datetime.utcnow().isoformat()]
+        params: list[Any] = [datetime.now(UTC).isoformat()]
         if confidence is not None:
             sets.append("confidence = ?")
             params.append(confidence)

@@ -22,7 +22,7 @@ import time as _time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import IntEnum
-from typing import Any, Callable
+from typing import Any, Callable, ClassVar
 from uuid import UUID
 
 from memora.agents.archivist import ArchivistAgent
@@ -686,87 +686,240 @@ class ExtractionPipeline:
                         node_id, node_type, is_speculative, node_confidence,
                     )
 
-    async def _ensure_graph_connectivity(self, state: PipelineState) -> None:
-        """Ensure every node from this capture connects to the central You node.
+    # Type-aware edge mapping: You → node edges by NodeType
+    _YOU_EDGE_MAP: ClassVar[dict[str, tuple[str, str]]] = {
+        # NodeType value → (EdgeType value, EdgeCategory value)
+        "GOAL": ("RESPONSIBLE_FOR", "PERSONAL"),
+        "COMMITMENT": ("COMMITTED_TO", "PERSONAL"),
+        "DECISION": ("DECIDED", "PERSONAL"),
+        "PROJECT": ("RESPONSIBLE_FOR", "PERSONAL"),
+        "EVENT": ("RESPONSIBLE_FOR", "PERSONAL"),
+        "PERSON": ("KNOWS", "SOCIAL"),
+    }
+    _YOU_EDGE_DEFAULT: ClassVar[tuple[str, str]] = ("RELATED_TO", "ASSOCIATIVE")
 
-        For each new node without a direct edge to You, find the top-3 most
-        similar existing nodes that DO have a path to You and link to them.
-        If none are found, create a fallback RELATED_TO edge from You.
+    async def _ensure_graph_connectivity(self, state: PipelineState) -> None:
+        """Ensure every capture node is reachable from You and interconnected.
+
+        Three phases:
+        1. You-reachability — BFS through local edges, then global path check.
+        2. Fix orphans — type-aware edges, semantic bridging with path validation.
+        3. Intra-capture connectivity — ensure no capture node is isolated from siblings.
         """
         from memora.graph.repository import YOU_NODE_ID
         from memora.graph.models import Edge, EdgeType, EdgeCategory
 
-        node_ids = self._repo.get_node_ids_by_capture_id(state.capture_id)
-        if not node_ids:
+        nodes = self._repo.get_nodes_by_capture_id(state.capture_id)
+        if not nodes:
             return
 
-        # Get all edges touching these nodes
-        edges = self._repo.get_edges_for_node_ids(set(node_ids))
+        node_ids = [n["id"] for n in nodes]
+        node_type_map: dict[str, str] = {n["id"]: n["node_type"] for n in nodes}
+        capture_set = set(node_ids)
 
-        # Find which nodes already have a direct edge to/from You
-        connected_to_you: set[str] = set()
-        for edge in edges:
-            if edge["source_id"] == YOU_NODE_ID:
-                connected_to_you.add(edge["target_id"])
-            elif edge["target_id"] == YOU_NODE_ID:
-                connected_to_you.add(edge["source_id"])
+        # Single query: all edges touching capture nodes
+        edges = self._repo.get_edges_for_node_ids(capture_set)
 
-        orphans = [nid for nid in node_ids if nid not in connected_to_you and nid != YOU_NODE_ID]
-        if not orphans:
-            return
+        # --- Phase 1: You-reachability via local BFS ---
+        adjacency: dict[str, set[str]] = {}
+        for e in edges:
+            src, tgt = e["source_id"], e["target_id"]
+            adjacency.setdefault(src, set()).add(tgt)
+            adjacency.setdefault(tgt, set()).add(src)
 
+        # BFS from You through local adjacency
+        reachable: set[str] = set()
+        queue = [YOU_NODE_ID]
+        visited = {YOU_NODE_ID}
+        while queue:
+            current = queue.pop(0)
+            for neighbor in adjacency.get(current, ()):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    if neighbor in capture_set:
+                        reachable.add(neighbor)
+                    queue.append(neighbor)
+
+        # Nodes not locally reachable — check global path before declaring orphan
+        orphans: list[str] = []
+        for nid in node_ids:
+            if nid == YOU_NODE_ID or nid in reachable:
+                continue
+            path = self._repo.find_shortest_path(nid, YOU_NODE_ID, max_depth=4)
+            if path:
+                reachable.add(nid)
+            else:
+                orphans.append(nid)
+
+        # --- Phase 2: Fix orphans with type-aware edges ---
         linked = 0
         for orphan_id in orphans:
-            bridged = False
-
-            # Try to find similar existing nodes connected to You
-            if self._vector_store and self._embedding_engine:
-                embedding_map = self._vector_store.get_embeddings_batch([orphan_id])
-                orphan_vec = embedding_map.get(orphan_id)
-
-                if orphan_vec is not None:
-                    from memora.vector.embeddings import cosine_similarity
-
-                    results = self._vector_store.dense_search(orphan_vec, top_k=10)
-                    for result in results:
-                        r = result.to_dict()
-                        candidate_id = r.get("node_id", "")
-                        if candidate_id == orphan_id or candidate_id in node_ids:
-                            continue
-                        # Check if candidate is connected to You
-                        candidate_edges = self._repo.get_edges_for_node_ids({candidate_id})
-                        has_you_path = any(
-                            e["source_id"] == YOU_NODE_ID or e["target_id"] == YOU_NODE_ID
-                            for e in candidate_edges
-                        )
-                        if has_you_path:
-                            score = max(0.0, min(1.0, r.get("score", 0.5)))
-                            self._repo.create_edge(Edge(
-                                source_id=UUID(orphan_id),
-                                target_id=UUID(candidate_id),
-                                edge_type=EdgeType.RELATED_TO,
-                                edge_category=EdgeCategory.ASSOCIATIVE,
-                                confidence=score,
-                                weight=score,
-                            ))
-                            bridged = True
-                            linked += 1
-                            break  # one bridge is enough
-
-            # Fallback: connect directly to You
+            bridged = self._try_semantic_bridge(
+                orphan_id, capture_set, YOU_NODE_ID,
+            )
             if not bridged:
-                self._repo.create_edge(Edge(
-                    source_id=UUID(YOU_NODE_ID),
-                    target_id=UUID(orphan_id),
-                    edge_type=EdgeType.RELATED_TO,
-                    edge_category=EdgeCategory.ASSOCIATIVE,
-                    confidence=0.5,
-                    weight=0.5,
-                ))
-                linked += 1
+                self._create_you_edge(
+                    orphan_id, node_type_map.get(orphan_id, ""), YOU_NODE_ID,
+                )
+            linked += 1
+
+        # --- Phase 3: Intra-capture connectivity ---
+        linked += self._ensure_intra_capture_connectivity(
+            node_ids, node_type_map, edges,
+        )
 
         if linked:
-            logger.info("Graph connectivity: linked %d orphan node(s) to You", linked)
+            logger.info("Graph connectivity: linked %d node(s)", linked)
+
+    def _create_you_edge(
+        self, node_id: str, node_type: str, you_node_id: str,
+    ) -> None:
+        """Create a type-appropriate edge from You to *node_id*."""
+        from memora.graph.models import Edge, EdgeType, EdgeCategory
+
+        et_val, ec_val = self._YOU_EDGE_MAP.get(node_type, self._YOU_EDGE_DEFAULT)
+        self._repo.create_edge(Edge(
+            source_id=UUID(you_node_id),
+            target_id=UUID(node_id),
+            edge_type=EdgeType(et_val),
+            edge_category=EdgeCategory(ec_val),
+            confidence=0.5,
+            weight=0.5,
+        ))
+
+    def _try_semantic_bridge(
+        self, orphan_id: str, capture_node_ids: set[str], you_node_id: str,
+    ) -> bool:
+        """Try to bridge *orphan_id* to an existing node that reaches You.
+
+        Returns True if a bridge was created.
+        """
+        from memora.graph.models import Edge, EdgeType, EdgeCategory
+
+        if not (self._vector_store and self._embedding_engine):
+            return False
+
+        embedding_map = self._vector_store.get_embeddings_batch([orphan_id])
+        orphan_vec = embedding_map.get(orphan_id)
+        if orphan_vec is None:
+            return False
+
+        results = self._vector_store.dense_search(orphan_vec, top_k=10)
+        for result in results:
+            r = result.to_dict()
+            candidate_id = r.get("node_id", "")
+            if candidate_id == orphan_id or candidate_id in capture_node_ids:
+                continue
+            # Validate candidate reachability via global path check
+            path = self._repo.find_shortest_path(candidate_id, you_node_id, max_depth=4)
+            if path:
+                score = max(0.0, min(1.0, r.get("score", 0.5)))
+                self._repo.create_edge(Edge(
+                    source_id=UUID(orphan_id),
+                    target_id=UUID(candidate_id),
+                    edge_type=EdgeType.RELATED_TO,
+                    edge_category=EdgeCategory.ASSOCIATIVE,
+                    confidence=score,
+                    weight=score,
+                ))
+                return True
+
+        return False
+
+    def _ensure_intra_capture_connectivity(
+        self,
+        node_ids: list[str],
+        node_type_map: dict[str, str],
+        edges: list[dict[str, Any]],
+    ) -> int:
+        """Ensure every capture node has at least one edge to a sibling.
+
+        Returns the number of new edges created.
+        """
+        from memora.graph.models import Edge, EdgeType, EdgeCategory
+        from memora.vector.embeddings import cosine_similarity
+
+        capture_set = set(node_ids)
+
+        # Build intra-capture adjacency from existing edges
+        intra_neighbors: dict[str, set[str]] = {nid: set() for nid in node_ids}
+        for e in edges:
+            src, tgt = e["source_id"], e["target_id"]
+            if src in capture_set and tgt in capture_set:
+                intra_neighbors[src].add(tgt)
+                intra_neighbors[tgt].add(src)
+
+        isolated = [nid for nid in node_ids if not intra_neighbors[nid]]
+        if not isolated:
+            return 0
+
+        # Find nodes that do have intra-capture connections
+        connected_siblings = [nid for nid in node_ids if intra_neighbors[nid]]
+
+        created = 0
+        # Try vector-based matching
+        if self._vector_store:
+            all_capture_ids = list(capture_set)
+            embeddings = self._vector_store.get_embeddings_batch(all_capture_ids)
+
+            for iso_id in isolated:
+                iso_vec = embeddings.get(iso_id)
+                best_id: str | None = None
+                best_score = -1.0
+
+                # Prefer connecting to a connected sibling, fall back to any sibling
+                candidates = connected_siblings if connected_siblings else [
+                    nid for nid in node_ids if nid != iso_id
+                ]
+
+                if iso_vec is not None:
+                    for cand_id in candidates:
+                        if cand_id == iso_id:
+                            continue
+                        cand_vec = embeddings.get(cand_id)
+                        if cand_vec is not None:
+                            sim = cosine_similarity(iso_vec, cand_vec)
+                            if sim > best_score:
+                                best_score = sim
+                                best_id = cand_id
+
+                if best_id is None and candidates:
+                    # No vectors available — pick first connected sibling
+                    best_id = candidates[0]
+
+                if best_id is not None:
+                    score = max(0.1, best_score) if best_score > 0 else 0.3
+                    self._repo.create_edge(Edge(
+                        source_id=UUID(iso_id),
+                        target_id=UUID(best_id),
+                        edge_type=EdgeType.RELATED_TO,
+                        edge_category=EdgeCategory.ASSOCIATIVE,
+                        confidence=score,
+                        weight=score,
+                    ))
+                    # Update local state so next isolated node can target this one
+                    intra_neighbors[iso_id].add(best_id)
+                    intra_neighbors[best_id].add(iso_id)
+                    if not connected_siblings:
+                        connected_siblings.append(iso_id)
+                    created += 1
+        else:
+            # No vector store — chain isolated nodes to an arbitrary connected sibling
+            anchor = connected_siblings[0] if connected_siblings else node_ids[0]
+            for iso_id in isolated:
+                if iso_id == anchor:
+                    continue
+                self._repo.create_edge(Edge(
+                    source_id=UUID(iso_id),
+                    target_id=UUID(anchor),
+                    edge_type=EdgeType.RELATED_TO,
+                    edge_category=EdgeCategory.ASSOCIATIVE,
+                    confidence=0.3,
+                    weight=0.3,
+                ))
+                created += 1
+
+        return created
 
     def _extract_date_references(self, text: str) -> list[dict[str, str]]:
         """Extract relative date phrases and resolve them without mutating text.

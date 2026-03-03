@@ -10,7 +10,8 @@ from memora.vector.store import VectorStore, SearchResult, EMBEDDING_DIM, COLLEC
 @pytest.fixture(scope="module")
 def vector_store(tmp_path_factory) -> VectorStore:
     db_path = tmp_path_factory.mktemp("vectors") / "test_weaviate"
-    vs = VectorStore(db_path=db_path)
+    # Use non-default ports to avoid conflicts with a running Weaviate instance
+    vs = VectorStore(db_path=db_path, port=9079, grpc_port=50151)
     yield vs
     vs.close()
 

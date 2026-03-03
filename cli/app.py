@@ -313,9 +313,6 @@ class MemoraApp:
                 cmd_connectors(self)
             elif choice == "0":
                 self._show_settings()
-            elif choice in ("x", "clear"):
-                from cli.commands.clear_data import cmd_clear_data
-                cmd_clear_data(self)
             else:
                 print(f"  {C.DIM}Unknown command. Valid keys: c s r d i w h b f u t o a g n e j p k 0 q{C.RESET}")
 
@@ -331,6 +328,12 @@ class MemoraApp:
             api_status = f"{C.CONFIRM}configured{C.RESET}" if self._has_api_key else f"{C.SIGNAL}not set{C.RESET}"
             print(f"    {C.DIM}OpenAI API key:{C.RESET}  {api_status}")
             print()
+            print(f"    {C.RED}[x]{C.RESET} {C.DIM}Clear all data{C.RESET}")
+            print()
+            choice = prompt(f"    {C.DIM}>{C.RESET} ").strip().lower()
+            if choice == "x":
+                from cli.commands.clear_data import cmd_clear_data
+                cmd_clear_data(self)
 
     def _goodbye(self):
         goodbye_card()

@@ -580,8 +580,11 @@ class TestCampaignEvents:
 
         await pipeline.run(cid, "Voter social connections.")
 
+        you_id = "00000000-0000-0000-0000-000000000001"
         rows = repo._conn.execute(
             "SELECT edge_type FROM edges WHERE edge_type = 'KNOWS'"
+            " AND source_id != ? AND target_id != ?",
+            [you_id, you_id],
         ).fetchall()
         assert len(rows) == 2  # Priya-Sophie, Tyler-Jordan
 

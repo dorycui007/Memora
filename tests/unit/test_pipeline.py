@@ -71,29 +71,42 @@ class TestPreprocessing:
 
     @pytest.mark.asyncio
     async def test_date_normalization_today(self, pipeline):
+        """Dates are extracted as metadata — processed_content stays unmutated."""
         today = datetime.now(timezone.utc).date().isoformat()
         state = PipelineState(capture_id=str(uuid4()), raw_content="I have a meeting today")
         result = await pipeline._preprocess(state)
-        assert today in result.processed_content
+        # Text is preserved as-is; resolved date lives in metadata
+        assert result.processed_content == "I have a meeting today"
+        resolved = result.preprocessing_metadata["resolved_dates"]
+        assert any(d["resolved"] == today for d in resolved)
 
     @pytest.mark.asyncio
     async def test_date_normalization_tomorrow(self, pipeline):
+        """Tomorrow resolves to the correct date in metadata."""
         tomorrow = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
         state = PipelineState(capture_id=str(uuid4()), raw_content="Deadline is tomorrow")
         result = await pipeline._preprocess(state)
-        assert tomorrow in result.processed_content
+        assert result.processed_content == "Deadline is tomorrow"
+        resolved = result.preprocessing_metadata["resolved_dates"]
+        assert any(d["resolved"] == tomorrow for d in resolved)
 
     @pytest.mark.asyncio
     async def test_currency_normalization_k(self, pipeline):
+        """Currency shorthand is extracted as metadata, not mutated in text."""
         state = PipelineState(capture_id=str(uuid4()), raw_content="Salary is $50k per year")
         result = await pipeline._preprocess(state)
-        assert "$50,000.00" in result.processed_content
+        assert result.processed_content == "Salary is $50k per year"
+        resolved = result.preprocessing_metadata["resolved_currencies"]
+        assert any(c["resolved"] == "$50,000.00" for c in resolved)
 
     @pytest.mark.asyncio
     async def test_currency_normalization_bucks(self, pipeline):
+        """Colloquial currency is extracted as metadata, not mutated in text."""
         state = PipelineState(capture_id=str(uuid4()), raw_content="Spent 20 bucks on lunch")
         result = await pipeline._preprocess(state)
-        assert "$20.00" in result.processed_content
+        assert result.processed_content == "Spent 20 bucks on lunch"
+        resolved = result.preprocessing_metadata["resolved_currencies"]
+        assert any(c["resolved"] == "$20.00" for c in resolved)
 
     @pytest.mark.asyncio
     async def test_content_hash_computed_on_raw(self, pipeline):

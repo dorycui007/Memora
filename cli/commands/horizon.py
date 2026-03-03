@@ -241,13 +241,18 @@ def _check_off(app):
     if not query:
         return
 
-    results = app.repo.search_nodes_ilike(query, limit=10)
+    all_results = app.repo.search_nodes_ilike(query, limit=10)
     # Filter to completable types
     completable_types = {"COMMITMENT", "GOAL"}
-    results = [r for r in results if r.get("node_type") in completable_types]
+    results = [r for r in all_results if r.get("node_type") in completable_types]
 
     if not results:
-        print(f"  {C.DIM}No completable items found matching '{query}'{R}")
+        if all_results:
+            top = all_results[0]
+            print(f"  {C.DIM}Found '{top['title']}' ({top['node_type']}) "
+                  f"— only commitments and goals can be checked off{R}")
+        else:
+            print(f"  {C.DIM}No items found matching '{query}'{R}")
         return
 
     print(f"\n  {C.BOLD}Matching items:{R}")

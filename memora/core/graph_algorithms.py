@@ -33,6 +33,11 @@ class GraphAlgorithms:
         self._graph_cache: dict | None = None
         self._cache_time: float = 0
 
+    @property
+    def graph(self) -> dict:
+        """Public accessor for the cached graph structure."""
+        return self._build_graph()
+
     # ── Graph Construction ────────────────────────────────────────
 
     def _build_graph(self, force: bool = False) -> dict:
@@ -726,6 +731,7 @@ class GraphAlgorithms:
                     "target_title": g["nodes"][v]["title"],
                     "score": combined,
                     "common_neighbors": len(common),
+                    "common_neighbor_ids": list(common),
                     "method": "adamic_adar+common_neighbors",
                 }
 
