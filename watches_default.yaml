@@ -1,0 +1,31 @@
+# Memora Watch Targets — URLs to monitor for changes
+# Copy to ~/.memora/watches.yaml and customize
+#
+# Each watch target has:
+#   name: Human-readable identifier
+#   url: URL to monitor
+#   interval_hours: How often to check (12-168)
+#   alert_on: List of change types to alert on
+#   network: Which Memora network this belongs to
+
+watches: []
+
+# Example watches (uncomment and customize):
+#
+# - name: "MCSS Instagram"
+#   url: "https://www.instagram.com/utmmcss/"
+#   interval_hours: 12
+#   alert_on: [new_post]
+#   network: CLUBS
+#
+# - name: "UTMIST Events"
+#   url: "https://utmist.ca"
+#   interval_hours: 24
+#   alert_on: [new_event, recruitment_open]
+#   network: CLUBS
+#
+# - name: "UTM Campus Council"
+#   url: "https://governingcouncil.utoronto.ca/secretariat/page/governance-bodies/utm-campus-council"
+#   interval_hours: 48
+#   alert_on: [new_meeting, policy_change]
+#   network: GOVERNANCE

@@ -77,7 +77,10 @@ class BackupManager:
 
         WARNING: This overwrites the current database.
         """
-        src = Path(snapshot_path)
+        src = Path(snapshot_path).resolve()
+        if not src.is_relative_to(self._backups_dir.resolve()):
+            logger.error("Snapshot path outside backups directory: %s", snapshot_path)
+            return False
         if not src.exists():
             logger.error("Snapshot not found: %s", snapshot_path)
             return False

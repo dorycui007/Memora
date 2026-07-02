@@ -20,9 +20,17 @@ build/
 .DS_Store
 Thumbs.db
 
+# Database files
+*.duckdb
+*.duckdb.wal
+
+# Weaviate persistence
+weaviate_data/
+
 # Misc
 =1.60
 
 # Test artifacts
 <MagicMock*/
 *.lance/
+.coverage

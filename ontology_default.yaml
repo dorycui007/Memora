@@ -1,0 +1,296 @@
+version: 2
+
+entity_types:
+  # ── Original 12 (preserved for backward compatibility) ──
+  PERSON:
+    category: core
+    icon: user
+    color: "#e879f9"
+    properties:
+      name: { type: string, required: true }
+      aliases: { type: "list[string]" }
+      role: { type: string }
+      organization: { type: string }
+      relationship_to_user: { type: string }
+      contact_info: { type: dict }
+      last_interaction: { type: datetime }
+      influence_score: { type: float, default: 0.0 }
+
+  EVENT:
+    category: core
+    icon: calendar
+    color: "#3b82f6"
+    properties:
+      event_date: { type: datetime }
+      location: { type: string }
+      participants: { type: "list[string]" }
+      event_type: { type: string }
+      duration: { type: string }
+      sentiment: { type: string }
+      recurring: { type: boolean, default: false }
+
+  COMMITMENT:
+    category: core
+    icon: check-circle
+    color: "#f59e0b"
+    properties:
+      due_date: { type: datetime }
+      status: { type: string, default: "open" }
+      committed_by: { type: string }
+      committed_to: { type: string }
+      priority: { type: string, default: "medium" }
+      description: { type: string }
+
+  DECISION:
+    category: core
+    icon: scale
+    color: "#ef4444"
+    properties:
+      decision_date: { type: datetime }
+      options_considered: { type: "list[string]" }
+      chosen_option: { type: string }
+      rationale: { type: string }
+      outcome: { type: string }
+      reversible: { type: boolean, default: true }
+
+  GOAL:
+    category: core
+    icon: target
+    color: "#22c55e"
+    properties:
+      target_date: { type: datetime }
+      progress: { type: float, default: 0.0 }
+      milestones: { type: "list[dict]" }
+      status: { type: string, default: "active" }
+      priority: { type: string, default: "medium" }
+      success_criteria: { type: string }
+
+  FINANCIAL_ITEM:
+    category: core
+    icon: dollar-sign
+    color: "#84cc16"
+    properties:
+      amount: { type: float, default: 0.0 }
+      currency: { type: string, default: "USD" }
+      direction: { type: string, default: "outflow" }
+      category: { type: string }
+      recurring: { type: boolean, default: false }
+      frequency: { type: string }
+      counterparty: { type: string }
+
+  NOTE:
+    category: core
+    icon: file-text
+    color: "#a3a3a3"
+    properties:
+      source_context: { type: string }
+      note_type: { type: string, default: "observation" }
+
+  IDEA:
+    category: core
+    icon: lightbulb
+    color: "#fbbf24"
+    properties:
+      maturity: { type: string, default: "seed" }
+      domain: { type: string }
+      potential_impact: { type: string }
+
+  PROJECT:
+    category: core
+    icon: folder
+    color: "#0ea5e9"
+    properties:
+      status: { type: string, default: "active" }
+      start_date: { type: datetime }
+      target_date: { type: datetime }
+      team: { type: "list[string]" }
+      deliverables: { type: "list[string]" }
+      repository_url: { type: string }
+
+  CONCEPT:
+    category: core
+    icon: brain
+    color: "#a78bfa"
+    properties:
+      definition: { type: string }
+      domain: { type: string }
+      related_concepts: { type: "list[string]" }
+      complexity_level: { type: string, default: "basic" }
+
+  REFERENCE:
+    category: core
+    icon: link
+    color: "#64748b"
+    properties:
+      url: { type: string }
+      author: { type: string }
+      publication_date: { type: datetime }
+      source_type: { type: string }
+      citation: { type: string }
+      archived: { type: boolean, default: false }
+
+  INSIGHT:
+    category: core
+    icon: zap
+    color: "#f97316"
+    properties:
+      derived_from: { type: "list[string]" }
+      actionable: { type: boolean, default: false }
+      cross_network: { type: boolean, default: false }
+      strength: { type: float, default: 0.5 }
+
+  # ── New strategic types ──
+  ORGANIZATION:
+    category: strategic
+    icon: building
+    color: "#6366f1"
+    properties:
+      name: { type: string, required: true }
+      org_type: { type: string }
+      parent_org: { type: string }
+      member_count: { type: integer }
+      website: { type: string }
+      advisors: { type: "list[string]" }
+
+  POSITION:
+    category: strategic
+    icon: badge
+    color: "#8b5cf6"
+    properties:
+      title: { type: string, required: true }
+      organization: { type: string }
+      holder: { type: string }
+      status: { type: string }
+      time_hrs_week: { type: float }
+      start_date: { type: datetime }
+      end_date: { type: datetime }
+      blockers: { type: "list[string]" }
+
+  ELECTION:
+    category: strategic
+    icon: vote
+    color: "#ec4899"
+    properties:
+      position_title: { type: string, required: true }
+      organization: { type: string }
+      date: { type: datetime }
+      candidates: { type: "list[string]" }
+      result: { type: string }
+      vote_count: { type: integer }
+
+  COURSE:
+    category: academic
+    icon: book
+    color: "#06b6d4"
+    properties:
+      code: { type: string, required: true }
+      name: { type: string }
+      semester: { type: string }
+      grade: { type: string }
+      credits: { type: float }
+      status: { type: string }
+      instructor: { type: string }
+
+  METRIC:
+    category: intelligence
+    icon: chart
+    color: "#10b981"
+    properties:
+      name: { type: string, required: true }
+      value: { type: float }
+      unit: { type: string }
+      target: { type: float }
+      measured_at: { type: datetime }
+      trend: { type: string }
+      history: { type: "list[dict]" }
+
+edge_types:
+  # ── Structural ──
+  PART_OF: { category: STRUCTURAL, source: null, target: null }
+  CONTAINS: { category: STRUCTURAL, source: null, target: null }
+  SUBTASK_OF:
+    category: STRUCTURAL
+    source: [COMMITMENT, GOAL, PROJECT]
+    target: [COMMITMENT, GOAL, PROJECT]
+
+  # ── Associative ──
+  RELATED_TO: { category: ASSOCIATIVE, source: null, target: null }
+  INSPIRED_BY: { category: ASSOCIATIVE, source: null, target: null }
+  CONTRADICTS: { category: ASSOCIATIVE, source: null, target: null }
+  SIMILAR_TO: { category: ASSOCIATIVE, source: null, target: null }
+  COMPLEMENTS: { category: ASSOCIATIVE, source: null, target: null }
+
+  # ── Provenance ──
+  DERIVED_FROM: { category: PROVENANCE, source: null, target: null }
+  VERIFIED_BY: { category: PROVENANCE, source: null, target: [REFERENCE, PERSON] }
+  SOURCE_OF: { category: PROVENANCE, source: [REFERENCE, PERSON], target: null }
+  EXTRACTED_FROM: { category: PROVENANCE, source: null, target: null }
+
+  # ── Temporal ──
+  PRECEDED_BY: { category: TEMPORAL, source: null, target: null }
+  EVOLVED_INTO: { category: TEMPORAL, source: null, target: null }
+  TRIGGERED: { category: TEMPORAL, source: null, target: null }
+  CONCURRENT_WITH: { category: TEMPORAL, source: null, target: null }
+
+  # ── Personal ──
+  COMMITTED_TO: { category: PERSONAL, source: [PERSON], target: [COMMITMENT] }
+  DECIDED: { category: PERSONAL, source: [PERSON], target: [DECISION] }
+  FELT_ABOUT: { category: PERSONAL, source: [PERSON], target: null }
+  RESPONSIBLE_FOR: { category: PERSONAL, source: [PERSON], target: null }
+
+  # ── Social ──
+  KNOWS: { category: SOCIAL, source: [PERSON], target: [PERSON] }
+  INTRODUCED_BY: { category: SOCIAL, source: [PERSON], target: [PERSON] }
+  OWES_FAVOR: { category: SOCIAL, source: [PERSON], target: [PERSON] }
+  COLLABORATES_WITH: { category: SOCIAL, source: [PERSON], target: [PERSON] }
+  REPORTS_TO: { category: SOCIAL, source: [PERSON], target: [PERSON] }
+
+  # ── Network ──
+  BRIDGES: { category: NETWORK, source: null, target: null }
+  MEMBER_OF: { category: NETWORK, source: null, target: [PROJECT, EVENT, ORGANIZATION] }
+  IMPACTS: { category: NETWORK, source: null, target: null }
+  CORRELATES_WITH: { category: NETWORK, source: null, target: null }
+
+  # ── Strategic (new) ──
+  HOLDS_POSITION: { category: STRATEGIC, source: [PERSON], target: [POSITION] }
+  CANDIDATE_IN: { category: STRATEGIC, source: [PERSON], target: [ELECTION] }
+  PREREQUISITE_OF:
+    category: STRUCTURAL
+    source: [COURSE, COMMITMENT, GOAL]
+    target: [COURSE, COMMITMENT, GOAL]
+  MEASURES: { category: ASSOCIATIVE, source: [METRIC], target: null }
+  COMPETES_WITH:
+    category: STRATEGIC
+    source: [PERSON, ORGANIZATION]
+    target: [PERSON, ORGANIZATION]
+  ENDORSES: { category: STRATEGIC, source: [PERSON, ORGANIZATION], target: [PERSON] }
+  OPPOSES: { category: STRATEGIC, source: [PERSON, ORGANIZATION], target: null }
+
+networks:
+  ACADEMIC:
+    keywords: [course, class, professor, grade, exam, study, research, paper, thesis, lecture, assignment, university, college, semester, GPA, curriculum, syllabus, academic]
+    decay_lambda: 0.05
+  PROFESSIONAL:
+    keywords: [work, job, client, meeting, project, deadline, colleague, manager, deliverable, sprint, standup, promotion, salary, office, career, resume, interview, company]
+    decay_lambda: 0.03
+  FINANCIAL:
+    keywords: [money, payment, invoice, budget, expense, income, invest, stock, savings, loan, debt, rent, subscription, tax, bank, transaction, price, cost, fee]
+    decay_lambda: 0.02
+  HEALTH:
+    keywords: [exercise, workout, gym, sleep, stress, doctor, medication, symptom, diet, nutrition, mental health, therapy, habit, weight, blood pressure, medical, health]
+    decay_lambda: 0.05
+  PERSONAL_GROWTH:
+    keywords: [learn, skill, book, course, habit, goal, improvement, meditation, journal, reflection, growth, mindset, podcast, tutorial, practice, mastery]
+    decay_lambda: 0.04
+  SOCIAL:
+    keywords: [friend, family, party, dinner, birthday, relationship, hangout, call, catch up, wedding, reunion, favor, gift, social, gathering]
+    decay_lambda: 0.07
+  VENTURES:
+    keywords: [startup, idea, MVP, investor, pitch, business, founder, revenue, customer, product, launch, prototype, market, venture, entrepreneurship, side project]
+    decay_lambda: 0.03
+  GOVERNANCE:
+    keywords: [election, vote, campaign, council, committee, governance, constitution, motion, slate, candidate, ballot, UTMSU, campus, policy, bylaw, quorum, amendment]
+    decay_lambda: 0.04
+  CLUBS:
+    keywords: [MCSS, UTMIST, society, executive, DeerHacks, hackathon, club, associate, director, membership, AGM, recruitment, orientation]
+    decay_lambda: 0.04

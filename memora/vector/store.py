@@ -6,7 +6,6 @@ Provides upsert, delete, and multi-mode search (dense, hybrid, filtered).
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,6 +13,7 @@ from typing import Any
 import weaviate
 from weaviate.classes.config import Configure, DataType, Property
 from weaviate.classes.query import Filter, MetadataQuery
+from weaviate.exceptions import UnexpectedStatusCodeError, WeaviateQueryError
 from weaviate.util import generate_uuid5
 
 logger = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ class VectorStore:
                 properties=properties,
                 vector=vector,
             )
-        except Exception:
+        except UnexpectedStatusCodeError:
             # Object doesn't exist yet — insert
             self._collection.data.insert(
                 uuid=uuid,
@@ -129,8 +129,10 @@ class VectorStore:
         """Delete embedding for a node."""
         try:
             self._collection.data.delete_by_id(self._node_uuid(node_id))
+        except UnexpectedStatusCodeError:
+            pass  # Object doesn't exist — nothing to delete
         except Exception:
-            pass  # May not exist
+            logger.warning("Failed to delete embedding for node %s", node_id, exc_info=True)
 
     def get_embedding(self, node_id: str) -> list[float] | None:
         """Retrieve the dense vector for a node. Returns None if not found."""
@@ -142,7 +144,10 @@ class VectorStore:
             if obj is None:
                 return None
             return list(obj.vector["default"])
+        except (UnexpectedStatusCodeError, WeaviateQueryError):
+            return None
         except Exception:
+            logger.warning("Failed to get embedding for node %s", node_id, exc_info=True)
             return None
 
     def dense_search(
@@ -164,6 +169,7 @@ class VectorStore:
                 return_metadata=MetadataQuery(distance=True),
             )
         except Exception:
+            logger.warning("Dense search failed", exc_info=True)
             return []
 
         results = []
@@ -214,7 +220,7 @@ class VectorStore:
                 ))
             return results
         except Exception:
-            # Fallback to dense-only
+            logger.warning("Hybrid search failed, falling back to dense-only", exc_info=True)
             return self.dense_search(query_vector, top_k=top_k, filters=filters)
 
     def batch_upsert_embeddings(self, records: list[dict[str, Any]]) -> None:
@@ -277,4 +283,4 @@ class VectorStore:
         try:
             self._client.close()
         except Exception:
-            pass
+            logger.warning("Error closing Weaviate client", exc_info=True)

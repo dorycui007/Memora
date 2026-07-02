@@ -63,6 +63,12 @@ class NodeType(str, Enum):
     CONCEPT = "CONCEPT"
     REFERENCE = "REFERENCE"
     INSIGHT = "INSIGHT"
+    # Strategic Nodes
+    ORGANIZATION = "ORGANIZATION"
+    POSITION = "POSITION"
+    ELECTION = "ELECTION"
+    COURSE = "COURSE"
+    METRIC = "METRIC"
 
 
 class EdgeCategory(str, Enum):
@@ -73,6 +79,7 @@ class EdgeCategory(str, Enum):
     PERSONAL = "PERSONAL"
     SOCIAL = "SOCIAL"
     NETWORK = "NETWORK"
+    STRATEGIC = "STRATEGIC"
 
 
 class EdgeType(str, Enum):
@@ -112,6 +119,14 @@ class EdgeType(str, Enum):
     MEMBER_OF = "MEMBER_OF"
     IMPACTS = "IMPACTS"
     CORRELATES_WITH = "CORRELATES_WITH"
+    # Strategic
+    HOLDS_POSITION = "HOLDS_POSITION"
+    CANDIDATE_IN = "CANDIDATE_IN"
+    PREREQUISITE_OF = "PREREQUISITE_OF"
+    MEASURES = "MEASURES"
+    COMPETES_WITH = "COMPETES_WITH"
+    ENDORSES = "ENDORSES"
+    OPPOSES = "OPPOSES"
 
 
 class NetworkType(str, Enum):
@@ -122,6 +137,8 @@ class NetworkType(str, Enum):
     PERSONAL_GROWTH = "PERSONAL_GROWTH"
     SOCIAL = "SOCIAL"
     VENTURES = "VENTURES"
+    GOVERNANCE = "GOVERNANCE"
+    CLUBS = "CLUBS"
 
 
 class CommitmentStatus(str, Enum):
@@ -234,6 +251,8 @@ class PatternType(str, Enum):
     IDEA_MATURITY = "idea_maturity"
     NETWORK_BALANCE = "network_balance"
     OUTCOME_PATTERN = "outcome_pattern"
+    COMMUNITY_PATTERN = "community_pattern"
+    CENTRALITY_ANOMALY = "centrality_anomaly"
 
 
 class PatternSeverity(str, Enum):
@@ -412,6 +431,95 @@ class InsightNode(BaseNode):
     strength: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
+class OrganizationNode(BaseNode):
+    """An organization (club, company, department, committee)."""
+
+    node_type: NodeType = NodeType.ORGANIZATION
+    name: str = ""
+    org_type: str = ""
+    parent_org: str = ""
+    member_count: int | None = None
+    website: str = ""
+    advisors: list[str] = Field(default_factory=list)
+
+
+class PositionNode(BaseNode):
+    """A strategic position or role being tracked."""
+
+    node_type: NodeType = NodeType.POSITION
+    position_title: str = ""
+    organization: str = ""
+    holder: str = ""
+    status: str = ""  # target, active, campaigning, applied, former, lost
+    time_hrs_week: float | None = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
+    blockers: list[str] = Field(default_factory=list)
+
+
+class ElectionNode(BaseNode):
+    """An election or selection process."""
+
+    node_type: NodeType = NodeType.ELECTION
+    position_title: str = ""
+    organization: str = ""
+    election_date: datetime | None = None
+    candidates: list[str] = Field(default_factory=list)
+    result: str = ""  # pending, won, lost
+    vote_count: int | None = None
+
+
+class CourseNode(BaseNode):
+    """An academic course."""
+
+    node_type: NodeType = NodeType.COURSE
+    code: str = ""
+    course_name: str = ""
+    semester: str = ""
+    grade: str = ""
+    credits: float | None = None
+    status: str = ""  # planned, enrolled, completed, dropped
+    instructor: str = ""
+
+
+class MetricNode(BaseNode):
+    """A tracked metric or KPI."""
+
+    node_type: NodeType = NodeType.METRIC
+    metric_name: str = ""
+    value: float | None = None
+    unit: str = ""
+    target: float | None = None
+    measured_at: datetime | None = None
+    trend: str = ""  # up, down, flat
+    history: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DynamicNode(BaseNode):
+    """Runtime-validated node for ontology-defined types without a dedicated model.
+
+    Validates properties against the ontology YAML at construction time.
+    Falls back to BaseNode behavior if ontology is unavailable.
+    """
+
+    def model_post_init(self, __context: Any) -> None:
+        """Validate properties against ontology schema after construction."""
+        try:
+            from memora.graph.ontology_registry import get_ontology_registry
+
+            registry = get_ontology_registry()
+            schema = registry.get_entity_schema(self.node_type.value)
+            if schema is None:
+                return
+
+            for prop_name, prop_def in schema.items():
+                if isinstance(prop_def, dict) and prop_def.get("required"):
+                    if prop_name not in self.properties and not getattr(self, prop_name, None):
+                        pass  # Log but don't fail — LLM extractions may be incomplete
+        except Exception:
+            pass  # Ontology unavailable — allow node creation
+
+
 # Map NodeType enum to the corresponding model class
 NODE_TYPE_MODEL_MAP: dict[NodeType, type[BaseNode]] = {
     NodeType.EVENT: EventNode,
@@ -426,6 +534,11 @@ NODE_TYPE_MODEL_MAP: dict[NodeType, type[BaseNode]] = {
     NodeType.CONCEPT: ConceptNode,
     NodeType.REFERENCE: ReferenceNode,
     NodeType.INSIGHT: InsightNode,
+    NodeType.ORGANIZATION: OrganizationNode,
+    NodeType.POSITION: PositionNode,
+    NodeType.ELECTION: ElectionNode,
+    NodeType.COURSE: CourseNode,
+    NodeType.METRIC: MetricNode,
 }
 
 

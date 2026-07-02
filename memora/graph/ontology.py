@@ -17,12 +17,14 @@ EDGE_TYPE_CATEGORY: dict[EdgeType, EdgeCategory] = {
     EdgeType.PART_OF: EdgeCategory.STRUCTURAL,
     EdgeType.CONTAINS: EdgeCategory.STRUCTURAL,
     EdgeType.SUBTASK_OF: EdgeCategory.STRUCTURAL,
+    EdgeType.PREREQUISITE_OF: EdgeCategory.STRUCTURAL,
     # Associative
     EdgeType.RELATED_TO: EdgeCategory.ASSOCIATIVE,
     EdgeType.INSPIRED_BY: EdgeCategory.ASSOCIATIVE,
     EdgeType.CONTRADICTS: EdgeCategory.ASSOCIATIVE,
     EdgeType.SIMILAR_TO: EdgeCategory.ASSOCIATIVE,
     EdgeType.COMPLEMENTS: EdgeCategory.ASSOCIATIVE,
+    EdgeType.MEASURES: EdgeCategory.ASSOCIATIVE,
     # Provenance
     EdgeType.DERIVED_FROM: EdgeCategory.PROVENANCE,
     EdgeType.VERIFIED_BY: EdgeCategory.PROVENANCE,
@@ -49,6 +51,12 @@ EDGE_TYPE_CATEGORY: dict[EdgeType, EdgeCategory] = {
     EdgeType.MEMBER_OF: EdgeCategory.NETWORK,
     EdgeType.IMPACTS: EdgeCategory.NETWORK,
     EdgeType.CORRELATES_WITH: EdgeCategory.NETWORK,
+    # Strategic
+    EdgeType.HOLDS_POSITION: EdgeCategory.STRATEGIC,
+    EdgeType.CANDIDATE_IN: EdgeCategory.STRATEGIC,
+    EdgeType.COMPETES_WITH: EdgeCategory.STRATEGIC,
+    EdgeType.ENDORSES: EdgeCategory.STRATEGIC,
+    EdgeType.OPPOSES: EdgeCategory.STRATEGIC,
 }
 
 
@@ -98,9 +106,26 @@ EDGE_CONSTRAINTS: dict[EdgeType, tuple[set[NodeType] | None, set[NodeType] | Non
     EdgeType.REPORTS_TO: ({NodeType.PERSON}, {NodeType.PERSON}),
     # Network — cross-network connections
     EdgeType.BRIDGES: (_ANY, _ANY),
-    EdgeType.MEMBER_OF: (_ANY, {NodeType.PROJECT, NodeType.EVENT}),
+    EdgeType.MEMBER_OF: (_ANY, {NodeType.PROJECT, NodeType.EVENT, NodeType.ORGANIZATION}),
     EdgeType.IMPACTS: (_ANY, _ANY),
     EdgeType.CORRELATES_WITH: (_ANY, _ANY),
+    # Strategic
+    EdgeType.HOLDS_POSITION: ({NodeType.PERSON}, {NodeType.POSITION}),
+    EdgeType.CANDIDATE_IN: ({NodeType.PERSON}, {NodeType.ELECTION}),
+    EdgeType.PREREQUISITE_OF: (
+        {NodeType.COURSE, NodeType.COMMITMENT, NodeType.GOAL},
+        {NodeType.COURSE, NodeType.COMMITMENT, NodeType.GOAL},
+    ),
+    EdgeType.MEASURES: ({NodeType.METRIC}, _ANY),
+    EdgeType.COMPETES_WITH: (
+        {NodeType.PERSON, NodeType.ORGANIZATION},
+        {NodeType.PERSON, NodeType.ORGANIZATION},
+    ),
+    EdgeType.ENDORSES: (
+        {NodeType.PERSON, NodeType.ORGANIZATION},
+        {NodeType.PERSON},
+    ),
+    EdgeType.OPPOSES: ({NodeType.PERSON, NodeType.ORGANIZATION}, _ANY),
 }
 
 
@@ -143,6 +168,16 @@ NETWORK_KEYWORDS: dict[str, list[str]] = {
         "startup", "idea", "MVP", "investor", "pitch", "business", "founder",
         "revenue", "customer", "product", "launch", "prototype", "market",
         "venture", "entrepreneurship", "side project",
+    ],
+    "GOVERNANCE": [
+        "election", "vote", "campaign", "council", "committee", "governance",
+        "constitution", "motion", "slate", "candidate", "ballot", "UTMSU",
+        "campus", "policy", "bylaw", "quorum", "amendment",
+    ],
+    "CLUBS": [
+        "MCSS", "UTMIST", "society", "executive", "DeerHacks", "hackathon",
+        "club", "associate", "director", "membership", "AGM", "recruitment",
+        "orientation",
     ],
 }
 

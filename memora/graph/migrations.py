@@ -90,6 +90,46 @@ MIGRATIONS: list[tuple[int, str, list[str], list[str]]] = [
          "ALTER TABLE detected_patterns DROP COLUMN IF EXISTS previous_value",
          "ALTER TABLE detected_patterns DROP COLUMN IF EXISTS severity",
      ]),
+    (7, "Add event_log and watch_state tables for event-driven processing",
+     [
+         """CREATE TABLE IF NOT EXISTS event_log (
+                id          VARCHAR PRIMARY KEY,
+                event_type  VARCHAR NOT NULL,
+                source      VARCHAR NOT NULL,
+                payload     JSON,
+                priority    INTEGER DEFAULT 5,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""",
+         "CREATE INDEX IF NOT EXISTS idx_event_log_type ON event_log(event_type)",
+         "CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at)",
+         """CREATE TABLE IF NOT EXISTS watch_state (
+                name          VARCHAR PRIMARY KEY,
+                url           VARCHAR NOT NULL,
+                content_hash  VARCHAR(64),
+                last_check    TIMESTAMP,
+                last_change   TIMESTAMP,
+                check_count   INTEGER DEFAULT 0,
+                change_count  INTEGER DEFAULT 0,
+                errors        INTEGER DEFAULT 0
+            )""",
+     ],
+     [
+         "DROP INDEX IF EXISTS idx_event_log_created",
+         "DROP INDEX IF EXISTS idx_event_log_type",
+         "DROP TABLE IF EXISTS event_log",
+         "DROP TABLE IF EXISTS watch_state",
+     ]),
+    (8, "Add indexes on nodes for common query patterns",
+     [
+         "CREATE INDEX IF NOT EXISTS idx_nodes_created_at ON nodes(created_at)",
+         "CREATE INDEX IF NOT EXISTS idx_nodes_node_type ON nodes(node_type)",
+         "CREATE INDEX IF NOT EXISTS idx_nodes_type_created ON nodes(node_type, created_at)",
+     ],
+     [
+         "DROP INDEX IF EXISTS idx_nodes_type_created",
+         "DROP INDEX IF EXISTS idx_nodes_node_type",
+         "DROP INDEX IF EXISTS idx_nodes_created_at",
+     ]),
 ]
 
 

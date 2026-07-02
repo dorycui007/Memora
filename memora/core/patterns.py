@@ -63,6 +63,9 @@ class PatternEngine:
             self.detect_network_balance_patterns,
             self.detect_community_patterns,
             self.detect_centrality_anomalies,
+            self.detect_position_health_patterns,
+            self.detect_flywheel_patterns,
+            self.detect_competitive_patterns,
         ]
 
         for detector in detectors:
@@ -1107,6 +1110,168 @@ class PatternEngine:
         return patterns
 
     # ── Storage + helpers ─────────────────────────────────────────
+
+    # ── Strategic detectors ─────────────────────────────────────
+
+    def detect_position_health_patterns(self) -> list[dict]:
+        """Detect positions with declining health or overdue commitments."""
+        patterns = []
+        try:
+            from memora.graph.models import NodeFilter, NodeType, parse_properties
+
+            filters = NodeFilter(node_types=[NodeType.POSITION], limit=50)
+            positions = self.repo.query_nodes(filters)
+
+            for pos in positions:
+                props = parse_properties(pos.properties)
+                pos_id = str(pos.id)
+                title = pos.title
+
+                # Count overdue commitments connected to this position
+                edges = self.repo.get_edges(pos_id)
+                overdue_count = 0
+                total_commitments = 0
+
+                for e in edges:
+                    other_id = str(e.source_id) if str(e.target_id) == pos_id else str(e.target_id)
+                    other = self.repo.get_node(other_id)
+                    if not other:
+                        continue
+                    ntype = other.node_type.value if hasattr(other.node_type, "value") else str(other.node_type)
+                    if ntype == "COMMITMENT":
+                        total_commitments += 1
+                        other_props = parse_properties(other.properties)
+                        if other_props.get("status") == "overdue":
+                            overdue_count += 1
+
+                if overdue_count >= 2:
+                    signal = min(1.0, overdue_count / max(total_commitments, 1))
+                    confidence = _compute_confidence(total_commitments, signal)
+                    patterns.append(self._make_pattern(
+                        PatternType.COMMITMENT_PATTERN,
+                        f"Position '{title}' has {overdue_count} overdue commitment(s)",
+                        evidence=[pos_id],
+                        confidence=confidence,
+                        severity="warning" if overdue_count < 4 else "critical",
+                        suggested_action=f"Review commitments for {title} — {overdue_count}/{total_commitments} are overdue",
+                        networks=[n.value for n in pos.networks],
+                        current_value=float(overdue_count),
+                    ))
+
+                # Check for blockers
+                blockers = props.get("blockers", [])
+                if len(blockers) >= 2:
+                    confidence = _compute_confidence(len(blockers), 0.7)
+                    patterns.append(self._make_pattern(
+                        PatternType.GOAL_ALIGNMENT,
+                        f"Position '{title}' has {len(blockers)} blocker(s): {', '.join(blockers[:3])}",
+                        evidence=[pos_id],
+                        confidence=confidence,
+                        severity="warning",
+                        suggested_action=f"Address blockers for {title} to unblock progress",
+                        networks=[n.value for n in pos.networks],
+                        current_value=float(len(blockers)),
+                    ))
+        except Exception:
+            logger.debug("Position health detection failed", exc_info=True)
+
+        return patterns
+
+    def detect_flywheel_patterns(self) -> list[dict]:
+        """Detect cross-position reinforcement via shared entities."""
+        patterns = []
+        try:
+            from memora.core.position_tracker import PositionTracker
+
+            tracker = PositionTracker(self.repo)
+            flywheels = tracker.detect_flywheels()
+
+            for fw in flywheels:
+                if fw["shared_entities"] >= 2:
+                    confidence = _compute_confidence(
+                        fw["shared_entities"],
+                        min(1.0, fw["shared_entities"] / 5),
+                    )
+                    patterns.append(self._make_pattern(
+                        PatternType.CROSS_NETWORK,
+                        f"Flywheel: '{fw['position_a']}' and '{fw['position_b']}' share {fw['shared_entities']} connection(s)",
+                        confidence=confidence,
+                        severity="info",
+                        suggested_action=f"Leverage the synergy between {fw['position_a']} and {fw['position_b']}",
+                        current_value=float(fw["shared_entities"]),
+                    ))
+        except Exception:
+            logger.debug("Flywheel detection failed", exc_info=True)
+
+        return patterns
+
+    def detect_competitive_patterns(self) -> list[dict]:
+        """Detect competitive dynamics via COMPETES_WITH and OPPOSES edges."""
+        patterns = []
+        try:
+            from memora.graph.models import EdgeType
+
+            # Find all COMPETES_WITH edges
+            competes_edges = []
+            try:
+                all_edges = self.repo.get_edges_by_type("COMPETES_WITH")
+                competes_edges = all_edges
+            except Exception:
+                pass
+
+            if len(competes_edges) >= 1:
+                confidence = _compute_confidence(len(competes_edges), 0.6)
+                competitor_names = set()
+                for e in competes_edges[:5]:
+                    target = self.repo.get_node(str(e.target_id) if hasattr(e, 'target_id') else e.get("target_id", ""))
+                    if target:
+                        competitor_names.add(target.title)
+                if competitor_names:
+                    names_str = ", ".join(list(competitor_names)[:3])
+                    patterns.append(self._make_pattern(
+                        PatternType.RELATIONSHIP_PATTERN,
+                        f"Active competition tracked with {len(competes_edges)} competitor(s): {names_str}",
+                        confidence=confidence,
+                        severity="info",
+                        suggested_action="Monitor competitor activity and adjust strategy",
+                        current_value=float(len(competes_edges)),
+                    ))
+
+            # Find OPPOSES edges
+            opposes_edges = []
+            try:
+                opposes_edges = self.repo.get_edges_by_type("OPPOSES")
+            except Exception:
+                pass
+
+            if len(opposes_edges) >= 1:
+                confidence = _compute_confidence(len(opposes_edges), 0.5)
+                patterns.append(self._make_pattern(
+                    PatternType.RELATIONSHIP_PATTERN,
+                    f"{len(opposes_edges)} opposition relationship(s) detected",
+                    confidence=confidence,
+                    severity="info",
+                    suggested_action="Review opposition dynamics and plan mitigation",
+                    current_value=float(len(opposes_edges)),
+                ))
+        except Exception:
+            logger.debug("Competitive pattern detection failed", exc_info=True)
+
+        return patterns
+
+    # ── Query helper ──────────────────────────────────────────────
+
+    def get_stored_patterns(
+        self, status: str = "active", limit: int = 50
+    ) -> list[dict]:
+        """Retrieve stored patterns from the database."""
+        try:
+            return self.repo.get_patterns(status=status, limit=limit)
+        except Exception:
+            logger.debug("Failed to retrieve stored patterns", exc_info=True)
+            return []
+
+    # ── Storage & trend ──────────────────────────────────────────
 
     def store_patterns(self, patterns: list[dict]) -> int:
         """Store detected patterns in the database. Returns count stored."""

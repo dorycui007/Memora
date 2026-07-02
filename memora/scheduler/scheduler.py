@@ -19,6 +19,8 @@ from memora.scheduler.jobs import (
     run_pattern_detection,
     run_relationship_decay,
     run_spaced_repetition_queue,
+    run_watchlist_scan,
+    run_web_monitor,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ class MemoraScheduler:
         embedding_engine=None,
         truth_layer=None,
         settings=None,
+        event_bus=None,
     ) -> None:
         self._repo = repo
         self._app_state = app_state
@@ -46,6 +49,7 @@ class MemoraScheduler:
         self._embedding_engine = embedding_engine
         self._truth_layer = truth_layer
         self._settings = settings
+        self._event_bus = event_bus
 
         self._scheduler = AsyncIOScheduler(
             job_defaults={
@@ -199,6 +203,38 @@ class MemoraScheduler:
             kwargs={"repo": self._repo},
             id="outcome_review",
             name="Outcome Review",
+            replace_existing=True,
+        )
+
+        # Watchlist scan — daily at 8:00 AM (scanner internally applies tier-based filtering)
+        async def _watchlist_scan_wrapper():
+            await run_watchlist_scan(
+                repo=self._repo,
+                truth_layer=self._resolve("truth_layer"),
+                settings=self._settings,
+            )
+
+        self._scheduler.add_job(
+            _watchlist_scan_wrapper,
+            trigger=CronTrigger(hour=8, minute=0),
+            id="watchlist_scan",
+            name="Watchlist Scan",
+            replace_existing=True,
+        )
+
+        # Web monitor — every 6 hours
+        async def _web_monitor_wrapper():
+            await run_web_monitor(
+                repo=self._repo,
+                event_bus=self._resolve("event_bus"),
+                settings=self._settings,
+            )
+
+        self._scheduler.add_job(
+            _web_monitor_wrapper,
+            trigger=IntervalTrigger(hours=6),
+            id="web_monitor",
+            name="Web Monitor",
             replace_existing=True,
         )
 

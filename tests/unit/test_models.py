@@ -48,17 +48,17 @@ from memora.graph.models import (
 
 
 class TestEnums:
-    def test_node_type_has_12_members(self):
-        assert len(NodeType) == 12
+    def test_node_type_has_17_members(self):
+        assert len(NodeType) == 17  # 12 original + 5 strategic
 
-    def test_edge_category_has_7_members(self):
-        assert len(EdgeCategory) == 7
+    def test_edge_category_has_8_members(self):
+        assert len(EdgeCategory) == 8  # 7 original + STRATEGIC
 
-    def test_edge_type_has_29_members(self):
-        assert len(EdgeType) == 29
+    def test_edge_type_has_36_members(self):
+        assert len(EdgeType) == 36  # 29 original + 7 strategic
 
-    def test_network_type_has_7_members(self):
-        assert len(NetworkType) == 7
+    def test_network_type_has_9_members(self):
+        assert len(NetworkType) == 9  # 7 original + GOVERNANCE + CLUBS
 
     def test_enum_string_values(self):
         assert NodeType.EVENT == "EVENT"

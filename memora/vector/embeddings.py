@@ -30,11 +30,19 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
 class EmbeddingEngine:
     """Wrapper around sentence-transformers for dense embeddings."""
 
-    def __init__(self, model_name: str = "all-mpnet-base-v2", cache_dir: str | Path | None = None):
+    def __init__(
+        self,
+        model_name: str = "all-mpnet-base-v2",
+        cache_dir: str | Path | None = None,
+        models_dir: Path | None = None,
+        cache_max_size: int = 10000,
+    ):
         self._model_name = model_name
-        self._cache_dir = str(cache_dir) if cache_dir else None
+        self._cache_dir = str(cache_dir or models_dir) if (cache_dir or models_dir) else None
         self._model: Any = None
-        self._cache: dict[str, dict[str, Any]] = {}
+        self._cache_max_size = cache_max_size
+        from collections import OrderedDict
+        self._cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
     def _load_model(self) -> None:
         """Lazy-load the sentence-transformers model."""
@@ -83,17 +91,20 @@ class EmbeddingEngine:
             {"dense": list[float], "sparse": dict[int, float]}
         """
         if text in self._cache:
+            self._cache.move_to_end(text)
             return self._cache[text]
         self._load_model()
         vec = self._model.encode(text).tolist()
         result = {"dense": vec, "sparse": {}}
         self._cache[text] = result
+        if len(self._cache) > self._cache_max_size:
+            self._cache.popitem(last=False)
         return result
 
     def embed_batch(self, texts: list[str]) -> list[dict[str, Any]]:
         """Embed a batch of texts for efficiency.
 
-        Uses cache to avoid re-encoding already-seen texts.
+        Uses LRU cache to avoid re-encoding already-seen texts.
         """
         results: list[dict[str, Any] | None] = [None] * len(texts)
         uncached_indices: list[int] = []
@@ -101,6 +112,7 @@ class EmbeddingEngine:
 
         for i, text in enumerate(texts):
             if text in self._cache:
+                self._cache.move_to_end(text)
                 results[i] = self._cache[text]
             else:
                 uncached_indices.append(i)
@@ -113,6 +125,8 @@ class EmbeddingEngine:
                 entry = {"dense": vec, "sparse": {}}
                 self._cache[texts[idx]] = entry
                 results[idx] = entry
+                if len(self._cache) > self._cache_max_size:
+                    self._cache.popitem(last=False)
 
         return results  # type: ignore[return-value]
 

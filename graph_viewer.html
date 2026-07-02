@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Memora — Knowledge Graph</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: radial-gradient(ellipse at 50% 30%, #16213e 0%, #1a1a2e 60%, #0f0f23 100%);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #e2e8f0; overflow: hidden;
+  }
+  #network { width: 100vw; height: 100vh; }
+  #legend {
+    position: fixed; top: 20px; left: 20px;
+    background: rgba(30,41,59,0.65);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; padding: 18px 20px;
+    z-index: 100; min-width: 180px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  }
+  #legend h3 {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.5px; color: #94a3b8; margin-bottom: 12px;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 6px; font-size: 11px; font-weight: 500;
+  }
+  .legend-dot {
+    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    box-shadow: 0 0 8px var(--glow);
+  }
+  #title-badge {
+    position: fixed; bottom: 20px; left: 20px;
+    background: rgba(30,41,59,0.55);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 10px; padding: 12px 18px; z-index: 100;
+  }
+  #title-badge h2 { font-size: 13px; font-weight: 700; }
+  #title-badge p { font-size: 10px; color: #64748b; margin-top: 2px; }
+  #modal-backdrop {
+    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(0,0,0,0.45);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    display: none; justify-content: center; align-items: center;
+    z-index: 1000; opacity: 0; transition: opacity 0.25s ease;
+  }
+  #modal-backdrop.visible { display: flex; opacity: 1; }
+  #modal-card {
+    background: rgba(22,33,62,0.88);
+    backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 20px; padding: 36px 32px 28px;
+    max-width: 520px; width: 90%; max-height: 80vh; overflow-y: auto;
+    box-shadow: 0 25px 60px rgba(0,0,0,0.5), 0 0 40px var(--modal-glow, rgba(100,100,200,0.1));
+    position: relative; animation: modalIn 0.3s ease;
+  }
+  @keyframes modalIn {
+    from { transform: translateY(20px) scale(0.97); opacity: 0; }
+    to   { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  #modal-close {
+    position: absolute; top: 14px; right: 18px;
+    background: none; border: none; color: #64748b;
+    font-size: 22px; cursor: pointer; transition: color 0.2s;
+  }
+  #modal-close:hover { color: #e2e8f0; }
+  #modal-category {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.5px; margin-bottom: 6px;
+  }
+  #modal-title { font-size: 20px; font-weight: 700; margin-bottom: 14px; line-height: 1.3; }
+  .net-badge {
+    display: inline-block; font-size: 9px; font-weight: 600;
+    padding: 2px 8px; border-radius: 6px; margin-right: 4px; margin-bottom: 4px;
+    background: rgba(255,255,255,0.08); color: #94a3b8; text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  #modal-body {
+    font-size: 12px; line-height: 1.7; color: #cbd5e1;
+    white-space: pre-line; margin-top: 12px;
+  }
+  #modal-connections {
+    margin-top: 16px; padding-top: 12px;
+    border-top: 1px solid rgba(255,255,255,0.07);
+  }
+  #modal-connections h4 {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.2px; color: #64748b; margin-bottom: 8px;
+  }
+  .conn-item {
+    font-size: 11px; color: #94a3b8; margin-bottom: 3px;
+    padding-left: 12px; position: relative;
+  }
+  .conn-item::before {
+    content: ''; position: absolute; left: 0; top: 5px;
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--dot-color, #64748b);
+  }
+  #edge-tooltip {
+    position: fixed;
+    background: rgba(22,33,62,0.92);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px; padding: 14px 18px;
+    max-width: 320px;
+    font-size: 12px; line-height: 1.6; color: #cbd5e1;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+    z-index: 500; pointer-events: none;
+    display: none; opacity: 0; transition: opacity 0.2s ease;
+  }
+  #edge-tooltip.visible { display: block; opacity: 1; }
+  #edge-tooltip .tt-label {
+    font-size: 11px; font-weight: 700; color: #e2e8f0;
+    margin-bottom: 6px;
+  }
+  .tt-type {
+    display: inline-block; font-size: 10px; font-weight: 600;
+    padding: 1px 6px; border-radius: 4px; margin-bottom: 6px;
+    background: rgba(255,255,255,0.08); color: #94a3b8;
+  }
+  #help-hint {
+    position: fixed; bottom: 20px; right: 20px;
+    background: rgba(30,41,59,0.5);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 8px; padding: 8px 14px;
+    font-size: 10px; color: #64748b; z-index: 100;
+  }
+</style>
+</head>
+<body>
+<div id="network"></div>
+
+<div id="legend">
+  <h3>Knowledge Graph</h3>
+  <div class="legend-item"><div class="legend-dot" style="background:#ef4444; --glow:#ef444480;"></div>COMMITMENT</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3b82f6; --glow:#3b82f680;"></div>EVENT</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#64748b; --glow:#64748b80;"></div>NOTE</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f97316; --glow:#f9731680;"></div>PERSON</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#a855f7; --glow:#a855f780;"></div>PROJECT</div>
+</div>
+
+<div id="title-badge">
+  <h2>Memora &mdash; Knowledge Graph</h2>
+  <p>13 nodes &middot; 22 edges &middot; Generated 2026-03-18 02:50</p>
+</div>
+
+<div id="help-hint">Click node for details &middot; Hover edge for info &middot; Scroll to zoom &middot; Drag to move</div>
+
+<div id="edge-tooltip">
+  <div class="tt-label" id="tt-label"></div>
+  <div id="tt-body"></div>
+</div>
+
+<div id="modal-backdrop">
+  <div id="modal-card">
+    <button id="modal-close">&times;</button>
+    <div id="modal-category"></div>
+    <h2 id="modal-title"></h2>
+    <div id="modal-networks"></div>
+    <div id="modal-body"></div>
+    <div id="modal-connections"><h4>Connected To</h4><div id="modal-conn-list"></div></div>
+  </div>
+</div>
+
+<script>
+// ═══ EMBEDDED GRAPH DATA ═══
+const RAW_NODES = [
+  {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "label": "You",
+    "group": "PERSON",
+    "size": 45,
+    "hoverDesc": "First-year CS @ UTM\nCTO of Pyko EdTech",
+    "details": {
+      "cat": "PERSON",
+      "catColor": "#f97316",
+      "title": "You",
+      "body": "Ericsson Cui is a first-year CS student at University of Toronto Mississauga and CTO of Pyko EdTech Startup\nEricsson Cui, a first-year Computer Science student at UTM, declared candidacy for Governing Council and four UTM governance bodies.\n\nConfidence: 100%\nDecay Score: 100%\nAccess Count: 66\nNetworks: None\nTags: None\nCreated: 2026-03-03T18:35\n\nProperties:\n  name: Ericsson Cui\n  relationship_to_user: self\n  role: Candidate for multiple UTM governance bodies\n  location: Mississauga\n  domain: Computer Science\n  organization: UTM",
+      "networks": []
+    }
+  },
+  {
+    "id": "25a7859d-f47f-47f1-8c5f-07577461bc6e",
+    "label": "Ericsson Cui",
+    "group": "PERSON",
+    "size": 40,
+    "hoverDesc": "Computer Science Student; University of Toronto Mississauga",
+    "details": {
+      "cat": "PERSON",
+      "catColor": "#f97316",
+      "title": "Ericsson Cui",
+      "body": "First-year computer science student at University of Toronto Mississauga; CTO of Pyko EdTech Startup\n\nConfidence: 95%\nDecay Score: 100%\nAccess Count: 0\nNetworks: ACADEMIC, PROFESSIONAL, VENTURES, SOCIAL\nTags: None\nCreated: 2026-03-03T18:37\n\nProperties:\n  name: Ericsson Cui\n  role: Computer Science Student\n  relationship_to_user: self\n  organization: University of Toronto Mississauga\n  last_interaction: None",
+      "networks": [
+        "ACADEMIC",
+        "PROFESSIONAL",
+        "VENTURES",
+        "SOCIAL"
+      ]
+    }
+  },
+  {
+    "id": "b68a21c4-c3b2-4055-9450-c55ca97668a1",
+    "label": "Pyko EdTech Startup",
+    "group": "PROJECT",
+    "size": 40,
+    "hoverDesc": "CTO of Pyko EdTech Startup\nactive; Ericsson Cui",
+    "details": {
+      "cat": "PROJECT",
+      "catColor": "#a855f7",
+      "title": "Pyko EdTech Startup",
+      "body": "CTO of Pyko EdTech Startup\n\nConfidence: 90%\nDecay Score: 100%\nAccess Count: 0\nNetworks: VENTURES\nTags: None\nCreated: 2026-03-03T18:37\n\nProperties:\n  status: active\n  start_date: 2026-01-01\n  target_date: None\n  team: ['Ericsson Cui']\n  deliverables: ['CTO leadership', 'EdTech platform']",
+      "networks": [
+        "VENTURES"
+      ]
+    }
+  },
+  {
+    "id": "98a12698-13ca-4a28-862c-d6308763474a",
+    "label": "UToronto 2026 Governing Counci",
+    "group": "EVENT",
+    "size": 40,
+    "hoverDesc": "University of Toronto Governing Council winter election for \n2026-02-10, University of Toronto campuses",
+    "details": {
+      "cat": "EVENT",
+      "catColor": "#3b82f6",
+      "title": "UToronto 2026 Governing Council Winter Election",
+      "body": "University of Toronto Governing Council winter election for Constituency I (full-time undergraduates in Arts & Science) with 35 candidates for 2 seats across all campuses; campaign period Feb 2\u201320, voting Feb 10\u201320; geographic diversity rule restricting winners from same college/campus; campaign spending cap.\n\nConfidence: 92%\nDecay Score: 100%\nAccess Count: 0\nNetworks: ACADEMIC, PROFESSIONAL\nTags: None\nCreated: 2026-03-03T18:39\n\nProperties:\n  event_date: 2026-02-10\n  location: University of Toronto campuses\n  event_type: Governance election\n  duration: Campaign Feb 2\u201320; Voting Feb 10\u201320\n  participants: 35\n  recurring: False",
+      "networks": [
+        "ACADEMIC",
+        "PROFESSIONAL"
+      ]
+    }
+  },
+  {
+    "id": "c043fe55-938c-470d-b283-2a300f884596",
+    "label": "Albert Panwin",
+    "group": "PERSON",
+    "size": 40,
+    "hoverDesc": "Candidate; UTM",
+    "details": {
+      "cat": "PERSON",
+      "catColor": "#f97316",
+      "title": "Albert Panwin",
+      "body": "Candidate in the 2026 UToronto Governing Council election from UTM with 499 votes in the previous year.\n\nConfidence: 95%\nDecay Score: 100%\nAccess Count: 1\nNetworks: ACADEMIC, VENTURES\nTags: None\nCreated: 2026-03-03T18:39\n\nProperties:\n  name: Albert Panwin\n  organization: UTM\n  role: Candidate\n  relationship_to_user: unknown",
+      "networks": [
+        "ACADEMIC",
+        "VENTURES"
+      ]
+    }
+  },
+  {
+    "id": "bc8f7dec-84f1-4a19-82af-4a564d5df113",
+    "label": "Areeb Naeem",
+    "group": "PERSON",
+    "size": 40,
+    "hoverDesc": "Candidate; UTM",
+    "details": {
+      "cat": "PERSON",
+      "catColor": "#f97316",
+      "title": "Areeb Naeem",
+      "body": "Losing candidate in the 2026 UToronto Governing Council election; from UTM; publicly criticized governance as a broken system needing proper leadership.\n\nConfidence: 92%\nDecay Score: 100%\nAccess Count: 2\nNetworks: ACADEMIC, SOCIAL\nTags: None\nCreated: 2026-03-03T18:39\n\nProperties:\n  name: Areeb Naeem\n  organization: UTM\n  role: Candidate\n  relationship_to_user: unknown",
+      "networks": [
+        "ACADEMIC",
+        "SOCIAL"
+      ]
+    }
+  },
+  {
+    "id": "15ac06b8-5bb6-4e6f-8d1c-0ba7cefaa4de",
+    "label": "Election tension and leadershi",
+    "group": "NOTE",
+    "size": 40,
+    "hoverDesc": "[quote] Last year's election saw Albert Panwin (UTM) with 499 votes; Areeb Naeem accused",
+    "details": {
+      "cat": "NOTE",
+      "catColor": "#64748b",
+      "title": "Election tension and leadership quote",
+      "body": "Last year's election saw Albert Panwin (UTM) with 499 votes; Areeb Naeem accused the governance structure of being a 'broken system that needs PROPER LEADERSHIP.' The Chief Returning Officer spoke of safeguards but did not elaborate.\n\nConfidence: 88%\nDecay Score: 100%\nAccess Count: 0\nNetworks: SOCIAL, ACADEMIC\nTags: None\nCreated: 2026-03-03T18:39\n\nProperties:\n  source_context: Text excerpt from 2026 Governing Council winter election report\n  note_type: quote",
+      "networks": [
+        "SOCIAL",
+        "ACADEMIC"
+      ]
+    }
+  },
+  {
+    "id": "f17f94b2-9c30-462a-8a92-4d991f98edb7",
+    "label": "Governing Council candidacy",
+    "group": "COMMITMENT",
+    "size": 40,
+    "hoverDesc": "Candidacy for Governing Council; platform includes UTM representation,\nStatus: open",
+    "details": {
+      "cat": "COMMITMENT",
+      "catColor": "#ef4444",
+      "title": "Governing Council candidacy",
+      "body": "Ericsson Cui declared candidacy for Governing Council with platform themes including UTM representation, budget accountability, and expanded Work Study positions; running concurrently for four UTM governance bodies.\n\nConfidence: 95%\nDecay Score: 100%\nAccess Count: 0\nNetworks: ACADEMIC, PROFESSIONAL, SOCIAL\nTags: None\nCreated: 2026-03-03T19:08\n\nProperties:\n  due_date: None\n  status: open\n  committed_by: Ericsson Cui\n  committed_to: Governing Council\n  description: Candidacy for Governing Council; platform includes UTM representation, budget accountability, expanded Work Study positions.",
+      "networks": [
+        "ACADEMIC",
+        "PROFESSIONAL",
+        "SOCIAL"
+      ]
+    }
+  },
+  {
+    "id": "ca4b1d43-fd20-4832-905d-101d0e303feb",
+    "label": "Campus Council candidacy",
+    "group": "COMMITMENT",
+    "size": 40,
+    "hoverDesc": "Candidacy for Campus Council; part of multi-body UTM governance campai\nStatus: open",
+    "details": {
+      "cat": "COMMITMENT",
+      "catColor": "#ef4444",
+      "title": "Campus Council candidacy",
+      "body": "Ericsson Cui declared candidacy for Campus Council as part of a multi-body campaign across UTM governance forums.\n\nConfidence: 95%\nDecay Score: 100%\nAccess Count: 0\nNetworks: ACADEMIC, PROFESSIONAL, SOCIAL\nTags: None\nCreated: 2026-03-03T19:08\n\nProperties:\n  due_date: None\n  status: open\n  committed_by: Ericsson Cui\n  committed_to: Campus Council\n  description: Candidacy for Campus Council; part of multi-body UTM governance campaign.",
+      "networks": [
+        "ACADEMIC",
+        "PROFESSIONAL",
+        "SOCIAL"
+      ]
+    }
+  },
+  {
+    "id": "08cb4611-613e-4512-a154-f12acd16b7c9",
+    "label": "Academic Affairs Committee can",
+    "group": "COMMITMENT",
+    "size": 40,
+    "hoverDesc": "Candidacy for Academic Affairs Committee; part of a broader UTM govern\nStatus: open",
+    "details": {
+      "cat": "COMMITMENT",
+      "catColor": "#ef4444",
+      "title": "Academic Affairs Committee candidacy",
+      "body": "Ericsson Cui declared candidacy for Academic Affairs Committee as part of the multi-body campaign for UTM governance.\n\nConfidence: 95%\nDecay Score: 100%\nAccess Count: 0\nNetworks: ACADEMIC, PROFESSIONAL, SOCIAL\nTags: None\nCreated: 2026-03-03T19:08\n\nProperties:\n  due_date: None\n  status: open\n  committed_by: Ericsson Cui\n  committed_to: Academic Affairs Committee\n  description: Candidacy for Academic Affairs Committee; part of a broader UTM governance campaign.",
+      "networks": [
+        "ACADEMIC",
+        "PROFESSIONAL",
+        "SOCIAL"
+      ]
+    }
+  },
+  {
+    "id": "9d9ecea2-d17c-4395-87a9-bf018c2d5991",
+    "label": "Campus Affairs Committee candi",
+    "group": "COMMITMENT",
+    "size": 40,
+    "hoverDesc": "Candidacy for Campus Affairs Committee; part of multi-body campaign.\nStatus: open",
+    "details": {
+      "cat": "COMMITMENT",
+      "catColor": "#ef4444",
+      "title": "Campus Affairs Committee candidacy",
+      "body": "Ericsson Cui declared candidacy for Campus Affairs Committee alongside other UTM governance roles.\n\nConfidence: 95%\nDecay Score: 100%\nAccess Count: 0\nNetworks: ACADEMIC, PROFESSIONAL, SOCIAL\nTags: None\nCreated: 2026-03-03T19:08\n\nProperties:\n  due_date: None\n  status: open\n  committed_by: Ericsson Cui\n  committed_to: Campus Affairs Committee\n  description: Candidacy for Campus Affairs Committee; part of multi-body campaign.",
+      "networks": [
+        "ACADEMIC",
+        "PROFESSIONAL",
+        "SOCIAL"
+      ]
+    }
+  },
+  {
+    "id": "1f65a624-a76d-40fa-a9c8-44088c13cc89",
+    "label": "Tugrul",
+    "group": "PERSON",
+    "size": 40,
+    "hoverDesc": "Met Tugrul today at MAT223. He called me a bum and is mad at; (acquaintance)",
+    "details": {
+      "cat": "PERSON",
+      "catColor": "#f97316",
+      "title": "Tugrul",
+      "body": "Met Tugrul today at MAT223. He called me a bum and is mad at me.\n\nConfidence: 95%\nDecay Score: 100%\nAccess Count: 1\nNetworks: SOCIAL\nTags: None\nCreated: 2026-03-05T19:20\n\nProperties:\n  name: Tugrul\n  relationship_to_user: acquaintance",
+      "networks": [
+        "SOCIAL"
+      ]
+    }
+  },
+  {
+    "id": "7e81e4b2-72a9-4c21-bec6-fe48e64de3da",
+    "label": "Meeting at MAT223 with Tugrul",
+    "group": "EVENT",
+    "size": 40,
+    "hoverDesc": "Encounter at MAT223 with Tugrul; sentiment noted as tense du\n2026-03-05, MAT223",
+    "details": {
+      "cat": "EVENT",
+      "catColor": "#3b82f6",
+      "title": "Meeting at MAT223 with Tugrul",
+      "body": "Encounter at MAT223 with Tugrul; sentiment noted as tense due to an insult and anger.\n\nConfidence: 95%\nDecay Score: 100%\nAccess Count: 0\nNetworks: SOCIAL\nTags: None\nCreated: 2026-03-05T19:20\n\nProperties:\n  event_date: 2026-03-05\n  location: MAT223\n  event_type: meeting",
+      "networks": [
+        "SOCIAL"
+      ]
+    }
+  }
+];
+const RAW_EDGES = [
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "25a7859d-f47f-47f1-8c5f-07577461bc6e",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#f9731666",
+      "hover": "#f97316",
+      "highlight": "#f97316"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Ericsson Cui",
+    "sticky": "You knows Ericsson Cui (Computer Science Student, University of Toronto Mississauga).\n\nFirst-year computer science student at University of Toronto Mississauga; CTO of Pyko EdTech Startup\n\nConfidence: 92%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "SOCIAL",
+    "edgeType": "KNOWS"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "b68a21c4-c3b2-4055-9450-c55ca97668a1",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#ef444466",
+      "hover": "#ef4444",
+      "highlight": "#ef4444"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Pyko EdTech Startup",
+    "sticky": "You owns and is accountable for Pyko EdTech Startup.\n\nCTO of Pyko EdTech Startup\nTeam: Ericsson Cui\nStatus: active\n\nConfidence: 92%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "PERSONAL",
+    "edgeType": "RESPONSIBLE_FOR"
+  },
+  {
+    "from": "25a7859d-f47f-47f1-8c5f-07577461bc6e",
+    "to": "b68a21c4-c3b2-4055-9450-c55ca97668a1",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "Ericsson Cui",
+    "stickyTo": "Pyko EdTech Startup",
+    "sticky": "Ericsson Cui works on Pyko EdTech Startup as Computer Science Student.\n\nCTO of Pyko EdTech Startup\n\nConfidence: 92%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "98a12698-13ca-4a28-862c-d6308763474a",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#ef444466",
+      "hover": "#ef4444",
+      "highlight": "#ef4444"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "UToronto 2026 Governing Council Winter Election",
+    "sticky": "You is responsible for UToronto 2026 Governing Council Winter Election.\n\nUniversity of Toronto Governing Council winter election for Constituency I (full-time undergraduates in Arts & Science) \n2026-02-10, University of Toronto campuses\n\nConfidence: 90%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "PERSONAL",
+    "edgeType": "RESPONSIBLE_FOR"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "c043fe55-938c-470d-b283-2a300f884596",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#f9731666",
+      "hover": "#f97316",
+      "highlight": "#f97316"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Albert Panwin",
+    "sticky": "You knows Albert Panwin (Candidate, UTM).\n\nCandidate in the 2026 UToronto Governing Council election from UTM with 499 votes in the previous year.\n\nConfidence: 90%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "SOCIAL",
+    "edgeType": "KNOWS"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "bc8f7dec-84f1-4a19-82af-4a564d5df113",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#f9731666",
+      "hover": "#f97316",
+      "highlight": "#f97316"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Areeb Naeem",
+    "sticky": "You knows Areeb Naeem (Candidate, UTM).\n\nLosing candidate in the 2026 UToronto Governing Council election; from UTM; publicly criticized governance as a broken s\n\nConfidence: 90%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "SOCIAL",
+    "edgeType": "KNOWS"
+  },
+  {
+    "from": "98a12698-13ca-4a28-862c-d6308763474a",
+    "to": "c043fe55-938c-470d-b283-2a300f884596",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "UToronto 2026 Governing Council Winter Election",
+    "stickyTo": "Albert Panwin",
+    "sticky": "Albert Panwin was involved in UToronto 2026 Governing Council Winter Election.\n\nUniversity of Toronto Governing Council winter election for Constituency I (full-time undergraduates in Arts & Science) \nDate: 2026-02-10\n\nConfidence: 90%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "98a12698-13ca-4a28-862c-d6308763474a",
+    "to": "bc8f7dec-84f1-4a19-82af-4a564d5df113",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "UToronto 2026 Governing Council Winter Election",
+    "stickyTo": "Areeb Naeem",
+    "sticky": "Areeb Naeem was involved in UToronto 2026 Governing Council Winter Election.\n\nUniversity of Toronto Governing Council winter election for Constituency I (full-time undergraduates in Arts & Science) \nDate: 2026-02-10\n\nConfidence: 90%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "c043fe55-938c-470d-b283-2a300f884596",
+    "to": "bc8f7dec-84f1-4a19-82af-4a564d5df113",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "Albert Panwin",
+    "stickyTo": "Areeb Naeem",
+    "sticky": "Albert Panwin and Areeb Naeem are linked.\n\nAlbert Panwin: Candidate in the 2026 UToronto Governing Council election from UTM with 499 vote\nAreeb Naeem: Losing candidate in the 2026 UToronto Governing Council election; from UTM; publ\n\nConfidence: 90%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "15ac06b8-5bb6-4e6f-8d1c-0ba7cefaa4de",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Election tension and leadership quote",
+    "sticky": "You is mentioned in this note:\n\n\"Last year's election saw Albert Panwin (UTM) with 499 votes; Areeb Naeem accused the governance structure of being a 'broken system that needs PROPER \"\n\nConfidence: 90%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "15ac06b8-5bb6-4e6f-8d1c-0ba7cefaa4de",
+    "to": "98a12698-13ca-4a28-862c-d6308763474a",
+    "arrows": "to",
+    "width": 1,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "Election tension and leadership quote",
+    "stickyTo": "UToronto 2026 Governing Council Winter Election",
+    "sticky": "Note about UToronto 2026 Governing Council Winter Election:\n\n\"Last year's election saw Albert Panwin (UTM) with 499 votes; Areeb Naeem accused the governance structure of being a 'broken system that needs PROPER \"\n\nConfidence: 30%  |  Weight: 0.3  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "f17f94b2-9c30-462a-8a92-4d991f98edb7",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#ef444466",
+      "hover": "#ef4444",
+      "highlight": "#ef4444"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Governing Council candidacy",
+    "sticky": "You committed to: Governing Council candidacy\n\nCandidacy for Governing Council; platform includes UTM representation, budget accountability, expanded Work Study positions.\n\nStatus: open\n\nConfidence: 95%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "PERSONAL",
+    "edgeType": "COMMITTED_TO"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "ca4b1d43-fd20-4832-905d-101d0e303feb",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#ef444466",
+      "hover": "#ef4444",
+      "highlight": "#ef4444"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Campus Council candidacy",
+    "sticky": "You committed to: Campus Council candidacy\n\nCandidacy for Campus Council; part of multi-body UTM governance campaign.\n\nStatus: open\n\nConfidence: 95%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "PERSONAL",
+    "edgeType": "COMMITTED_TO"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "08cb4611-613e-4512-a154-f12acd16b7c9",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#ef444466",
+      "hover": "#ef4444",
+      "highlight": "#ef4444"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Academic Affairs Committee candidacy",
+    "sticky": "You committed to: Academic Affairs Committee candidacy\n\nCandidacy for Academic Affairs Committee; part of a broader UTM governance campaign.\n\nStatus: open\n\nConfidence: 95%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "PERSONAL",
+    "edgeType": "COMMITTED_TO"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "9d9ecea2-d17c-4395-87a9-bf018c2d5991",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#ef444466",
+      "hover": "#ef4444",
+      "highlight": "#ef4444"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Campus Affairs Committee candidacy",
+    "sticky": "You committed to: Campus Affairs Committee candidacy\n\nCandidacy for Campus Affairs Committee; part of multi-body campaign.\n\nStatus: open\n\nConfidence: 95%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "PERSONAL",
+    "edgeType": "COMMITTED_TO"
+  },
+  {
+    "from": "ca4b1d43-fd20-4832-905d-101d0e303feb",
+    "to": "f17f94b2-9c30-462a-8a92-4d991f98edb7",
+    "arrows": "to",
+    "width": 1,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "Campus Council candidacy",
+    "stickyTo": "Governing Council candidacy",
+    "sticky": "Part of the same campaign:\n\n1. Campus Council candidacy: Candidacy for Campus Council; part of multi-body UTM governance campaign.\n2. Governing Council candidacy: Candidacy for Governing Council; platform includes UTM representation, budget ac\n\nConfidence: 30%  |  Weight: 0.3  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "08cb4611-613e-4512-a154-f12acd16b7c9",
+    "to": "f17f94b2-9c30-462a-8a92-4d991f98edb7",
+    "arrows": "to",
+    "width": 1,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "Academic Affairs Committee candidacy",
+    "stickyTo": "Governing Council candidacy",
+    "sticky": "Part of the same campaign:\n\n1. Academic Affairs Committee candidacy: Candidacy for Academic Affairs Committee; part of a broader UTM governance campa\n2. Governing Council candidacy: Candidacy for Governing Council; platform includes UTM representation, budget ac\n\nConfidence: 30%  |  Weight: 0.3  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "9d9ecea2-d17c-4395-87a9-bf018c2d5991",
+    "to": "f17f94b2-9c30-462a-8a92-4d991f98edb7",
+    "arrows": "to",
+    "width": 1,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "Campus Affairs Committee candidacy",
+    "stickyTo": "Governing Council candidacy",
+    "sticky": "Part of the same campaign:\n\n1. Campus Affairs Committee candidacy: Candidacy for Campus Affairs Committee; part of multi-body campaign.\n2. Governing Council candidacy: Candidacy for Governing Council; platform includes UTM representation, budget ac\n\nConfidence: 30%  |  Weight: 0.3  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "1f65a624-a76d-40fa-a9c8-44088c13cc89",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#f9731666",
+      "hover": "#f97316",
+      "highlight": "#f97316"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Tugrul",
+    "sticky": "You knows Tugrul (Candidate for multiple UTM governance bodies, UTM, acquaintance).\n\nMet Tugrul today at MAT223. He called me a bum and is mad at me.\n\nConfidence: 95%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "SOCIAL",
+    "edgeType": "KNOWS"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "7e81e4b2-72a9-4c21-bec6-fe48e64de3da",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#ef444466",
+      "hover": "#ef4444",
+      "highlight": "#ef4444"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Meeting at MAT223 with Tugrul",
+    "sticky": "You is responsible for Meeting at MAT223 with Tugrul.\n\nEncounter at MAT223 with Tugrul; sentiment noted as tense due to an insult and anger.\n2026-03-05, MAT223\n\nConfidence: 95%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "PERSONAL",
+    "edgeType": "RESPONSIBLE_FOR"
+  },
+  {
+    "from": "1f65a624-a76d-40fa-a9c8-44088c13cc89",
+    "to": "7e81e4b2-72a9-4c21-bec6-fe48e64de3da",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#64748b66",
+      "hover": "#64748b",
+      "highlight": "#64748b"
+    },
+    "stickyFrom": "Tugrul",
+    "stickyTo": "Meeting at MAT223 with Tugrul",
+    "sticky": "Tugrul was involved in Meeting at MAT223 with Tugrul.\n\nEncounter at MAT223 with Tugrul; sentiment noted as tense due to an insult and anger.\nDate: 2026-03-05\n\nConfidence: 90%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "ASSOCIATIVE",
+    "edgeType": "RELATED_TO"
+  },
+  {
+    "from": "00000000-0000-0000-0000-000000000001",
+    "to": "1f65a624-a76d-40fa-a9c8-44088c13cc89",
+    "arrows": "to",
+    "width": 2.0,
+    "color": {
+      "color": "#ef444466",
+      "hover": "#ef4444",
+      "highlight": "#ef4444"
+    },
+    "stickyFrom": "You",
+    "stickyTo": "Tugrul",
+    "sticky": "You has feelings about Tugrul.\n\n\"Met Tugrul today at MAT223. He called me a bum and is mad at me.\"\n\nConfidence: 90%  |  Weight: 1.0  |  Directed",
+    "edgeCat": "PERSONAL",
+    "edgeType": "FELT_ABOUT"
+  }
+];
+
+// ═══ BUILD VIS.JS DATASETS ═══
+const nodes = new vis.DataSet(RAW_NODES);
+const edges = new vis.DataSet(RAW_EDGES);
+
+// ═══ NETWORK INIT ═══
+const container = document.getElementById('network');
+const data = { nodes, edges };
+const options = {
+  groups: { 
+    'PERSON': {
+      shape: 'box',
+      color: {
+        background: 'rgba(249,115,22,0.12)',
+        border: '#f97316',
+        highlight: { background: 'rgba(249,115,22,0.25)', border: '#f97316' },
+        hover: { background: 'rgba(249,115,22,0.2)', border: '#f97316' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(249,115,22,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'EVENT': {
+      shape: 'box',
+      color: {
+        background: 'rgba(59,130,246,0.12)',
+        border: '#3b82f6',
+        highlight: { background: 'rgba(59,130,246,0.25)', border: '#3b82f6' },
+        hover: { background: 'rgba(59,130,246,0.2)', border: '#3b82f6' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(59,130,246,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'COMMITMENT': {
+      shape: 'box',
+      color: {
+        background: 'rgba(239,68,68,0.12)',
+        border: '#ef4444',
+        highlight: { background: 'rgba(239,68,68,0.25)', border: '#ef4444' },
+        hover: { background: 'rgba(239,68,68,0.2)', border: '#ef4444' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(239,68,68,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'DECISION': {
+      shape: 'box',
+      color: {
+        background: 'rgba(234,179,8,0.12)',
+        border: '#eab308',
+        highlight: { background: 'rgba(234,179,8,0.25)', border: '#eab308' },
+        hover: { background: 'rgba(234,179,8,0.2)', border: '#eab308' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(234,179,8,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'GOAL': {
+      shape: 'box',
+      color: {
+        background: 'rgba(16,185,129,0.12)',
+        border: '#10b981',
+        highlight: { background: 'rgba(16,185,129,0.25)', border: '#10b981' },
+        hover: { background: 'rgba(16,185,129,0.2)', border: '#10b981' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(16,185,129,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'FINANCIAL_ITEM': {
+      shape: 'box',
+      color: {
+        background: 'rgba(20,184,166,0.12)',
+        border: '#14b8a6',
+        highlight: { background: 'rgba(20,184,166,0.25)', border: '#14b8a6' },
+        hover: { background: 'rgba(20,184,166,0.2)', border: '#14b8a6' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(20,184,166,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'PROJECT': {
+      shape: 'box',
+      color: {
+        background: 'rgba(168,85,247,0.12)',
+        border: '#a855f7',
+        highlight: { background: 'rgba(168,85,247,0.25)', border: '#a855f7' },
+        hover: { background: 'rgba(168,85,247,0.2)', border: '#a855f7' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(168,85,247,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'NOTE': {
+      shape: 'box',
+      color: {
+        background: 'rgba(100,116,139,0.12)',
+        border: '#64748b',
+        highlight: { background: 'rgba(100,116,139,0.25)', border: '#64748b' },
+        hover: { background: 'rgba(100,116,139,0.2)', border: '#64748b' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(100,116,139,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'IDEA': {
+      shape: 'box',
+      color: {
+        background: 'rgba(236,72,153,0.12)',
+        border: '#ec4899',
+        highlight: { background: 'rgba(236,72,153,0.25)', border: '#ec4899' },
+        hover: { background: 'rgba(236,72,153,0.2)', border: '#ec4899' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(236,72,153,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'CONCEPT': {
+      shape: 'box',
+      color: {
+        background: 'rgba(139,92,246,0.12)',
+        border: '#8b5cf6',
+        highlight: { background: 'rgba(139,92,246,0.25)', border: '#8b5cf6' },
+        hover: { background: 'rgba(139,92,246,0.2)', border: '#8b5cf6' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(139,92,246,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'REFERENCE': {
+      shape: 'box',
+      color: {
+        background: 'rgba(6,182,212,0.12)',
+        border: '#06b6d4',
+        highlight: { background: 'rgba(6,182,212,0.25)', border: '#06b6d4' },
+        hover: { background: 'rgba(6,182,212,0.2)', border: '#06b6d4' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(6,182,212,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    },
+    'INSIGHT': {
+      shape: 'box',
+      color: {
+        background: 'rgba(245,158,11,0.12)',
+        border: '#f59e0b',
+        highlight: { background: 'rgba(245,158,11,0.25)', border: '#f59e0b' },
+        hover: { background: 'rgba(245,158,11,0.2)', border: '#f59e0b' }
+      },
+      font: { color: '#e2e8f0', face: 'Inter, sans-serif', size: 13 },
+      borderWidth: 2,
+      shadow: { enabled: true, color: 'rgba(245,158,11,0.35)', size: 18, x: 0, y: 0 },
+      shapeProperties: { borderRadius: 8 },
+      margin: { top: 10, bottom: 10, left: 14, right: 14 }
+    }
+  },
+  edges: {
+    width: 1.5,
+    hoverWidth: 3,
+    selectionWidth: 2.5,
+    smooth: { type: 'continuous', roundness: 0.25 },
+    font: { size: 0 }
+  },
+  physics: {
+    solver: 'forceAtlas2Based',
+    forceAtlas2Based: {
+      gravitationalConstant: -45,
+      centralGravity: 0.01,
+      springLength: 160,
+      springConstant: 0.04,
+      damping: 0.5,
+      avoidOverlap: 0.5
+    },
+    stabilization: { iterations: 500, fit: true },
+    maxVelocity: 30,
+    minVelocity: 0.75
+  },
+  interaction: {
+    hover: true,
+    tooltipDelay: 0,
+    hideEdgesOnDrag: true,
+    zoomView: true,
+    dragView: true
+  },
+  layout: { randomSeed: 42 }
+};
+
+const network = new vis.Network(container, data, options);
+
+// ═══ UNIFIED HOVER TOOLTIP (nodes + edges) ═══
+const tooltip = document.getElementById('edge-tooltip');
+const ttLabel = document.getElementById('tt-label');
+const ttBody = document.getElementById('tt-body');
+let tooltipActive = false;
+
+function showTooltip(labelHtml, bodyHtml) {
+  ttLabel.innerHTML = labelHtml;
+  ttBody.innerHTML = bodyHtml;
+  tooltip.classList.add('visible');
+  tooltipActive = true;
+}
+function hideTooltip() {
+  tooltip.classList.remove('visible');
+  tooltipActive = false;
+}
+
+// Edge hover
+network.on('hoverEdge', function(params) {
+  const edge = edges.get(params.edge);
+  if (!edge || !edge.sticky) return;
+  const label = '<span style="color:#e2e8f0">' + (edge.stickyFrom || '?') + '</span>  \u2192  <span style="color:#e2e8f0">' + (edge.stickyTo || '?') + '</span>';
+  const body = '<span class="tt-type">' + (edge.edgeType || '') + '</span> <span class="tt-type" style="background:rgba(255,255,255,0.04)">' + (edge.edgeCat || '') + '</span><br><br>' + edge.sticky.replace(/\n/g, '<br>');
+  showTooltip(label, body);
+});
+network.on('blurEdge', function() { hideTooltip(); });
+
+// Node hover
+network.on('hoverNode', function(params) {
+  const node = nodes.get(params.node);
+  if (!node) return;
+  const d = node.details || {};
+  const color = d.catColor || '#64748b';
+  const cat = d.cat || '';
+  const title = d.title || node.label || '';
+  const desc = node.hoverDesc || '';
+  const nets = (d.networks && d.networks.length) ? d.networks.join(', ') : '';
+
+  const label = '<span style="color:' + color + '">' + cat + '</span>';
+  let body = '<div style="font-size:14px;font-weight:600;color:#f1f5f9;margin-bottom:8px">' + title.replace(/</g,'&lt;') + '</div>';
+  if (desc) {
+    body += '<div style="color:#cbd5e1;line-height:1.6">' + desc.replace(/</g,'&lt;').replace(/\n/g, '<br>') + '</div>';
+  }
+  if (nets) {
+    body += '<div style="margin-top:8px;color:#64748b;font-size:10px">Networks: ' + nets + '</div>';
+  }
+  showTooltip(label, body);
+});
+network.on('blurNode', function() { hideTooltip(); });
+
+// Position tooltip at cursor
+document.addEventListener('mousemove', function(e) {
+  if (!tooltipActive) return;
+  const x = e.clientX + 18, y = e.clientY + 18;
+  const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+  tooltip.style.left = (x + tw > window.innerWidth ? e.clientX - tw - 10 : x) + 'px';
+  tooltip.style.top = (y + th > window.innerHeight ? e.clientY - th - 10 : y) + 'px';
+});
+
+// ═══ NODE CLICK MODAL ═══
+const backdrop = document.getElementById('modal-backdrop');
+const modalCard = document.getElementById('modal-card');
+const modalCat = document.getElementById('modal-category');
+const modalTitle = document.getElementById('modal-title');
+const modalNetworks = document.getElementById('modal-networks');
+const modalBody = document.getElementById('modal-body');
+const modalConnList = document.getElementById('modal-conn-list');
+
+// Build adjacency map for connections list
+const adjMap = {};
+RAW_EDGES.forEach(function(e) {
+  if (!adjMap[e.from]) adjMap[e.from] = [];
+  if (!adjMap[e.to]) adjMap[e.to] = [];
+  adjMap[e.from].push({ id: e.to, type: e.edgeType, dir: 'outgoing' });
+  adjMap[e.to].push({ id: e.from, type: e.edgeType, dir: 'incoming' });
+});
+
+const nodeMap = {};
+RAW_NODES.forEach(function(n) { nodeMap[n.id] = n; });
+
+network.on('click', function(params) {
+  if (params.nodes.length === 0) return;
+  const nodeId = params.nodes[0];
+  const node = nodes.get(nodeId);
+  if (!node || !node.details) return;
+  const d = node.details;
+
+  modalCat.textContent = d.cat;
+  modalCat.style.color = d.catColor;
+  modalTitle.textContent = d.title;
+  modalCard.style.setProperty('--modal-glow', d.catColor + '30');
+
+  // Network badges
+  modalNetworks.innerHTML = '';
+  if (d.networks && d.networks.length) {
+    d.networks.forEach(function(net) {
+      const span = document.createElement('span');
+      span.className = 'net-badge';
+      span.textContent = net;
+      modalNetworks.appendChild(span);
+    });
+  }
+
+  modalBody.textContent = d.body;
+
+  // Connections
+  modalConnList.innerHTML = '';
+  const conns = adjMap[nodeId] || [];
+  conns.forEach(function(c) {
+    const target = nodeMap[c.id];
+    if (!target) return;
+    const div = document.createElement('div');
+    div.className = 'conn-item';
+    const targetColor = target.details ? target.details.catColor : '#64748b';
+    div.style.setProperty('--dot-color', targetColor);
+    const arrow = c.dir === 'outgoing' ? '\u2192' : '\u2190';
+    div.innerHTML = '<strong>' + c.type + '</strong> ' + arrow + ' ' + (target.label || target.id.slice(0,8));
+    modalConnList.appendChild(div);
+  });
+
+  backdrop.style.display = 'flex';
+  requestAnimationFrame(function() { backdrop.classList.add('visible'); });
+});
+
+document.getElementById('modal-close').addEventListener('click', closeModal);
+backdrop.addEventListener('click', function(e) { if (e.target === backdrop) closeModal(); });
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeModal(); });
+
+function closeModal() {
+  backdrop.classList.remove('visible');
+  setTimeout(function() { backdrop.style.display = 'none'; }, 250);
+}
+</script>
+</body>
+</html>

@@ -94,6 +94,9 @@ class BriefingCollector:
             "stalled": self._collect_stalled(),
             "review_queue": self._collect_review_queue(),
             "truth_alerts": self._collect_truth_alerts(),
+            "watchlist": self._collect_watchlist(),
+            "positions": self._collect_positions(),
+            "deadlines": self._collect_deadlines(),
             "data_sources_used": self._sources_used,
         }
 
@@ -321,6 +324,26 @@ class BriefingCollector:
             logger.debug("Failed to collect review queue", exc_info=True)
             return []
 
+    def _collect_watchlist(self) -> dict[str, Any]:
+        """Get recent watchlist scan results."""
+        result: dict[str, Any] = {
+            "recent_changes": [],
+            "people_tracked": 0,
+        }
+        try:
+            from memora.core.notifications import NotificationManager, WATCHLIST_ALERT
+            conn = self._repo.get_truth_layer_conn()
+            nm = NotificationManager(conn)
+            alerts = nm.get_notifications(type=WATCHLIST_ALERT, limit=10)
+            result["recent_changes"] = alerts
+            persons = self._repo.get_person_nodes()
+            result["people_tracked"] = len(persons)
+            if alerts:
+                self._sources_used.append("watchlist")
+        except Exception:
+            logger.debug("Failed to collect watchlist data", exc_info=True)
+        return result
+
     def _collect_truth_alerts(self) -> list[dict[str, Any]]:
         """Get facts that need re-verification."""
         if not self._truth_layer:
@@ -332,4 +355,32 @@ class BriefingCollector:
             return stale
         except Exception:
             logger.debug("Failed to collect truth alerts", exc_info=True)
+            return []
+
+    def _collect_positions(self) -> list[dict[str, Any]]:
+        """Get strategic position summaries with per-position commitments and blockers."""
+        try:
+            from memora.core.position_tracker import PositionTracker
+
+            tracker = PositionTracker(self._repo)
+            positions = tracker.get_all_positions()
+            if positions:
+                self._sources_used.append("position_tracker")
+            return positions
+        except Exception:
+            logger.debug("Failed to collect position data", exc_info=True)
+            return []
+
+    def _collect_deadlines(self) -> list[dict[str, Any]]:
+        """Get cross-position deadlines for the next 14 days."""
+        try:
+            from memora.core.deadline_manager import DeadlineManager
+
+            manager = DeadlineManager(self._repo)
+            deadlines = manager.get_upcoming(days=14)
+            if deadlines:
+                self._sources_used.append("deadline_manager")
+            return deadlines
+        except Exception:
+            logger.debug("Failed to collect deadline data", exc_info=True)
             return []

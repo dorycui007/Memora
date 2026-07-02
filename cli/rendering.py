@@ -265,9 +265,9 @@ def command_deck(
     groups = [
         ("INGEST", [("c", "Capture"), ("s", "Connectors"), ("r", f"Proposals{proposals_extra}")]),
         ("QUERY", [("d", "Dossier"), ("i", "Investigate"), ("w", "Browse")]),
-        ("INTEL", [("h", "Horizon"), ("b", "Briefing"), ("f", "Graph Intel"), ("u", "Council")]),
+        ("INTEL", [("h", "Horizon"), ("b", "Briefing"), ("f", "Graph Intel"), ("u", "Council"), ("v", "Research"), ("x", "Strategy")]),
         ("ANALYSIS", [("t", "Timeline"), ("o", "Outcomes"), ("a", "Patterns"), ("g", "Stats")]),
-        ("NETWORK", [("n", "Networks"), ("e", "People"), ("j", "Actions")]),
+        ("NETWORK", [("n", "Networks"), ("e", "People"), ("j", "Actions"), ("m", "Watchlist")]),
         ("SYSTEM", [("p", "Profile"), ("k", "Critique"), ("0", "Settings"), ("q", "Quit")]),
     ]
 
@@ -743,6 +743,33 @@ def council_header():
     print(f"    {I}ARCHIVIST{R} {F}─┬─{R} {I}STRATEGIST{R} {F}─┬─{R} {I}RESEARCHER{R}")
     print(f"               {F}└──────{R} {A}{C.BOLD}▼{R} {F}──────┘{R}")
     print(f"    {D}Multi-agent deliberation · Confidence scoring · Citations{R}")
+    print()
+
+
+def watchlist_header():
+    """Render the watchlist monitor header."""
+    A = C.ACCENT
+    F = C.FRAME
+    D = C.DIM
+    R = C.RESET
+
+    print(f"""
+    {A}{C.BOLD}W A T C H L I S T{R}
+    {F}═════════════════════{R}
+    {A}@{F}──{A}@{F}──{A}@{F}──{A}@{F}──{A}@{R}
+    {D}People intelligence monitor{R}
+""")
+
+
+def research_header():
+    """Render the research command header."""
+    A = C.ACCENT
+    D = C.DIM
+    R = C.RESET
+
+    print(f"\n    {A}{C.BOLD}R E S E A R C H{R}")
+    print("    ═════════════════════")
+    print(f"    {D}External intelligence via MCP tools{R}")
     print()
 
 
@@ -1271,3 +1298,84 @@ def prompt(msg: str = "❯ ") -> str:
     except (EOFError, KeyboardInterrupt):
         print()
         return "q"
+
+
+# ════════════════════════════════════════════
+# STRATEGY MINDMAP HELPERS
+# ════════════════════════════════════════════
+
+_STRATEGY_DOMAIN_COLORS = {
+    "startup": C.INTEL,
+    "mcss": C.ACCENT,
+    "governance": C.CONFIRM,
+    "ai_ml": C.SIGNAL,
+    "academic": C.CYAN,
+}
+
+_STRATEGY_STATUS_COLORS = {
+    "active": C.CONFIRM,
+    "planned": C.ACCENT,
+    "pending": C.SIGNAL,
+    "at-risk": C.DANGER,
+    "completed": C.DIM,
+}
+
+_STRATEGY_PRIORITY_COLORS = {
+    "absolute": C.RED,
+    "critical": C.DANGER,
+    "high": C.SIGNAL,
+    "medium": C.ACCENT,
+    "low": C.DIM,
+}
+
+
+def strategy_header():
+    """ASCII art header for the strategy command."""
+    A = C.ACCENT
+    R = C.RESET
+    D = C.DIM
+    G = C.GHOST
+    lines = [
+        f"{G}┌──────────────────────────────────────────────────┐{R}",
+        f"{G}│{R}  {A}{C.BOLD}S T R A T E G Y   M I N D M A P{R}               {G}│{R}",
+        f"{G}│{R}  {D}Campaign Intelligence Platform{R}                  {G}│{R}",
+        f"{G}│{R}  {D}Ericsson Cui — MCSS Presidential Strategy{R}       {G}│{R}",
+        f"{G}└──────────────────────────────────────────────────┘{R}",
+    ]
+    for line in lines:
+        print(line)
+
+
+def phase_bar(phase_name: str, progress: int, color: str = C.ACCENT) -> str:
+    """Compact phase progress bar: RECON ████░░░░ 62%"""
+    w = 20
+    filled = round(w * progress / 100)
+    bar = "█" * filled + "░" * (w - filled)
+    return f"{color}{C.BOLD}{phase_name}{C.RESET} {color}{bar}{C.RESET} {C.BASE}{progress}%{C.RESET}"
+
+
+def domain_badge(domain_name: str) -> str:
+    """Inline colored badge like [MCSS] in the domain's color."""
+    color = _STRATEGY_DOMAIN_COLORS.get(domain_name, C.DIM)
+    label = domain_name.upper().replace("AI_ML", "AI/ML")
+    return f"{color}[{label}]{C.RESET}"
+
+
+def status_dot(status: str) -> str:
+    """Colored dot for entity status."""
+    color = _STRATEGY_STATUS_COLORS.get(status, C.DIM)
+    return f"{color}\u25CF{C.RESET}"
+
+
+def priority_badge(priority: str) -> str:
+    """Colored priority label."""
+    color = _STRATEGY_PRIORITY_COLORS.get(priority, C.DIM)
+    label = priority.upper()
+    return f"{color}{C.BOLD}{label}{C.RESET}"
+
+
+def urgency_badge(level: str) -> str:
+    """Colored urgency badge."""
+    colors = {"overdue": C.DANGER, "critical": C.DANGER, "high": C.SIGNAL, "medium": C.ACCENT, "low": C.DIM}
+    color = colors.get(level, C.DIM)
+    return f"{color}{C.BOLD}{level.upper()}{C.RESET}"

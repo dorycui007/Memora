@@ -113,9 +113,32 @@ class ArchivistAgent:
         self._system_prompt = self._load_system_prompt()
 
     def _load_system_prompt(self) -> str:
-        """Load the archivist system prompt from the prompts directory."""
+        """Load the archivist system prompt from the prompts directory.
+
+        Dynamically injects the ontology schema section so the LLM sees
+        all registered entity types (including ORGANIZATION, POSITION,
+        ELECTION, COURSE, METRIC) and edge types.
+        """
         prompt_path = Path(__file__).parent / "prompts" / "archivist_system.md"
-        return prompt_path.read_text(encoding="utf-8")
+        prompt = prompt_path.read_text(encoding="utf-8")
+
+        # Inject dynamic ontology schema if registry is available
+        try:
+            from memora.graph.ontology_registry import get_ontology_registry
+
+            registry = get_ontology_registry()
+            ontology_section = registry.generate_extraction_prompt_section()
+
+            # Replace the static schema section with the dynamic one
+            # Look for the section between "## 1. Graph Schema" and "## 2."
+            import re
+            pattern = r"(## 1\. Graph Schema\n)(.*?)(## 2\.)"
+            replacement = rf"\g<1>\n{ontology_section}\n\n\g<3>"
+            prompt = re.sub(pattern, replacement, prompt, flags=re.DOTALL)
+        except Exception:
+            logger.debug("Ontology registry unavailable, using static prompt", exc_info=True)
+
+        return prompt
 
     async def _retrieve_rag_context(self, text: str, top_k: int = 10) -> list[dict[str, Any]]:
         """Embed input text and query LanceDB for similar existing nodes.

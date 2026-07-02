@@ -640,3 +640,89 @@ async def run_connector_sync(repo, settings=None) -> None:
         )
     except Exception:
         logger.error("Job [connector_sync] failed after %s", _elapsed(start), exc_info=True)
+
+
+# ── Watchlist Scan ─────────────────────────────────────────────
+
+async def run_web_monitor(repo, event_bus=None, settings=None) -> None:
+    """Check all configured watch targets for content changes."""
+    start = time.time()
+    logger.info("Job [web_monitor] started")
+    try:
+        from memora.agents.watch_agent import WatchAgent
+
+        agent = WatchAgent(
+            db_conn=repo.get_truth_layer_conn(),
+            event_bus=event_bus,
+            settings=settings,
+        )
+
+        changes = await agent.check_all()
+
+        if changes:
+            nm = _get_notification_manager(repo)
+            for change in changes:
+                nm.create_notification(
+                    type="WATCH_CHANGE",
+                    message=f"Watch target \"{change['name']}\" has changed ({change.get('url', '')})",
+                    priority="medium",
+                    trigger_condition="web_monitor",
+                )
+
+        logger.info(
+            "Job [web_monitor] completed in %s — %d changes detected",
+            _elapsed(start),
+            len(changes),
+        )
+    except Exception:
+        logger.error("Job [web_monitor] failed after %s", _elapsed(start), exc_info=True)
+
+
+async def run_watchlist_scan(repo, truth_layer=None, settings=None) -> None:
+    """Scan for professional updates about people in the graph."""
+    start = time.time()
+    logger.info("Job [watchlist_scan] started")
+    try:
+        from memora.core.watchlist import WatchlistScanner
+
+        # Initialize MCP search tools
+        from memora.mcp.brave_search import BraveSearchMCP
+        from memora.mcp.google_search import GoogleSearchMCP
+        from memora.mcp.playwright_scraper import PlaywrightScraperMCP
+
+        google = GoogleSearchMCP()
+        brave = BraveSearchMCP()
+        search_tool = google if google.available else brave
+        scraper = PlaywrightScraperMCP()
+
+        if truth_layer is None:
+            from memora.core.truth_layer import TruthLayer
+            truth_layer = TruthLayer(repo.get_truth_layer_conn())
+
+        scanner = WatchlistScanner(
+            repo=repo,
+            truth_layer=truth_layer,
+            search_tool=search_tool,
+            scraper=scraper,
+        )
+        results = scanner.scan()
+
+        if results:
+            nm = _get_notification_manager(repo)
+            from memora.core.notifications import WATCHLIST_ALERT
+
+            for change in results:
+                nm.create_notification(
+                    type=WATCHLIST_ALERT,
+                    message=change["message"],
+                    related_node_ids=[change["node_id"]],
+                    priority="high" if change["change_type"] == "company_change" else "medium",
+                    trigger_condition="watchlist_scan",
+                )
+
+        logger.info(
+            "Job [watchlist_scan] completed in %s — %d changes detected",
+            _elapsed(start), len(results),
+        )
+    except Exception:
+        logger.error("Job [watchlist_scan] failed after %s", _elapsed(start), exc_info=True)

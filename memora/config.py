@@ -87,6 +87,8 @@ class Settings(BaseSettings):
         "PERSONAL_GROWTH": 0.04,
         "SOCIAL": 0.07,
         "VENTURES": 0.03,
+        "GOVERNANCE": 0.04,
+        "CLUBS": 0.04,
     })
 
     # Relationship decay thresholds (days)
@@ -118,6 +120,18 @@ class Settings(BaseSettings):
     # Connectors
     connectors: dict[str, dict] = Field(default_factory=dict)
     connector_sync_interval_minutes: int = Field(default=60, ge=1)
+
+    # API server
+    api_host: str = "127.0.0.1"
+    api_port: int = 8420
+    api_key: str = ""  # Set via MEMORA_API_KEY env var to enable authentication
+    cors_origins: list[str] = Field(default_factory=lambda: [
+        "http://localhost:8420",
+        "http://127.0.0.1:8420",
+    ])
+
+    # Thread pool
+    thread_pool_workers: int = Field(default=8, ge=1)
 
     @field_validator("data_dir", mode="before")
     @classmethod
@@ -154,6 +168,14 @@ class Settings(BaseSettings):
     def backups_dir(self) -> Path:
         return self.data_dir / "backups"
 
+    @property
+    def ontology_path(self) -> Path:
+        return self.data_dir / "ontology.yaml"
+
+    @property
+    def watches_path(self) -> Path:
+        return self.data_dir / "watches.yaml"
+
 
 def init_data_directory(settings: Settings) -> None:
     """Create the ~/.memora/ directory structure on first run."""
@@ -168,6 +190,21 @@ def init_data_directory(settings: Settings) -> None:
             yaml.dump(DEFAULT_CONFIG, default_flow_style=False, sort_keys=False)
         )
         logger.info("Created default config at %s", settings.config_yaml_path)
+
+    # Copy default ontology.yaml if it doesn't exist
+    project_root = Path(__file__).resolve().parent.parent
+    default_ontology = project_root / "ontology_default.yaml"
+    if not settings.ontology_path.exists() and default_ontology.exists():
+        import shutil
+        shutil.copy2(default_ontology, settings.ontology_path)
+        logger.info("Created default ontology at %s", settings.ontology_path)
+
+    # Copy default watches.yaml if it doesn't exist
+    default_watches = project_root / "watches_default.yaml"
+    if not settings.watches_path.exists() and default_watches.exists():
+        import shutil
+        shutil.copy2(default_watches, settings.watches_path)
+        logger.info("Created default watches at %s", settings.watches_path)
 
 
 def load_settings() -> Settings:

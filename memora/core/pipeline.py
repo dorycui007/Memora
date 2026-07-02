@@ -132,11 +132,13 @@ class ExtractionPipeline:
         settings: Settings | None = None,
         archivist: ArchivistAgent | None = None,
         resolver: EntityResolver | None = None,
+        event_bus: Any | None = None,
     ) -> None:
         self._repo = repo
         self._vector_store = vector_store
         self._embedding_engine = embedding_engine
         self._settings = settings
+        self._event_bus = event_bus
 
         # Initialize archivist if API key available
         if archivist:
@@ -428,6 +430,22 @@ class ExtractionPipeline:
             if isinstance(result, Exception):
                 state.warnings.append(f"{name} failed: {type(result).__name__}")
                 logger.warning("Post-commit substage %s failed: %s", name, result, exc_info=result)
+
+        # Publish entity.created events for each committed node
+        if self._event_bus and state.proposal:
+            try:
+                node_count = len(state.proposal.nodes_to_create)
+                await self._event_bus.publish(
+                    "entity.created",
+                    {
+                        "capture_id": state.capture_id,
+                        "node_count": node_count,
+                    },
+                    source="pipeline",
+                    priority=3,
+                )
+            except Exception:
+                logger.debug("Failed to publish entity.created event", exc_info=True)
 
         return state
 

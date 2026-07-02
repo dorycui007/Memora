@@ -2407,6 +2407,14 @@ class GraphRepository:
         ).fetchall()
         return [self._row_to_edge(row) for row in rows]
 
+    def get_edges_by_type(self, edge_type: str, limit: int = 100) -> list[Edge]:
+        """Get all edges of a specific type."""
+        rows = self._conn.execute(
+            "SELECT * FROM edges WHERE edge_type = ? LIMIT ?",
+            [edge_type, limit],
+        ).fetchall()
+        return [self._row_to_edge(row) for row in rows]
+
     # ---- Row mappers ----
 
     def _row_to_capture(self, row: tuple) -> Capture:

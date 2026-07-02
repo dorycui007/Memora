@@ -19,6 +19,7 @@ HEALTH_DROP = "health_drop"
 BRIDGE_DISCOVERED = "bridge_discovered"
 GOAL_DRIFT = "goal_drift"
 REVIEW_DUE = "review_due"
+WATCHLIST_ALERT = "watchlist_alert"
 
 # ── Schema DDL ───────────────────────────────────────────────────────
 

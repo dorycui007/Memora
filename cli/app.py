@@ -311,10 +311,19 @@ class MemoraApp:
             elif choice == "s":
                 from cli.commands.connectors import cmd_connectors
                 cmd_connectors(self)
+            elif choice == "m":
+                from cli.commands.watchlist import cmd_watchlist
+                cmd_watchlist(self)
+            elif choice == "v":
+                from cli.commands.research import cmd_research
+                cmd_research(self)
+            elif choice == "x":
+                from cli.commands.strategy import cmd_strategy
+                cmd_strategy(self)
             elif choice == "0":
                 self._show_settings()
             else:
-                print(f"  {C.DIM}Unknown command. Valid keys: c s r d i w h b f u t o a g n e j p k 0 q{C.RESET}")
+                print(f"  {C.DIM}Unknown command. Valid keys: c s r d i w h b f u x t o a g n e j m v p k 0 q{C.RESET}")
 
     def _show_settings(self):
         """Display current settings."""
