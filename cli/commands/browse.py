@@ -103,31 +103,36 @@ def _browse_list_nodes(app):
 
 
 def _browse_search(app):
-    query = prompt("Search title: ")
+    query = prompt("Search: ")
     if not query:
         return
+
+    from memora.core.investigation import InvestigationEngine
+
     try:
-        rows = app.repo.search_nodes_ilike(query)
+        engine = InvestigationEngine(app.repo)
+        results = engine.search(
+            query, entity_names=[],
+            embedding_engine=app._get_embedding_engine(),
+            vector_store=app._get_vector_store(),
+        )
     except Exception as e:
         print(f"  {C.RED}Search error: {e}{C.RESET}")
         return
 
-    if not rows:
+    if not results:
         print(f"\n  {C.DIM}No nodes matching '{query}'.{C.RESET}")
         return
 
-    print(f"\n  {C.BOLD}{len(rows)} result(s){C.RESET}\n")
-    for row in rows:
-        nid, ntype, title, content, networks, conf, created = (
-            row["id"], row["node_type"], row["title"], row["content"],
-            row["networks"], row["confidence"], row["created_at"],
-        )
-        icon = NODE_ICONS.get(ntype, " ")
-        nets = " ".join(NETWORK_ICONS.get(n, f"[{n}]") for n in (networks or []))
-        short_id = str(nid)[:8]
-        print(f"  {C.DIM}{short_id}{C.RESET}  {icon} {C.BOLD}{title}{C.RESET}  {nets}  conf={conf:.0%}")
-        if content:
-            print(f"           {C.DIM}{content[:60]}{C.RESET}")
+    print(f"\n  {C.BOLD}{len(results)} result(s){C.RESET}\n")
+    for r in results:
+        icon = NODE_ICONS.get(r["node_type"], " ")
+        nets = " ".join(NETWORK_ICONS.get(n, f"[{n}]") for n in (r["networks"] or []))
+        short_id = r["id"][:8]
+        print(f"  {C.DIM}{short_id}{C.RESET}  {icon} {C.BOLD}{r['title']}{C.RESET}  {nets}  "
+              f"conf={r['confidence']:.0%}  score={r['score']:.2f}  links={r['connection_count']}")
+        if r.get("content_snippet"):
+            print(f"           {C.DIM}{r['content_snippet']}{C.RESET}")
 
 
 def _browse_node_detail(app):

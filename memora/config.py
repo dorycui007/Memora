@@ -78,19 +78,6 @@ class Settings(BaseSettings):
     # Decay parameters (per-network overrides possible via config.yaml)
     decay_lambda: float = Field(default=0.01, ge=0.0)
 
-    # Per-network decay lambdas
-    decay_lambda_overrides: dict[str, float] = Field(default_factory=lambda: {
-        "ACADEMIC": 0.05,
-        "PROFESSIONAL": 0.03,
-        "FINANCIAL": 0.02,
-        "HEALTH": 0.05,
-        "PERSONAL_GROWTH": 0.04,
-        "SOCIAL": 0.07,
-        "VENTURES": 0.03,
-        "GOVERNANCE": 0.04,
-        "CLUBS": 0.04,
-    })
-
     # Relationship decay thresholds (days)
     relationship_decay_thresholds: dict[str, int] = Field(default_factory=lambda: {
         "close": 7,
@@ -120,15 +107,6 @@ class Settings(BaseSettings):
     # Connectors
     connectors: dict[str, dict] = Field(default_factory=dict)
     connector_sync_interval_minutes: int = Field(default=60, ge=1)
-
-    # API server
-    api_host: str = "127.0.0.1"
-    api_port: int = 8420
-    api_key: str = ""  # Set via MEMORA_API_KEY env var to enable authentication
-    cors_origins: list[str] = Field(default_factory=lambda: [
-        "http://localhost:8420",
-        "http://127.0.0.1:8420",
-    ])
 
     # Thread pool
     thread_pool_workers: int = Field(default=8, ge=1)
@@ -224,8 +202,6 @@ def load_settings() -> Settings:
             settings.auto_approve_threshold = yaml_config["auto_approve_threshold"]
         if "decay_lambda" in yaml_config and isinstance(yaml_config["decay_lambda"], (int, float)):
             settings.decay_lambda = yaml_config["decay_lambda"]
-        if "decay_lambda" in yaml_config and isinstance(yaml_config["decay_lambda"], dict):
-            settings.decay_lambda_overrides = yaml_config["decay_lambda"]
         if "relationship_decay_thresholds" in yaml_config:
             settings.relationship_decay_thresholds = yaml_config["relationship_decay_thresholds"]
         if "sm2_default_easiness" in yaml_config:

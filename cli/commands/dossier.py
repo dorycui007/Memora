@@ -520,14 +520,25 @@ def _render_intelligence_profile(app, entity):
         print(f"\n{divider('─', C.GREEN)}")
         print(f"  {C.BOLD}{C.GREEN}VERIFIED FACTS ({len(view.facts)}){C.RESET}")
         print(divider())
+        _STATUS_MARKS = {
+            "active": (C.GREEN, "✓"),
+            "stale": (C.YELLOW, "~"),
+            "contradicted": (C.RED, "✗"),
+        }
         for fact in view.facts[:15]:
             conf = fact.get("confidence", 0)
             lifecycle = fact.get("lifecycle", "")
+            status = fact.get("status", "active")
             lc_color = C.GREEN if lifecycle == "static" else C.YELLOW
+            status_color, mark = _STATUS_MARKS.get(status, (C.GREEN, "✓"))
             statement = fact.get("statement", "")
-            print(f"  {C.GREEN}✓{C.RESET} {statement[:70]}")
+            print(f"  {status_color}{mark}{C.RESET} {statement[:70]}")
             print(f"    {horizontal_bar(conf, 10, C.GREEN)}  "
-                  f"{lc_color}{lifecycle}{C.RESET}")
+                  f"{lc_color}{lifecycle}{C.RESET}  {status_color}{status}{C.RESET}")
+            verified_by = fact.get("verified_by", "")
+            verified_at = str(fact.get("verified_at", ""))[:10]
+            if verified_by or verified_at:
+                print(f"    {C.DIM}source: {verified_by} · {verified_at}{C.RESET}")
         if len(view.facts) > 15:
             print(f"    {C.DIM}... and {len(view.facts) - 15} more{C.RESET}")
     else:

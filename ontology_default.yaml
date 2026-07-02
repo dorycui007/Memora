@@ -59,7 +59,7 @@ entity_types:
     color: "#22c55e"
     properties:
       target_date: { type: datetime }
-      progress: { type: float, default: 0.0 }
+      progress: { type: float, default: 0.0, value_type: PERCENTAGE }
       milestones: { type: "list[dict]" }
       status: { type: string, default: "active" }
       priority: { type: string, default: "medium" }
@@ -71,7 +71,7 @@ entity_types:
     color: "#84cc16"
     properties:
       amount: { type: float, default: 0.0 }
-      currency: { type: string, default: "USD" }
+      currency: { type: string, default: "USD", value_type: CURRENCY_CODE }
       direction: { type: string, default: "outflow" }
       category: { type: string }
       recurring: { type: boolean, default: false }
@@ -105,7 +105,7 @@ entity_types:
       target_date: { type: datetime }
       team: { type: "list[string]" }
       deliverables: { type: "list[string]" }
-      repository_url: { type: string }
+      repository_url: { type: string, value_type: URL }
 
   CONCEPT:
     category: core
@@ -122,7 +122,7 @@ entity_types:
     icon: link
     color: "#64748b"
     properties:
-      url: { type: string }
+      url: { type: string, value_type: URL }
       author: { type: string }
       publication_date: { type: datetime }
       source_type: { type: string }
@@ -137,7 +137,7 @@ entity_types:
       derived_from: { type: "list[string]" }
       actionable: { type: boolean, default: false }
       cross_network: { type: boolean, default: false }
-      strength: { type: float, default: 0.5 }
+      strength: { type: float, default: 0.5, value_type: PERCENTAGE }
 
   # ── New strategic types ──
   ORGANIZATION:
@@ -149,7 +149,7 @@ entity_types:
       org_type: { type: string }
       parent_org: { type: string }
       member_count: { type: integer }
-      website: { type: string }
+      website: { type: string, value_type: URL }
       advisors: { type: "list[string]" }
 
   POSITION:
@@ -206,12 +206,13 @@ entity_types:
 
 edge_types:
   # ── Structural ──
-  PART_OF: { category: STRUCTURAL, source: null, target: null }
+  PART_OF: { category: STRUCTURAL, source: null, target: null, cardinality: MANY_TO_ONE }  # a part has one whole
   CONTAINS: { category: STRUCTURAL, source: null, target: null }
   SUBTASK_OF:
     category: STRUCTURAL
     source: [COMMITMENT, GOAL, PROJECT]
     target: [COMMITMENT, GOAL, PROJECT]
+    cardinality: MANY_TO_ONE  # a subtask has exactly one parent
 
   # ── Associative ──
   RELATED_TO: { category: ASSOCIATIVE, source: null, target: null }
@@ -252,7 +253,7 @@ edge_types:
   CORRELATES_WITH: { category: NETWORK, source: null, target: null }
 
   # ── Strategic (new) ──
-  HOLDS_POSITION: { category: STRATEGIC, source: [PERSON], target: [POSITION] }
+  HOLDS_POSITION: { category: STRATEGIC, source: [PERSON], target: [POSITION], cardinality: ONE_TO_MANY }  # a position has one current holder
   CANDIDATE_IN: { category: STRATEGIC, source: [PERSON], target: [ELECTION] }
   PREREQUISITE_OF:
     category: STRUCTURAL
@@ -294,3 +295,53 @@ networks:
   CLUBS:
     keywords: [MCSS, UTMIST, society, executive, DeerHacks, hackathon, club, associate, director, membership, AGM, recruitment, orientation]
     decay_lambda: 0.04
+
+# ── Value types: shared semantic property types, referenced by entity ──
+# property definitions above via `value_type: NAME`. `regex` validates strings;
+# `min`/`max` validate numerics.
+value_types:
+  URL:
+    regex: "^https?://\\S+$"
+  CURRENCY_CODE:
+    regex: "^[A-Z]{3}$"
+  PERCENTAGE:
+    min: 0.0
+    max: 1.0
+
+# ── Interfaces: shared contracts implemented by multiple entity types,
+# enabling cross-type queries (e.g. "all Schedulable things due this week")
+# via OntologyRegistry.get_types_implementing() / repository.get_nodes_by_interface().
+interfaces:
+  SCHEDULABLE:
+    implements: [EVENT, COMMITMENT, GOAL]
+  TRACKABLE:
+    implements: [COMMITMENT, GOAL, PROJECT, POSITION, COURSE]
+
+# ── Action types: kinetic operations executed by memora.core.actions.ActionEngine.
+# `node_types: null` means the action applies to any node type. Handlers/side
+# effects live in Python; this section only declares the ontology-facing metadata.
+action_types:
+  COMPLETE_COMMITMENT:
+    label: "Complete Commitment"
+    node_types: [COMMITMENT]
+    precondition: "commitment status must be open"
+  PROMOTE_IDEA:
+    label: "Promote Idea to Project"
+    node_types: [IDEA]
+    precondition: "idea must not already be archived"
+  ARCHIVE_GOAL:
+    label: "Archive Goal"
+    node_types: [GOAL]
+    precondition: "goal must be active"
+  ADVANCE_GOAL:
+    label: "Advance Goal"
+    node_types: [GOAL]
+    precondition: "goal must be active"
+  RECORD_OUTCOME:
+    label: "Record Outcome"
+    node_types: [DECISION, GOAL, COMMITMENT]
+    precondition: "none"
+  LINK_ENTITIES:
+    label: "Link Entities"
+    node_types: null
+    precondition: "none"

@@ -12,17 +12,6 @@ from memora.graph.repository import GraphRepository
 
 logger = logging.getLogger(__name__)
 
-# Default decay lambdas per network (higher = faster decay)
-DEFAULT_NETWORK_LAMBDAS: dict[str, float] = {
-    "ACADEMIC": 0.05,
-    "PROFESSIONAL": 0.03,
-    "FINANCIAL": 0.02,
-    "HEALTH": 0.05,
-    "PERSONAL_GROWTH": 0.04,
-    "SOCIAL": 0.07,
-    "VENTURES": 0.03,
-}
-
 # Node type → property field containing the meaningful date
 _TEMPORAL_FIELDS: dict[str, str] = {
     "EVENT": "event_date",
@@ -52,7 +41,10 @@ class DecayScoring:
     ) -> None:
         self._repo = repo
         self._default_lambda = default_lambda
-        self._network_lambdas = network_lambdas or DEFAULT_NETWORK_LAMBDAS
+        if network_lambdas is None:
+            from memora.graph.ontology_registry import get_ontology_registry
+            network_lambdas = get_ontology_registry().get_all_decay_lambdas()
+        self._network_lambdas = network_lambdas
 
     # ---- Helpers ----
 

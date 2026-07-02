@@ -15,6 +15,8 @@ from uuid import UUID, uuid4
 
 import duckdb
 
+from memora.core.exceptions import OntologyViolationError
+
 from .models import (
     BaseNode,
     Capture,
@@ -305,10 +307,75 @@ class GraphRepository:
         self._conn.execute("DELETE FROM captures WHERE id = ?", [capture_id])
         return False
 
+    # ---- Ontology enforcement ----
+    # These are the two chokepoints where an ontology violation can occur:
+    # create_node/create_edge (used directly by actions.py and pipeline.py's
+    # connectivity helpers) and commit_proposal (the LLM-proposal write path,
+    # which never constructs BaseNode/Edge objects — hence the plain-primitive
+    # signatures here so both paths can share one implementation).
+
+    def _validate_node_ontology(self, node_type: str, properties: dict[str, Any]) -> None:
+        """Validate a node's properties against declared ontology value types."""
+        from memora.graph.ontology_registry import get_ontology_registry
+
+        registry = get_ontology_registry()
+        if not registry.is_valid_entity_type(node_type):
+            return
+        for prop_name, value in (properties or {}).items():
+            error = registry.validate_property_value(node_type, prop_name, value)
+            if error:
+                raise OntologyViolationError(error)
+
+    def _validate_edge_ontology(
+        self,
+        source_id: str,
+        target_id: str,
+        source_type: str,
+        target_type: str,
+        edge_type: str,
+    ) -> None:
+        """Validate an edge's type constraints and cardinality against the ontology."""
+        from memora.graph.ontology_registry import get_ontology_registry
+
+        registry = get_ontology_registry()
+        if not registry.is_valid_edge_type(edge_type):
+            raise OntologyViolationError(f"Unknown edge type: {edge_type}")
+        if not registry.validate_edge(source_type, target_type, edge_type):
+            raise OntologyViolationError(
+                f"{edge_type} cannot connect {source_type} -> {target_type}"
+            )
+
+        cardinality = registry.get_edge_cardinality(edge_type)
+        if cardinality is None:
+            return
+
+        if cardinality in ("MANY_TO_ONE", "ONE_TO_ONE"):
+            count = self._conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE source_id = ? AND edge_type = ?",
+                [source_id, edge_type],
+            ).fetchone()[0]
+            if count > 0:
+                raise OntologyViolationError(
+                    f"{edge_type} is {cardinality} — {source_type} {source_id} "
+                    f"already has an outgoing {edge_type} edge"
+                )
+
+        if cardinality in ("ONE_TO_MANY", "ONE_TO_ONE"):
+            count = self._conn.execute(
+                "SELECT COUNT(*) FROM edges WHERE target_id = ? AND edge_type = ?",
+                [target_id, edge_type],
+            ).fetchone()[0]
+            if count > 0:
+                raise OntologyViolationError(
+                    f"{edge_type} is {cardinality} — {target_type} {target_id} "
+                    f"already has an incoming {edge_type} edge"
+                )
+
     # ---- Nodes ----
 
     def create_node(self, node: BaseNode) -> UUID:
         """Insert a new node. Returns the node ID."""
+        self._validate_node_ontology(node.node_type.value, node.properties)
         node.compute_content_hash()
         self._conn.execute(
             """INSERT INTO nodes (id, node_type, title, content, content_hash,
@@ -482,10 +549,36 @@ class GraphRepository:
         rows = self._conn.execute(query, params).fetchall()
         return [self._row_to_node(row) for row in rows]
 
+    def get_nodes_by_interface(self, interface_name: str, **filter_kwargs: Any) -> list[BaseNode]:
+        """Query nodes across all entity types implementing a given ontology interface."""
+        from memora.graph.ontology_registry import get_ontology_registry
+
+        registry = get_ontology_registry()
+        implementing_types = [
+            NodeType(t) for t in registry.get_types_implementing(interface_name)
+        ]
+        if not implementing_types:
+            return []
+        return self.query_nodes(NodeFilter(node_types=implementing_types, **filter_kwargs))
+
     # ---- Edges ----
 
     def create_edge(self, edge: Edge) -> UUID:
         """Insert a new edge. Returns the edge ID."""
+        endpoints = self.get_nodes_batch([str(edge.source_id), str(edge.target_id)])
+        source_node = endpoints.get(str(edge.source_id))
+        target_node = endpoints.get(str(edge.target_id))
+        if source_node is None or target_node is None:
+            raise OntologyViolationError(
+                f"Cannot create {edge.edge_type.value} edge: source or target node not found"
+            )
+        self._validate_edge_ontology(
+            str(edge.source_id),
+            str(edge.target_id),
+            source_node.node_type.value,
+            target_node.node_type.value,
+            edge.edge_type.value,
+        )
         self._conn.execute(
             """INSERT INTO edges (id, source_id, target_id, edge_type, edge_category,
                properties, confidence, weight, bidirectional, created_at, updated_at)
@@ -585,13 +678,18 @@ class GraphRepository:
         proposal: GraphProposal,
         agent_id: str = "archivist",
         route: ProposalRoute = ProposalRoute.AUTO,
+        resolution_data: list[dict[str, Any]] | None = None,
     ) -> UUID:
-        """Store a graph proposal for review/commit."""
+        """Store a graph proposal for review/commit.
+
+        resolution_data carries entity-resolution candidates (DEFER outcomes)
+        so reviewers can see suspected duplicates before approving.
+        """
         proposal_id = uuid4()
         self._conn.execute(
             """INSERT INTO proposals (id, capture_id, agent_id, status, route,
-               confidence, proposal_data, human_summary, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               confidence, proposal_data, human_summary, created_at, resolution_data)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 str(proposal_id),
                 proposal.source_capture_id,
@@ -602,6 +700,7 @@ class GraphRepository:
                 json.dumps(proposal.model_dump(mode="json")),
                 proposal.human_summary,
                 datetime.now(UTC).isoformat(),
+                json.dumps(resolution_data) if resolution_data else None,
             ],
         )
         return proposal_id
@@ -705,14 +804,20 @@ class GraphRepository:
         try:
             self._conn.execute("BEGIN TRANSACTION")
 
-            # Map temp_ids to real UUIDs
+            # Map temp_ids to real UUIDs and node types (the latter needed to
+            # validate edges referencing newly-created nodes below)
             temp_to_real: dict[str, str] = {}
+            temp_to_type: dict[str, str] = {}
 
             # Create nodes
             for node_data in proposal_data.get("nodes_to_create", []):
+                node_type = node_data["node_type"]
+                properties = node_data.get("properties", {})
+                self._validate_node_ontology(node_type, properties)
+
                 real_id = str(uuid4())
                 temp_to_real[node_data["temp_id"]] = real_id
-                node_type = node_data["node_type"]
+                temp_to_type[node_data["temp_id"]] = node_type
                 networks = node_data.get("networks", [])
                 now = datetime.now(UTC).isoformat()
 
@@ -794,14 +899,37 @@ class GraphRepository:
                         vals,
                     )
 
-            # Create edges
-            for edge_data in proposal_data.get("edges_to_create", []):
+            # Create edges. Resolve node types for pre-existing (non-temp-id)
+            # endpoints in one batched lookup rather than per-edge.
+            edges_to_create = proposal_data.get("edges_to_create", [])
+            unresolved_ids = {
+                eid
+                for edge_data in edges_to_create
+                for eid in (edge_data["source_id"], edge_data["target_id"])
+                if eid not in temp_to_type
+            }
+            existing_types: dict[str, str] = {}
+            if unresolved_ids:
+                placeholders = ", ".join(["?"] * len(unresolved_ids))
+                rows = self._conn.execute(
+                    f"SELECT id, node_type FROM nodes WHERE id IN ({placeholders})",
+                    list(unresolved_ids),
+                ).fetchall()
+                existing_types = dict(rows)
+
+            for edge_data in edges_to_create:
                 edge_id = str(uuid4())
                 src = edge_data["source_id"]
                 tgt = edge_data["target_id"]
+                edge_type = edge_data["edge_type"]
+
+                source_type = temp_to_type.get(src) or existing_types.get(src)
+                target_type = temp_to_type.get(tgt) or existing_types.get(tgt)
                 # Resolve temp IDs
                 src = temp_to_real.get(src, src)
                 tgt = temp_to_real.get(tgt, tgt)
+                if source_type and target_type:
+                    self._validate_edge_ontology(src, tgt, source_type, target_type, edge_type)
                 now = datetime.now(UTC).isoformat()
 
                 self._conn.execute(
@@ -838,6 +966,14 @@ class GraphRepository:
             self._conn.execute("COMMIT")
             logger.info("Committed proposal %s", proposal_id)
             return True
+
+        except OntologyViolationError as exc:
+            self._conn.execute("ROLLBACK")
+            logger.warning("Rejected proposal %s: ontology violation: %s", proposal_id, exc)
+            self.update_proposal_status(
+                proposal_id, ProposalStatus.REJECTED, f"ontology_violation: {exc}"
+            )
+            return False
 
         except Exception:
             self._conn.execute("ROLLBACK")

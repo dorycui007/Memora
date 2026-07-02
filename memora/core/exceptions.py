@@ -19,6 +19,10 @@ class GraphCommitError(MemoraError):
     """Raised when an atomic graph commit fails."""
 
 
+class OntologyViolationError(GraphCommitError):
+    """Raised when a node or edge violates the ontology schema (type, cardinality, or value constraints)."""
+
+
 class EntityResolutionError(MemoraError):
     """Raised when entity deduplication/resolution fails."""
 

@@ -198,11 +198,16 @@ class ObjectViewBuilder:
             return []
 
     def _get_facts(self, entity_str: str, limit: int) -> list[dict]:
-        """Get verified facts for the entity."""
+        """Get facts for the entity, excluding only retired ones.
+
+        Includes STALE/CONTRADICTED facts (not just ACTIVE) so callers can
+        surface contradiction/staleness instead of silently hiding it.
+        """
         try:
             from memora.core.truth_layer import TruthLayer
             truth = TruthLayer(conn=self.repo.get_truth_layer_conn())
-            return truth.query_facts(node_id=entity_str, status="active", limit=limit)
+            facts = truth.query_facts(node_id=entity_str, limit=limit)
+            return [f for f in facts if f.get("status") != "retired"]
         except Exception:
             return []
 

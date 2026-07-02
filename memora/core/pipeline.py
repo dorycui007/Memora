@@ -362,10 +362,25 @@ class ExtractionPipeline:
         if not state.proposal:
             return state
 
+        resolution_data = [
+            {
+                "temp_id": r.proposed_temp_id,
+                "title": r.proposed_title,
+                "existing_id": r.chosen.existing_node_id,
+                "existing_title": r.chosen.existing_title,
+                "existing_node_type": r.chosen.existing_node_type,
+                "score": r.chosen.combined_score,
+                "reason": r.audit_log[-1] if r.audit_log else "",
+            }
+            for r in (state.resolutions or [])
+            if r.outcome == ResolutionOutcome.DEFER and r.chosen
+        ]
+
         proposal_id = self._repo.create_proposal(
             state.proposal,
             agent_id="archivist",
             route=state.route,
+            resolution_data=resolution_data or None,
         )
         state.proposal_id = str(proposal_id)
 
@@ -448,6 +463,24 @@ class ExtractionPipeline:
                 logger.debug("Failed to publish entity.created event", exc_info=True)
 
         return state
+
+    async def run_post_commit(
+        self, capture_id: str, proposal_id: str, proposal: GraphProposal
+    ) -> list[str]:
+        """Run post-commit enrichment for a proposal committed outside the
+        auto-approve path (e.g. manual CLI review), which never reaches
+        `_post_commit` on its own. Builds a synthetic AUTO-route state purely
+        to reuse the existing substage logic — no auto-path behavior changes.
+        """
+        state = PipelineState(
+            capture_id=capture_id,
+            raw_content="",
+            proposal=proposal,
+            proposal_id=proposal_id,
+            route=ProposalRoute.AUTO,
+        )
+        state = await self._post_commit(state)
+        return state.warnings
 
     async def _run_substage(
         self,

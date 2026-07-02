@@ -29,6 +29,9 @@ class OntologyRegistry:
         self._entity_types: dict[str, dict[str, Any]] = {}
         self._edge_types: dict[str, dict[str, Any]] = {}
         self._networks: dict[str, dict[str, Any]] = {}
+        self._value_types: dict[str, dict[str, Any]] = {}
+        self._interfaces: dict[str, dict[str, Any]] = {}
+        self._action_types: dict[str, dict[str, Any]] = {}
         self._version: int = 1
         self._load()
 
@@ -45,13 +48,20 @@ class OntologyRegistry:
         self._entity_types = data.get("entity_types", {})
         self._edge_types = data.get("edge_types", {})
         self._networks = data.get("networks", {})
+        self._value_types = data.get("value_types", {})
+        self._interfaces = data.get("interfaces", {})
+        self._action_types = data.get("action_types", {})
 
         logger.info(
-            "Loaded ontology v%d: %d entity types, %d edge types, %d networks",
+            "Loaded ontology v%d: %d entity types, %d edge types, %d networks, "
+            "%d value types, %d interfaces, %d action types",
             self._version,
             len(self._entity_types),
             len(self._edge_types),
             len(self._networks),
+            len(self._value_types),
+            len(self._interfaces),
+            len(self._action_types),
         )
 
     @property
@@ -137,6 +147,46 @@ class OntologyRegistry:
         """Check if an edge type is registered."""
         return edge_type in self._edge_types
 
+    def validate_edge_category(self, edge_type: str, edge_category: str) -> bool:
+        """Check that an edge type belongs to the declared category."""
+        if edge_type not in self._edge_types:
+            return False
+        return self.get_edge_category(edge_type) == edge_category
+
+    def get_valid_edge_types(self, source_type: str, target_type: str) -> list[str]:
+        """Return all registered edge types valid between two entity types."""
+        return [
+            name
+            for name in self._edge_types
+            if self.validate_edge(source_type, target_type, name)
+        ]
+
+    def get_edge_cardinality(self, edge_type: str) -> str | None:
+        """Return the declared cardinality for an edge type.
+
+        One of MANY_TO_ONE, ONE_TO_MANY, ONE_TO_ONE, or None (unconstrained
+        many-to-many, the default when the edge type declares no cardinality).
+        """
+        entry = self._edge_types.get(edge_type, {})
+        return entry.get("cardinality")
+
+    def suggest_networks(self, text: str) -> list[tuple[str, float]]:
+        """Suggest networks based on keyword matching in text.
+
+        Returns list of (network_name, confidence) tuples, sorted by confidence desc.
+        """
+        text_lower = text.lower()
+        scores: list[tuple[str, float]] = []
+
+        for network, keywords in self.get_all_network_keywords().items():
+            matches = sum(1 for kw in keywords if kw.lower() in text_lower)
+            if matches > 0:
+                confidence = min(0.95, 0.3 + (matches * 0.15))
+                scores.append((network, confidence))
+
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores
+
     # ── Network lookups ──────────────────────────────────────────
 
     def get_all_network_names(self) -> list[str]:
@@ -166,6 +216,96 @@ class OntologyRegistry:
             name: cfg.get("decay_lambda", 0.04)
             for name, cfg in self._networks.items()
         }
+
+    # ── Value type lookups ───────────────────────────────────────
+
+    def get_all_value_types(self) -> dict[str, dict[str, Any]]:
+        """Return all registered value type definitions (regex/min/max)."""
+        return self._value_types
+
+    def validate_property_value(
+        self, entity_type: str, prop_name: str, value: Any
+    ) -> str | None:
+        """Validate a property value against its declared value type, if any.
+
+        Returns an error message if invalid, or None if the property has no
+        declared value type, its value type is unknown, or the value is valid.
+        """
+        schema = self.get_entity_schema(entity_type) or {}
+        prop_def = schema.get(prop_name)
+        if not isinstance(prop_def, dict):
+            return None
+
+        value_type_name = prop_def.get("value_type")
+        if not value_type_name:
+            return None
+
+        value_type = self._value_types.get(value_type_name)
+        if value_type is None:
+            return None
+
+        if value in (None, ""):
+            return None
+
+        regex = value_type.get("regex")
+        if regex is not None:
+            import re
+
+            if not re.fullmatch(regex, str(value)):
+                return (
+                    f"{entity_type}.{prop_name} = {value!r} does not match "
+                    f"value type {value_type_name} (pattern {regex})"
+                )
+
+        minimum = value_type.get("min")
+        maximum = value_type.get("max")
+        if minimum is not None or maximum is not None:
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                return (
+                    f"{entity_type}.{prop_name} = {value!r} is not numeric, "
+                    f"required by value type {value_type_name}"
+                )
+            if minimum is not None and numeric_value < minimum:
+                return f"{entity_type}.{prop_name} = {value!r} is below minimum {minimum}"
+            if maximum is not None and numeric_value > maximum:
+                return f"{entity_type}.{prop_name} = {value!r} is above maximum {maximum}"
+
+        return None
+
+    # ── Interface lookups ────────────────────────────────────────
+
+    def get_all_interface_names(self) -> list[str]:
+        """Return all registered interface names."""
+        return list(self._interfaces.keys())
+
+    def get_all_interfaces(self) -> dict[str, dict[str, Any]]:
+        """Return all registered interface definitions."""
+        return self._interfaces
+
+    def get_types_implementing(self, interface_name: str) -> list[str]:
+        """Return the entity types that implement a given interface."""
+        entry = self._interfaces.get(interface_name, {})
+        return list(entry.get("implements", []))
+
+    def get_interfaces_for_type(self, type_name: str) -> list[str]:
+        """Return the interfaces implemented by a given entity type."""
+        return [
+            name
+            for name, entry in self._interfaces.items()
+            if type_name in entry.get("implements", [])
+        ]
+
+    # ── Action type lookups ──────────────────────────────────────
+
+    def get_all_action_type_names(self) -> list[str]:
+        """Return all registered action type names."""
+        return list(self._action_types.keys())
+
+    def get_action_type_config(self, action_type: str) -> dict[str, Any] | None:
+        """Return the declared config (label, node_types, precondition) for an action type."""
+        return self._action_types.get(action_type)
 
     # ── Prompt generation ────────────────────────────────────────
 

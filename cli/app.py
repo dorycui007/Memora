@@ -7,6 +7,11 @@ import sys
 from pathlib import Path
 from uuid import UUID
 
+try:
+    import readline
+except ImportError:
+    readline = None  # not available on some platforms (e.g. stock Windows Python)
+
 # ── Ensure the backend package is importable ──────────────────────────
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -74,6 +79,15 @@ class MemoraApp:
         subsystem_status["scheduler"] = "ONLINE"
 
         boot_sequence(subsystem_status)
+
+        # Command history (up-arrow recall, persisted across sessions)
+        if readline:
+            self._history_path = self.settings.data_dir / "cli_history"
+            try:
+                readline.read_history_file(self._history_path)
+            except OSError:
+                pass
+            readline.set_history_length(500)
 
     def _get_embedding_engine(self):
         """Lazily initialize the embedding engine."""
@@ -239,6 +253,15 @@ class MemoraApp:
         except Exception:
             pass
 
+        # Active pattern alerts (critical/warning severity)
+        try:
+            patterns = self.repo.get_patterns(status="active", limit=200)
+            data["alert_count"] = sum(
+                1 for p in patterns if p.get("severity") in ("critical", "warning")
+            )
+        except Exception:
+            pass
+
         return data
 
     # ── Main Loop ─────────────────────────────────────────────────
@@ -346,6 +369,11 @@ class MemoraApp:
 
     def _goodbye(self):
         goodbye_card()
+        if readline and hasattr(self, "_history_path"):
+            try:
+                readline.write_history_file(self._history_path)
+            except OSError:
+                pass
         if self.repo:
             self.repo.close()
 

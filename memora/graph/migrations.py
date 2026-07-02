@@ -130,6 +130,13 @@ MIGRATIONS: list[tuple[int, str, list[str], list[str]]] = [
          "DROP INDEX IF EXISTS idx_nodes_node_type",
          "DROP INDEX IF EXISTS idx_nodes_created_at",
      ]),
+    (9, "Add resolution_data to proposals for entity-resolution review",
+     [
+         "ALTER TABLE proposals ADD COLUMN IF NOT EXISTS resolution_data JSON",
+     ],
+     [
+         "ALTER TABLE proposals DROP COLUMN IF EXISTS resolution_data",
+     ]),
 ]
 
 

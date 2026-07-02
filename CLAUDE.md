@@ -1,6 +1,6 @@
 # Memora
 
-Personal strategic intelligence platform. API-first, event-driven knowledge graph with web dashboard.
+Personal strategic intelligence platform. CLI-first, event-driven knowledge graph.
 
 ## Tech Stack
 
@@ -10,17 +10,15 @@ Personal strategic intelligence platform. API-first, event-driven knowledge grap
 - **Embeddings:** all-mpnet-base-v2 (768-dim, local)
 - **LLM:** OpenAI gpt-5-nano (Responses API)
 - **Orchestration:** LangGraph (multi-agent state machine)
-- **Scheduling:** APScheduler (12 background jobs)
-- **API:** FastAPI (primary interface)
-- **Dashboard:** Vanilla HTML/JS with vis.js, vis-timeline, D3.js
+- **Scheduling:** APScheduler (13 background jobs)
 - **Events:** In-process async event bus (asyncio.Queue)
-- **CLI:** ANSI terminal rendering (secondary interface)
+- **CLI:** ANSI terminal rendering (primary interface)
 
 ## Commands
 
 ```bash
-# Run the server (primary)
-python serve.py
+# Run the CLI (primary)
+python cli.py
 
 # Run tests
 pytest
@@ -31,9 +29,6 @@ pytest --cov=memora --cov-report=term-missing
 # Lint
 ruff check .
 
-# Run the CLI (secondary)
-python cli.py
-
 # Seed data
 python scripts/seed_positions.py
 python scripts/import_courses.py
@@ -43,21 +38,19 @@ python scripts/import_strategy.py
 
 ## Architecture
 
-- `memora/api/` — FastAPI server, routes (16 endpoints), dependency injection
 - `memora/agents/` — AI agents (Archivist, Strategist, Researcher, Orchestrator, Watch Agent)
 - `memora/core/` — Domain logic (pipeline, event bus, entity resolution, decay, patterns, position tracker, academic tracker, deadline manager, election intel, web monitor, etc.)
 - `memora/graph/` — Graph models (17 node types, 36 edge types), YAML-driven ontology registry, repository (DuckDB), migrations (v1-v7)
 - `memora/vector/` — Embedding engine + Weaviate vector store
 - `memora/connectors/` — Data source adapters (calendar, markdown)
 - `memora/mcp/` — MCP tool servers (search, GitHub, Playwright)
-- `memora/scheduler/` — APScheduler background jobs (12 jobs)
-- `dashboard/` — Web dashboard (7 views: graph, positions, briefing, timeline, people, academic, investigate)
+- `memora/scheduler/` — APScheduler background jobs (13 jobs)
 - `cli/` — CLI commands and rendering
 - `scripts/` — Data seeding scripts
 
 ## Key Patterns
 
-- **API-first** — FastAPI as primary interface, CLI as secondary
+- **CLI-first** — ANSI terminal rendering as the only interface; talks directly to the repository/core modules, no HTTP layer in between
 - **Event-driven** — In-process async event bus with publish/subscribe
 - **YAML-driven ontology** — Entity/edge types defined in `ontology_default.yaml`, loaded by `OntologyRegistry`
 - **Dependency Injection** throughout (pipeline, engines, agents)

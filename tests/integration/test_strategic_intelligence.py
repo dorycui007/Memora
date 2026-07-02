@@ -162,15 +162,15 @@ def repo():
     r.create_edge(Edge(
         source_id=person_id,
         target_id=vp_id,
-        edge_type=EdgeType.COLLABORATES_WITH,
-        edge_category=EdgeCategory.SOCIAL,
+        edge_type=EdgeType.RELATED_TO,
+        edge_category=EdgeCategory.ASSOCIATIVE,
         confidence=0.9,
     ))
     r.create_edge(Edge(
         source_id=person_id,
         target_id=ad_id,
-        edge_type=EdgeType.COLLABORATES_WITH,
-        edge_category=EdgeCategory.SOCIAL,
+        edge_type=EdgeType.RELATED_TO,
+        edge_category=EdgeCategory.ASSOCIATIVE,
         confidence=0.8,
     ))
     r.create_edge(Edge(
@@ -416,24 +416,27 @@ class TestOntologyValidation:
 
     def test_new_edge_types_valid(self, repo):
         """Verify new edge types are correctly constrained."""
-        from memora.graph.ontology import validate_edge
+        from memora.graph.ontology_registry import get_ontology_registry
+
+        registry = get_ontology_registry()
 
         # Valid edges
-        assert validate_edge(NodeType.PERSON, NodeType.POSITION, EdgeType.HOLDS_POSITION)
-        assert validate_edge(NodeType.PERSON, NodeType.ELECTION, EdgeType.CANDIDATE_IN)
-        assert validate_edge(NodeType.COURSE, NodeType.COURSE, EdgeType.PREREQUISITE_OF)
-        assert validate_edge(NodeType.METRIC, NodeType.GOAL, EdgeType.MEASURES)
+        assert registry.validate_edge("PERSON", "POSITION", "HOLDS_POSITION")
+        assert registry.validate_edge("PERSON", "ELECTION", "CANDIDATE_IN")
+        assert registry.validate_edge("COURSE", "COURSE", "PREREQUISITE_OF")
+        assert registry.validate_edge("METRIC", "GOAL", "MEASURES")
 
         # Invalid edges
-        assert not validate_edge(NodeType.EVENT, NodeType.POSITION, EdgeType.HOLDS_POSITION)
-        assert not validate_edge(NodeType.NOTE, NodeType.ELECTION, EdgeType.CANDIDATE_IN)
+        assert not registry.validate_edge("EVENT", "POSITION", "HOLDS_POSITION")
+        assert not registry.validate_edge("NOTE", "ELECTION", "CANDIDATE_IN")
 
     def test_member_of_accepts_organization(self, repo):
         """MEMBER_OF target should now include ORGANIZATION."""
-        from memora.graph.ontology import validate_edge
+        from memora.graph.ontology_registry import get_ontology_registry
 
-        assert validate_edge(NodeType.PERSON, NodeType.ORGANIZATION, EdgeType.MEMBER_OF)
-        assert validate_edge(NodeType.POSITION, NodeType.ORGANIZATION, EdgeType.MEMBER_OF)
+        registry = get_ontology_registry()
+        assert registry.validate_edge("PERSON", "ORGANIZATION", "MEMBER_OF")
+        assert registry.validate_edge("POSITION", "ORGANIZATION", "MEMBER_OF")
 
 
 class TestGetEdgesByType:

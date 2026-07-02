@@ -91,6 +91,44 @@ class TestEdgeTypes:
         assert registry.get_edge_category("HOLDS_POSITION") == "STRATEGIC"
         assert registry.get_edge_category("RELATED_TO") == "ASSOCIATIVE"
         assert registry.get_edge_category("PREREQUISITE_OF") == "STRUCTURAL"
+        assert registry.get_edge_category("BRIDGES") == "NETWORK"
+        assert registry.get_edge_category("KNOWS") == "SOCIAL"
+
+    def test_knows_requires_person_to_person(self, registry):
+        assert registry.validate_edge("PERSON", "PERSON", "KNOWS") is True
+        assert registry.validate_edge("EVENT", "PERSON", "KNOWS") is False
+        assert registry.validate_edge("PERSON", "EVENT", "KNOWS") is False
+
+    def test_committed_to_requires_person_to_commitment(self, registry):
+        assert registry.validate_edge("PERSON", "COMMITMENT", "COMMITTED_TO") is True
+        assert registry.validate_edge("EVENT", "COMMITMENT", "COMMITTED_TO") is False
+
+    def test_subtask_of_valid_types(self, registry):
+        assert registry.validate_edge("COMMITMENT", "GOAL", "SUBTASK_OF") is True
+        assert registry.validate_edge("PROJECT", "PROJECT", "SUBTASK_OF") is True
+        assert registry.validate_edge("PERSON", "GOAL", "SUBTASK_OF") is False
+
+    def test_verified_by_target_constraint(self, registry):
+        assert registry.validate_edge("NOTE", "REFERENCE", "VERIFIED_BY") is True
+        assert registry.validate_edge("NOTE", "PERSON", "VERIFIED_BY") is True
+        assert registry.validate_edge("NOTE", "EVENT", "VERIFIED_BY") is False
+
+    def test_validate_edge_category(self, registry):
+        assert registry.validate_edge_category("KNOWS", "SOCIAL") is True
+        assert registry.validate_edge_category("KNOWS", "STRUCTURAL") is False
+        assert registry.validate_edge_category("NONEXISTENT", "SOCIAL") is False
+
+    def test_get_valid_edge_types(self, registry):
+        valid = registry.get_valid_edge_types("PERSON", "PERSON")
+        assert "KNOWS" in valid
+        assert "COLLABORATES_WITH" in valid
+        assert "RELATED_TO" in valid  # unconstrained edges are valid for any pair
+
+    def test_get_edge_cardinality(self, registry):
+        assert registry.get_edge_cardinality("SUBTASK_OF") == "MANY_TO_ONE"
+        assert registry.get_edge_cardinality("PART_OF") == "MANY_TO_ONE"
+        assert registry.get_edge_cardinality("HOLDS_POSITION") == "ONE_TO_MANY"
+        assert registry.get_edge_cardinality("RELATED_TO") is None
 
 
 class TestNetworks:
@@ -114,6 +152,72 @@ class TestNetworks:
         lambdas = registry.get_all_decay_lambdas()
         assert "GOVERNANCE" in lambdas
         assert lambdas["GOVERNANCE"] == 0.04
+
+
+class TestNetworkSuggestions:
+    def test_academic_keywords(self, registry):
+        results = registry.suggest_networks("I need to study for my exam next week")
+        assert "ACADEMIC" in [n for n, _ in results]
+
+    def test_financial_keywords(self, registry):
+        results = registry.suggest_networks("Payment of $500 invoice from client")
+        assert "FINANCIAL" in [n for n, _ in results]
+
+    def test_no_matches(self, registry):
+        assert registry.suggest_networks("xyz abc 123") == []
+
+    def test_multiple_networks(self, registry):
+        results = registry.suggest_networks("Meeting with client about project budget and money")
+        assert len({n for n, _ in results}) >= 2
+
+
+class TestValueTypes:
+    def test_url_value_type_valid(self, registry):
+        assert registry.validate_property_value("REFERENCE", "url", "https://example.com") is None
+
+    def test_url_value_type_invalid(self, registry):
+        error = registry.validate_property_value("REFERENCE", "url", "not-a-url")
+        assert error is not None
+
+    def test_empty_value_skipped(self, registry):
+        assert registry.validate_property_value("REFERENCE", "url", "") is None
+
+    def test_currency_code_value_type(self, registry):
+        assert registry.validate_property_value("FINANCIAL_ITEM", "currency", "USD") is None
+        assert registry.validate_property_value("FINANCIAL_ITEM", "currency", "us-dollars") is not None
+
+    def test_percentage_range(self, registry):
+        assert registry.validate_property_value("GOAL", "progress", 0.5) is None
+        assert registry.validate_property_value("GOAL", "progress", 1.5) is not None
+
+    def test_property_without_value_type_always_valid(self, registry):
+        assert registry.validate_property_value("PERSON", "name", "anything") is None
+
+
+class TestInterfaces:
+    def test_get_types_implementing(self, registry):
+        types = registry.get_types_implementing("SCHEDULABLE")
+        assert "COMMITMENT" in types
+        assert "GOAL" in types
+        assert "EVENT" in types
+
+    def test_get_interfaces_for_type(self, registry):
+        interfaces = registry.get_interfaces_for_type("GOAL")
+        assert "SCHEDULABLE" in interfaces
+        assert "TRACKABLE" in interfaces
+
+    def test_unknown_interface_returns_empty(self, registry):
+        assert registry.get_types_implementing("NONEXISTENT") == []
+
+
+class TestActionTypes:
+    def test_get_action_type_config(self, registry):
+        config = registry.get_action_type_config("COMPLETE_COMMITMENT")
+        assert config is not None
+        assert config["node_types"] == ["COMMITMENT"]
+
+    def test_unknown_action_type(self, registry):
+        assert registry.get_action_type_config("NONEXISTENT") is None
 
 
 class TestPromptGeneration:

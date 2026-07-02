@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from memora.scheduler.jobs import (
     run_bridge_discovery_batch,
     run_commitment_scan,
+    run_confidence_decay,
     run_daily_briefing,
     run_decay_scoring,
     run_gap_detection,
@@ -98,6 +99,21 @@ class MemoraScheduler:
             kwargs={"repo": self._repo, "settings": self._settings},
             id="decay_scoring",
             name="Decay Scoring",
+            replace_existing=True,
+        )
+
+        # Confidence decay — daily at 2:30 AM
+        async def _confidence_decay_wrapper():
+            await run_confidence_decay(
+                repo=self._repo,
+                truth_layer=self._resolve("truth_layer"),
+            )
+
+        self._scheduler.add_job(
+            _confidence_decay_wrapper,
+            trigger=CronTrigger(hour=2, minute=30),
+            id="confidence_decay",
+            name="Confidence Decay",
             replace_existing=True,
         )
 

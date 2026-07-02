@@ -36,38 +36,30 @@ class ActionEngine:
         self._truth_layer = truth_layer
         self._health_scoring = health_scoring
         self._notification_manager = notification_manager
-        self._registry: dict[ActionType, dict] = {
-            ActionType.COMPLETE_COMMITMENT: {
-                "label": "Complete Commitment",
-                "node_types": [NodeType.COMMITMENT],
-                "handler": self._complete_commitment,
-            },
-            ActionType.PROMOTE_IDEA: {
-                "label": "Promote Idea to Project",
-                "node_types": [NodeType.IDEA],
-                "handler": self._promote_idea,
-            },
-            ActionType.ARCHIVE_GOAL: {
-                "label": "Archive Goal",
-                "node_types": [NodeType.GOAL],
-                "handler": self._archive_goal,
-            },
-            ActionType.ADVANCE_GOAL: {
-                "label": "Advance Goal",
-                "node_types": [NodeType.GOAL],
-                "handler": self._advance_goal,
-            },
-            ActionType.RECORD_OUTCOME: {
-                "label": "Record Outcome",
-                "node_types": [NodeType.DECISION, NodeType.GOAL, NodeType.COMMITMENT],
-                "handler": self._record_outcome,
-            },
-            ActionType.LINK_ENTITIES: {
-                "label": "Link Entities",
-                "node_types": list(NodeType),
-                "handler": self._link_entities,
-            },
+
+        # Handlers are Python (behavior isn't YAML-expressible); label and
+        # applicable node_types are declared ontology metadata (see
+        # `action_types:` in ontology_default.yaml) so the two stay in sync.
+        handlers = {
+            ActionType.COMPLETE_COMMITMENT: self._complete_commitment,
+            ActionType.PROMOTE_IDEA: self._promote_idea,
+            ActionType.ARCHIVE_GOAL: self._archive_goal,
+            ActionType.ADVANCE_GOAL: self._advance_goal,
+            ActionType.RECORD_OUTCOME: self._record_outcome,
+            ActionType.LINK_ENTITIES: self._link_entities,
         }
+        from memora.graph.ontology_registry import get_ontology_registry
+
+        ontology = get_ontology_registry()
+        self._registry: dict[ActionType, dict] = {}
+        for action_type, handler in handlers.items():
+            config = ontology.get_action_type_config(action_type.value) or {}
+            node_types = config.get("node_types")
+            self._registry[action_type] = {
+                "label": config.get("label", action_type.value.replace("_", " ").title()),
+                "node_types": [NodeType(t) for t in node_types] if node_types else list(NodeType),
+                "handler": handler,
+            }
 
     def _get_notification_manager(self):
         """Lazily resolve notification manager (same pattern as scheduler/jobs.py)."""

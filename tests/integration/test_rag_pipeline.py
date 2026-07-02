@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import socket
 import tempfile
 
 import pytest
@@ -24,6 +25,13 @@ from memora.vector.store import VectorStore, SearchResult, EMBEDDING_DIM
 # ---------------------------------------------------------------------------
 
 
+def _free_port() -> int:
+    # ponytail: tiny bind/release race before Weaviate binds it; fine for tests
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
 @pytest.fixture
 def repo():
     """In-memory DuckDB repository for testing."""
@@ -36,7 +44,7 @@ def repo():
 def vector_store(tmp_path_factory):
     """Weaviate-backed vector store in a temporary directory."""
     db_path = tmp_path_factory.mktemp("vectors") / "test_weaviate"
-    vs = VectorStore(db_path=str(db_path), port=8081, grpc_port=50052)
+    vs = VectorStore(db_path=str(db_path), port=_free_port(), grpc_port=_free_port())
     yield vs
     vs.close()
 

@@ -6,6 +6,7 @@ Palantir Gotham-inspired design system with 256-color palette.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import sys
@@ -63,6 +64,15 @@ class C:
     INTEL   = "\033[38;5;183m"   # #D7AFFF  Soft violet — AI outputs
     DIM     = "\033[38;5;243m"   # #767676  Descriptions, metadata
     GHOST   = "\033[38;5;236m"   # #303030  Subtle backgrounds
+
+
+# Respect NO_COLOR (https://no-color.org) and disable escape codes when not
+# writing to a real terminal (piped/redirected output, log files, CI).
+if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+    for _attr in list(vars(C)):
+        if _attr.isupper():
+            setattr(C, _attr, "")
+    del _attr
 
 
 def term_width() -> int:

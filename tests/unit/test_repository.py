@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from memora.core.exceptions import OntologyViolationError
 from memora.graph.models import (
     Capture,
     CommitmentNode,
@@ -13,6 +14,7 @@ from memora.graph.models import (
     EdgeCategory,
     EdgeType,
     EventNode,
+    GoalNode,
     GraphProposal,
     EdgeProposal,
     NetworkType,
@@ -22,6 +24,7 @@ from memora.graph.models import (
     PersonNode,
     ProposalRoute,
     ProposalStatus,
+    ReferenceNode,
 )
 from memora.graph.repository import GraphRepository
 
@@ -144,7 +147,7 @@ class TestEdgesCRUD:
 
         edge = Edge(
             source_id=pid, target_id=eid,
-            edge_type=EdgeType.KNOWS, edge_category=EdgeCategory.SOCIAL,
+            edge_type=EdgeType.RELATED_TO, edge_category=EdgeCategory.ASSOCIATIVE,
         )
         repo.create_edge(edge)
 
@@ -152,6 +155,71 @@ class TestEdgesCRUD:
         assert len(repo.get_edges(pid, "incoming")) == 0
         assert len(repo.get_edges(eid, "incoming")) == 1
         assert len(repo.get_edges(pid, "both")) == 1
+
+
+class TestOntologyEnforcement:
+    def test_create_edge_rejects_invalid_type_pair(self, repo, sample_person, sample_event):
+        pid = repo.create_node(sample_person)
+        eid = repo.create_node(sample_event)
+        with pytest.raises(OntologyViolationError):
+            repo.create_edge(Edge(
+                source_id=pid, target_id=eid,
+                edge_type=EdgeType.KNOWS, edge_category=EdgeCategory.SOCIAL,
+            ))
+
+    def test_create_edge_rejects_second_subtask_parent(self, repo, sample_commitment):
+        child_id = repo.create_node(sample_commitment)
+        parent1_id = repo.create_node(
+            GoalNode(title="Parent 1", networks=[NetworkType.SOCIAL], proposed_by="test")
+        )
+        parent2_id = repo.create_node(
+            GoalNode(title="Parent 2", networks=[NetworkType.SOCIAL], proposed_by="test")
+        )
+        repo.create_edge(Edge(
+            source_id=child_id, target_id=parent1_id,
+            edge_type=EdgeType.SUBTASK_OF, edge_category=EdgeCategory.STRUCTURAL,
+        ))
+        with pytest.raises(OntologyViolationError):
+            repo.create_edge(Edge(
+                source_id=child_id, target_id=parent2_id,
+                edge_type=EdgeType.SUBTASK_OF, edge_category=EdgeCategory.STRUCTURAL,
+            ))
+
+    def test_create_node_rejects_bad_value_type(self, repo):
+        bad_ref = ReferenceNode(
+            title="Bad ref", properties={"url": "not-a-url"},
+            networks=[NetworkType.SOCIAL], proposed_by="test",
+        )
+        with pytest.raises(OntologyViolationError):
+            repo.create_node(bad_ref)
+
+    def test_commit_proposal_rejects_ontology_violation(self, repo, sample_capture):
+        repo.create_capture(sample_capture)
+        proposal = GraphProposal(
+            source_capture_id=str(sample_capture.id),
+            confidence=0.8,
+            nodes_to_create=[
+                NodeProposal(temp_id="p1", node_type=NodeType.PERSON, title="A"),
+                NodeProposal(temp_id="e1", node_type=NodeType.EVENT, title="B"),
+            ],
+            edges_to_create=[
+                EdgeProposal(
+                    source_id="p1", target_id="e1",
+                    edge_type=EdgeType.KNOWS, edge_category=EdgeCategory.SOCIAL,
+                ),
+            ],
+        )
+        proposal_id = repo.create_proposal(proposal)
+
+        success = repo.commit_proposal(proposal_id)
+        assert success is False
+
+        stored = repo.get_proposal(proposal_id)
+        assert stored["status"] == "rejected"
+        assert "ontology_violation" in stored["reviewer"]
+
+        # Nothing should have been committed — transaction rolled back
+        assert len(repo.query_nodes(NodeFilter())) == 1  # only the You node
 
 
 class TestNeighborhood:
